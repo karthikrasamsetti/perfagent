@@ -1,0 +1,23 @@
+# secrets
+.env
+
+# database
+*.db
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# uv
+.uv/
+
+# generated scripts (optional - remove if you want to track them)
+examples/loadtest.js
+examples/locustfile.py
+
+# OS
+.DS_Store
+Thumbs.db

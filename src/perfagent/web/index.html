@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Performance Testing Agent</title>
+<style>
+  :root { --ink:#1f2421; --teal:#0f6e56; --teal-d:#0a4f3e; --amber:#854f0b;
+          --line:#e2e0d8; --bg:#f7f6f2; --card:#fff; --muted:#6b6a64; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         color: var(--ink); background: var(--bg); }
+  header { background: var(--teal); color:#fff; padding: 16px 24px; }
+  header h1 { margin:0; font-size: 18px; font-weight:600; }
+  header p { margin:4px 0 0; font-size: 13px; opacity:.9; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; display:grid;
+          grid-template-columns: 1fr 1fr; gap: 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:18px; }
+  .card h2 { margin:0 0 12px; font-size:15px; color:var(--teal-d); }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input, textarea, select { width:100%; padding:8px 10px; border:1px solid var(--line);
+          border-radius:6px; font-size:13px; font-family:inherit; background:#fff; }
+  textarea { resize:vertical; }
+  .endpoint { display:grid; grid-template-columns: 90px 1fr 1.2fr 32px; gap:6px; margin-bottom:6px; }
+  .endpoint input { margin:0; }
+  .btn { background:var(--teal); color:#fff; border:none; padding:9px 16px; border-radius:6px;
+         font-size:13px; cursor:pointer; font-weight:500; }
+  .btn:hover { background:var(--teal-d); }
+  .btn.sec { background:#fff; color:var(--teal-d); border:1px solid var(--teal); }
+  .btn.amber { background:var(--amber); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .btn.small { padding:5px 10px; font-size:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .row.mt { margin-top:12px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .full { grid-column: 1 / -1; }
+  pre { background:#1e2b26; color:#d7e6df; padding:14px; border-radius:8px; overflow:auto;
+        font-size:12px; line-height:1.5; max-height:420px; }
+  .plan-json { width:100%; min-height:280px; font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size:12px; }
+  .pill { display:inline-block; background:#e1f5ee; color:var(--teal-d); padding:2px 8px;
+          border-radius:999px; font-size:11px; margin-left:6px; }
+  .status { font-size:12px; margin-top:8px; min-height:16px; }
+  .status.err { color:#a32d2d; }
+  .status.ok { color:var(--teal); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  .x { background:#faeeea; color:#a32d2d; border:none; border-radius:6px; cursor:pointer; }
+  .steps { margin:2px 0 0 0; padding-left:16px; }
+  .metric { font-size:22px; font-weight:600; color:var(--teal-d); }
+  .headline-box { font-size:15px; padding:12px 14px; border-radius:8px; background:#f1efe8;
+                  border-left:5px solid var(--teal); margin:8px 0 12px; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .badge.pass { background:#e1f5ee; color:#0a4f3e; }
+  .badge.fail { background:#faeaea; color:#a32d2d; }
+  .badge.na { background:#f1efe8; color:#6b6a64; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Performance Testing Agent</h1>
+  <p>Plan &rarr; review &amp; approve &rarr; generate script. AI drafts; you approve; code generates.</p>
+</header>
+
+<div style="max-width:1100px;margin:16px auto 0;padding:0 24px">
+  <div style="background:#faeeda;border:1px solid #e0c48a;color:#633806;border-radius:8px;padding:10px 14px;font-size:12.5px;line-height:1.5">
+    <b>To actually run a generated script:</b> (1) start a target &mdash; for a safe demo, run
+    <code>uv run python -m perfagent.sample_target.app</code> in another terminal (serves sample
+    endpoints on http://127.0.0.1:8000). (2) Download the script below. (3) With <b>k6 installed</b>, run
+    <code>k6 run -e BASE_URL=http://127.0.0.1:8000 loadtest.js</code>. This screen only
+    <i>generates</i> the script &mdash; it does not fire load.
+  </div>
+</div>
+
+<div class="wrap">
+  <!-- LEFT: input -->
+  <div class="card">
+    <h2>1 &middot; Describe the test</h2>
+    <label>Target base URL</label>
+    <input id="target" value="http://127.0.0.1:8000" />
+
+    <label>Goal (plain language)</label>
+    <input id="goal" value="Realistic load test of browsing and checkout" />
+
+    <div class="row">
+      <div style="flex:1"><label>Max users</label><input id="maxUsers" type="number" value="100" /></div>
+      <div style="flex:1"><label>Duration (s)</label><input id="duration" type="number" value="240" /></div>
+      <div style="flex:1"><label>Tool</label><select id="tool"></select></div>
+    </div>
+
+    <label>Endpoints</label>
+    <div id="endpoints"></div>
+    <button class="btn sec small" onclick="addEndpoint()">+ Add endpoint</button>
+
+    <div class="row mt">
+      <button class="btn" id="planBtn" onclick="doPlan()">Draft plan with AI</button>
+      <span class="muted">Calls your configured LLM (set the key in .env)</span>
+    </div>
+    <div class="status" id="planStatus"></div>
+  </div>
+
+  <!-- RIGHT: review + approve -->
+  <div class="card">
+    <h2>2 &middot; Review &amp; approve the plan
+      <span class="pill" id="planPill" style="display:none"></span></h2>
+    <p class="muted">The AI drafted this LoadModel. Edit it if you want, then generate.
+       Nothing runs load — this only produces a script.</p>
+    <textarea class="plan-json" id="planJson" placeholder="The drafted plan (JSON) appears here after you click Draft plan."></textarea>
+    <div class="row mt">
+      <button class="btn amber" id="genBtn" onclick="doGenerate()" disabled>Approve &amp; generate script</button>
+    </div>
+    <div class="status" id="genStatus"></div>
+  </div>
+
+  <!-- SCRIPT OUTPUT -->
+  <div class="card full">
+    <h2>3 &middot; Generated script <span class="pill" id="scriptPill" style="display:none"></span></h2>
+    <div class="row" style="margin-bottom:8px">
+      <button class="btn sec small" id="dlBtn" onclick="download()" disabled>Download</button>
+      <button class="btn small" id="runBtn" onclick="runScript()" disabled>Run &amp; monitor live</button>
+      <button class="btn sec small" id="stopBtn" onclick="stopRun()" disabled>Stop</button>
+      <span class="muted" id="scriptMeta"></span>
+    </div>
+    <pre id="scriptOut">The generated script appears here.</pre>
+  </div>
+
+  <!-- LIVE MONITOR -->
+  <div class="card full" id="monitorCard" style="display:none">
+    <h2>4 &middot; Live run <span class="pill" id="runPill"></span></h2>
+    <div class="status" id="runStatus"></div>
+    <div class="row" style="gap:24px;margin:10px 0">
+      <div><div class="muted">Elapsed</div><div class="metric" id="mElapsed">0s</div></div>
+      <div><div class="muted">Requests</div><div class="metric" id="mReqs">0</div></div>
+      <div><div class="muted">RPS</div><div class="metric" id="mRps">0</div></div>
+      <div><div class="muted">Error rate</div><div class="metric" id="mErr">0%</div></div>
+      <div><div class="muted">p95 latency</div><div class="metric" id="mP95">0 ms</div></div>
+      <div><div class="muted">p99 latency</div><div class="metric" id="mP99">0 ms</div></div>
+    </div>
+    <table id="epTable"><thead><tr><th>Endpoint</th><th>Requests</th><th>Failed</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- REPORT -->
+  <div class="card full" id="reportCard" style="display:none">
+    <h2>5 &middot; Report for stakeholders <span class="pill" id="verdictPill"></span></h2>
+    <div class="row" style="margin-bottom:8px">
+      <button class="btn small" id="reportDlBtn" onclick="downloadReport()">Download HTML report</button>
+      <span class="muted">Deterministic verdict + AI-written summary from the real numbers</span>
+    </div>
+    <div class="headline-box" id="reportHeadline"></div>
+    <p id="reportSummary"></p>
+    <div id="reportObs"></div>
+    <div id="reportRecs"></div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="card full">
+    <h2>Saved plans <button class="btn sec small" onclick="loadPlans()" style="margin-left:8px">Refresh</button></h2>
+    <table id="plansTable"><thead><tr><th>Created</th><th>Target</th><th>Goal</th><th>Scripts</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
+
+<script>
+let currentPlanId = null;
+let currentScriptId = null;
+
+function addEndpoint(method="GET", path="", body="") {
+  const div = document.createElement("div");
+  div.className = "endpoint";
+  div.innerHTML = `
+    <select>${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${m===method?"selected":""}>${m}</option>`).join("")}</select>
+    <input placeholder="/path" value="${path}" />
+    <input placeholder='body JSON e.g. {"user":"demo"}' value='${body}' />
+    <button class="x" onclick="this.parentElement.remove()">&times;</button>`;
+  document.getElementById("endpoints").appendChild(div);
+}
+
+function readEndpoints() {
+  return [...document.querySelectorAll("#endpoints .endpoint")].map(d => {
+    const method = d.querySelector("select").value;
+    const inputs = d.querySelectorAll("input");
+    const path = inputs[0].value.trim();
+    const bodyRaw = inputs[1].value.trim();
+    if (!path) return null;
+    const ep = { method, path };
+    if (bodyRaw) {
+      try { ep.example_body = JSON.parse(bodyRaw); }
+      catch(e) { throw new Error(`Body for ${method} ${path} is not valid JSON: ${e.message}`); }
+    }
+    return ep;
+  }).filter(Boolean);
+}
+
+async function loadTools() {
+  const r = await fetch("/api/tools"); const j = await r.json();
+  document.getElementById("tool").innerHTML = j.tools.map(t=>`<option value="${t}">${t}</option>`).join("");
+}
+
+async function doPlan() {
+  const status = document.getElementById("planStatus");
+  let eps;
+  try { eps = readEndpoints(); }
+  catch(e) { status.className="status err"; status.textContent = e.message; return; }
+  if (eps.length === 0) { status.className="status err"; status.textContent="Add at least one endpoint."; return; }
+  status.className="status"; status.textContent="Asking the AI to draft a plan...";
+  document.getElementById("planBtn").disabled = true;
+  try {
+    const body = {
+      target_base_url: document.getElementById("target").value.trim(),
+      goal: document.getElementById("goal").value.trim(),
+      max_users: parseInt(document.getElementById("maxUsers").value),
+      duration_seconds: parseInt(document.getElementById("duration").value),
+      endpoints: eps,
+    };
+    const r = await fetch("/api/plan", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "plan failed");
+    currentPlanId = j.plan_id;
+    document.getElementById("planJson").value = JSON.stringify(j.load_model, null, 2);
+    document.getElementById("genBtn").disabled = false;
+    const pill = document.getElementById("planPill"); pill.style.display="inline-block";
+    pill.textContent = "drafted by " + j.provider;
+    status.className="status ok"; status.textContent="Plan drafted. Review it, then approve & generate.";
+    loadPlans();
+  } catch(e) {
+    status.className="status err"; status.textContent="Error: " + e.message;
+  } finally {
+    document.getElementById("planBtn").disabled = false;
+  }
+}
+
+async function doGenerate() {
+  const status = document.getElementById("genStatus");
+  if (!currentPlanId) return;
+  let model;
+  try { model = JSON.parse(document.getElementById("planJson").value); }
+  catch(e) { status.className="status err"; status.textContent="Plan JSON is invalid: " + e.message; return; }
+  status.className="status"; status.textContent="Generating script...";
+  try {
+    const r = await fetch(`/api/plan/${currentPlanId}/generate`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ tool: document.getElementById("tool").value, load_model: model })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "generate failed");
+    currentScriptId = j.script_id;
+    document.getElementById("scriptOut").textContent = j.content;
+    document.getElementById("dlBtn").disabled = false;
+    document.getElementById("runBtn").disabled = (j.tool !== "k6");
+    document.getElementById("scriptMeta").textContent = `${j.filename} (${j.tool}) from plan ${j.plan_id.slice(0,8)}`;
+    const pill = document.getElementById("scriptPill"); pill.style.display="inline-block"; pill.textContent=j.tool;
+    status.className="status ok"; status.textContent="Script generated and saved.";
+    loadPlans();
+  } catch(e) {
+    status.className="status err"; status.textContent="Error: " + e.message;
+  }
+}
+
+function download() {
+  if (currentScriptId) window.location = `/api/scripts/${currentScriptId}/download`;
+}
+
+async function loadPlans() {
+  const r = await fetch("/api/plans"); const j = await r.json();
+  const tb = document.querySelector("#plansTable tbody");
+  tb.innerHTML = j.plans.map(p => `
+    <tr>
+      <td>${new Date(p.created_at).toLocaleString()}</td>
+      <td>${p.target}</td>
+      <td>${p.goal || ""}</td>
+      <td>${p.script_count}</td>
+      <td><button class="btn sec small" onclick="openPlan('${p.plan_id}')">Open</button></td>
+    </tr>`).join("");
+}
+
+async function openPlan(id) {
+  const r = await fetch(`/api/plans/${id}`); const j = await r.json();
+  currentPlanId = id;
+  document.getElementById("planJson").value = JSON.stringify(j.load_model, null, 2);
+  document.getElementById("genBtn").disabled = false;
+  const pill = document.getElementById("planPill"); pill.style.display="inline-block"; pill.textContent="loaded";
+  document.getElementById("planStatus").className="status ok";
+  document.getElementById("planStatus").textContent = `Loaded plan ${id.slice(0,8)} (${j.scripts.length} script(s)).`;
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+
+let currentRunId = null;
+let pollTimer = null;
+
+async function runScript() {
+  if (!currentScriptId) return;
+  const rs = document.getElementById("runStatus");
+  document.getElementById("monitorCard").style.display = "block";
+  rs.className = "status"; rs.textContent = "Starting run...";
+
+  // Warn early if k6 isn't installed.
+  try {
+    const av = await (await fetch("/api/run/available")).json();
+    if (!av.k6) {
+      rs.className = "status err";
+      rs.textContent = "k6 is not installed or not on PATH. Install k6 to run tests.";
+      return;
+    }
+  } catch(e) {}
+
+  try {
+    const r = await fetch(`/api/scripts/${currentScriptId}/run`, {method:"POST"});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "run failed");
+    currentRunId = j.run_id;
+    document.getElementById("runBtn").disabled = true;
+    document.getElementById("stopBtn").disabled = false;
+    pollTimer = setInterval(pollRun, 500);
+  } catch(e) {
+    rs.className = "status err"; rs.textContent = "Error: " + e.message;
+  }
+}
+
+async function pollRun() {
+  if (!currentRunId) return;
+  try {
+    const r = await fetch(`/api/runs/${currentRunId}`);
+    const j = await r.json();
+    const rs = document.getElementById("runStatus");
+    const pill = document.getElementById("runPill"); pill.textContent = j.status;
+
+    const s = j.snapshot || {};
+    const lat = s.latency || {};
+    document.getElementById("mElapsed").textContent = (j.elapsed_s ?? 0) + "s";
+    document.getElementById("mReqs").textContent = s.requests ?? 0;
+    document.getElementById("mRps").textContent = s.rps ?? 0;
+    document.getElementById("mErr").textContent = ((s.error_rate ?? 0) * 100).toFixed(2) + "%";
+    document.getElementById("mP95").textContent = (lat.p95_ms ?? 0) + " ms";
+    document.getElementById("mP99").textContent = (lat.p99_ms ?? 0) + " ms";
+
+    const tb = document.querySelector("#epTable tbody");
+    tb.innerHTML = (s.per_endpoint || []).map(e => `
+      <tr><td>${e.name}</td><td>${e.requests}</td><td>${e.failed}</td>
+      <td>${e.avg_ms}</td><td>${e.p95_ms}</td></tr>`).join("");
+
+    if (j.status === "running") {
+      rs.className = "status"; rs.textContent = "Running against " + j.target + " ...";
+    } else {
+      // terminal state
+      clearInterval(pollTimer); pollTimer = null;
+      document.getElementById("runBtn").disabled = false;
+      document.getElementById("stopBtn").disabled = true;
+      if (j.status === "finished") {
+        rs.className = "status ok"; rs.textContent = "Run finished."; loadReport();
+      } else if (j.status === "stopped") {
+        rs.className = "status"; rs.textContent = "Run stopped."; loadReport();
+      } else {
+        rs.className = "status err"; rs.textContent = "Run error: " + (j.message || "unknown");
+      }
+    }
+  } catch(e) {
+    // keep polling briefly; transient errors happen at startup
+  }
+}
+
+async function stopRun() {
+  if (!currentRunId) return;
+  try { await fetch(`/api/runs/${currentRunId}/stop`, {method:"POST"}); } catch(e) {}
+}
+
+function verdictBadge(passed) {
+  if (passed === true) return '<span class="badge pass">PASS</span>';
+  if (passed === false) return '<span class="badge fail">FAIL</span>';
+  return '<span class="badge na">INCONCLUSIVE</span>';
+}
+
+async function loadReport() {
+  if (!currentRunId) return;
+  try {
+    const r = await fetch(`/api/runs/${currentRunId}/report`);
+    const j = await r.json();
+    if (!r.ok) return;
+    document.getElementById("reportCard").style.display = "block";
+    document.getElementById("verdictPill").innerHTML = verdictBadge(j.verdict.overall_passed);
+    const n = j.narrative;
+    document.getElementById("reportHeadline").textContent = n.headline;
+    document.getElementById("reportSummary").textContent = n.summary;
+    document.getElementById("reportObs").innerHTML =
+      (n.observations && n.observations.length)
+        ? "<b>Observations</b><ul>" + n.observations.map(o=>`<li>${o}</li>`).join("") + "</ul>" : "";
+    document.getElementById("reportRecs").innerHTML =
+      (n.recommendations && n.recommendations.length)
+        ? "<b>Recommendations</b><ul>" + n.recommendations.map(o=>`<li>${o}</li>`).join("") + "</ul>" : "";
+  } catch(e) {}
+}
+
+function downloadReport() {
+  if (currentRunId) window.location = `/api/runs/${currentRunId}/report/download`;
+}
+
+// init
+loadTools();
+addEndpoint("GET", "/products");
+addEndpoint("POST", "/login", '{"user":"demo","password":"x"}');
+addEndpoint("POST", "/cart", '{"product_id":1}');
+addEndpoint("POST", "/checkout", '{"pay":"card"}');
+loadPlans();
+</script>
+</body>
+</html>

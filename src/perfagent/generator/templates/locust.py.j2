@@ -1,0 +1,52 @@
+"""Auto-generated Locust script. Do not edit by hand - regenerate from the LoadModel.
+
+Target: {{ target_base_url }}
+Profile: {{ profile_type }} | peak users: {{ peak_users }} | duration: {{ total_seconds }}s
+
+Run with:
+    locust -f {{ filename }} --host {{ target_base_url }}
+Headless (uses the shape below):
+    locust -f {{ filename }} --host {{ target_base_url }} --headless \
+        -u {{ peak_users }} -r {{ spawn_rate }} -t {{ total_seconds }}s
+"""
+
+from locust import HttpUser, LoadTestShape, between, task
+{% for scenario in scenarios %}
+
+class {{ scenario.class_name }}(HttpUser):
+    """Scenario: {{ scenario.name }} (weight {{ scenario.weight }})."""
+
+    weight = {{ scenario.weight_int }}
+    wait_time = between({{ scenario.min_think }}, {{ scenario.max_think }})
+{% for step in scenario.steps %}
+    @task
+    def {{ step.func_name }}(self):
+{% if step.method == "GET" %}
+        self.client.get("{{ step.path }}", name="{{ step.name }}")
+{% elif step.method == "DELETE" %}
+        self.client.delete("{{ step.path }}", name="{{ step.name }}")
+{% else %}
+        self.client.{{ step.method_lower }}(
+            "{{ step.path }}",
+            name="{{ step.name }}",
+            json={{ step.body_literal }},
+        )
+{% endif %}
+{% endfor %}
+{% endfor %}
+
+class GeneratedLoadShape(LoadTestShape):
+    """Drives the ramp/spike/soak stages defined in the LoadModel."""
+
+    stages = [
+{% for s in shape_stages %}
+        {"duration": {{ s.cumulative }}, "users": {{ s.users }}, "spawn_rate": {{ s.spawn_rate }}},
+{% endfor %}
+    ]
+
+    def tick(self):
+        run_time = self.get_run_time()
+        for stage in self.stages:
+            if run_time < stage["duration"]:
+                return (stage["users"], stage["spawn_rate"])
+        return None

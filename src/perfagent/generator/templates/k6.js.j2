@@ -1,0 +1,69 @@
+// Auto-generated k6 script. Do not edit by hand - regenerate from the LoadModel.
+//
+// Target: {{ target_base_url }}
+// Profile: {{ profile_type }} | peak VUs: {{ peak_users }} | duration: {{ total_seconds }}s
+//
+// Run with:
+//   k6 run {{ filename }}
+// Override the target at runtime:
+//   k6 run -e BASE_URL={{ target_base_url }} {{ filename }}
+
+import http from 'k6/http';
+import { check, sleep, group } from 'k6';
+import { Rate } from 'k6/metrics';
+
+const BASE_URL = __ENV.BASE_URL || '{{ target_base_url }}';
+const errorRate = new Rate('errors');
+
+export const options = {
+  scenarios: {
+{% for scenario in scenarios %}
+    {{ scenario.key }}: {
+      executor: 'ramping-vus',
+      exec: '{{ scenario.func_name }}',
+      startVUs: 0,
+      stages: [
+{% for st in scenario.stages %}
+        { duration: '{{ st.duration }}s', target: {{ st.target }} },
+{% endfor %}
+      ],
+    },
+{% endfor %}
+  },
+  thresholds: {
+{% for th in thresholds %}
+    {{ th.expr }}
+{% endfor %}
+  },
+};
+{% for scenario in scenarios %}
+
+export function {{ scenario.func_name }}() {
+  group('{{ scenario.name }}', function () {
+{% for step in scenario.steps %}
+{% if step.method == "GET" %}
+    {
+      const res = http.get(`${BASE_URL}{{ step.path }}`, { tags: { name: '{{ step.name }}' } });
+      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
+      errorRate.add(res.status >= 400);
+    }
+{% elif step.method == "DELETE" %}
+    {
+      const res = http.del(`${BASE_URL}{{ step.path }}`, null, { tags: { name: '{{ step.name }}' } });
+      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
+      errorRate.add(res.status >= 400);
+    }
+{% else %}
+    {
+      const payload = JSON.stringify({{ step.body_literal }});
+      const params = { headers: { 'Content-Type': 'application/json' }, tags: { name: '{{ step.name }}' } };
+      const res = http.{{ step.method_lower }}(`${BASE_URL}{{ step.path }}`, payload, params);
+      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
+      errorRate.add(res.status >= 400);
+    }
+{% endif %}
+    sleep(Math.random() * {{ scenario.think_span }} + {{ scenario.min_think }});
+{% endfor %}
+  });
+}
+{% endfor %}
