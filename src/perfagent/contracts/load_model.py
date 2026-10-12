@@ -21,7 +21,11 @@ class HttpMethod(str, Enum):
 
 
 class Step(BaseModel):
-    """A single request within a scenario (one call in a user journey)."""
+    """A single request within a scenario (one call in a user journey).
+
+    Paths and bodies may contain ${field} placeholders that are filled per virtual
+    user from the LoadModel's data_file (see DataFile below).
+    """
 
     name: str = Field(..., description="Human-readable label, e.g. 'view products'.")
     method: HttpMethod = HttpMethod.GET
@@ -106,6 +110,24 @@ class Threshold(BaseModel):
         return v
 
 
+class DataFile(BaseModel):
+    """A test-data file the run parameterizes requests from.
+
+    Only the field names (schema) and metadata live here — never the actual values,
+    which stay with the deterministic runner and never reach the LLM. Steps reference
+    these fields as ${field} in their path or body.
+    """
+
+    filename: str = Field(..., description="e.g. 'users.csv'.")
+    fields: list[str] = Field(
+        ..., min_length=1, description="Column/field names available as ${field}."
+    )
+    row_count: int = Field(default=0, ge=0, description="Number of data rows.")
+    source_format: str = Field(
+        default="csv", description="csv | tsv | txt | json | jsonl."
+    )
+
+
 class LoadModel(BaseModel):
     """The whole plan: what to hit, which journeys, how hard, and the pass criteria."""
 
@@ -113,6 +135,10 @@ class LoadModel(BaseModel):
     scenarios: list[Scenario] = Field(..., min_length=1)
     load_profile: LoadProfile
     thresholds: list[Threshold] = Field(default_factory=list)
+    data_file: DataFile | None = Field(
+        default=None,
+        description="Optional test data; steps may reference its fields as ${field}.",
+    )
 
     @field_validator("target_base_url")
     @classmethod

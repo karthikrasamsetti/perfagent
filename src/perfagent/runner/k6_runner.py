@@ -6,6 +6,8 @@ Design (matches the trust boundary):
     number the UI shows (RPS, error rate, p95) is computed here, in code, not by
     an LLM.
   - Runs are tracked in memory by run_id; the API polls get_run() for live status.
+  - If the script is data-parameterized, the uploaded data file is written next to
+    the script so k6's open('./file') finds it.
 
 k6 must be installed and on PATH. If it isn't, the run is marked 'error' with a
 clear message rather than crashing the server.
@@ -37,6 +39,9 @@ class RunState:
     message: str = ""
     # the plan's LoadModel JSON, kept so the report can evaluate thresholds
     load_model_json: str = ""
+    # optional test-data file to write next to the script (filename, content)
+    data_filename: str = ""
+    data_content: str = ""
     # live aggregated snapshot (computed deterministically)
     snapshot: dict = field(default_factory=dict)
     _proc: subprocess.Popen | None = None
@@ -77,11 +82,15 @@ def start_run(
     target: str,
     content: str,
     load_model_json: str = "",
+    data_filename: str = "",
+    data_content: str = "",
 ) -> RunState:
     """Launch k6 for the given script content. Returns the RunState immediately;
     a background thread keeps parsing output and updating the snapshot."""
     run = RunState(run_id=run_id, script_id=script_id, tool=tool, target=target)
     run.load_model_json = load_model_json
+    run.data_filename = data_filename
+    run.data_content = data_content
     _RUNS[run_id] = run
 
     if tool != "k6":
@@ -106,6 +115,11 @@ def _run_worker(run: RunState, content: str) -> None:
     run._tmpdir = tmpdir
     script_path = Path(tmpdir) / "loadtest.js"
     script_path.write_text(content, encoding="utf-8")
+
+    # If the script is data-parameterized, place the data file beside it so
+    # k6's open('./<file>') resolves (we run k6 with cwd=tmpdir).
+    if run.data_filename and run.data_content:
+        (Path(tmpdir) / run.data_filename).write_text(run.data_content, encoding="utf-8")
 
     # k6 --out json=- streams one JSON object per line to stdout.
     cmd = ["k6", "run", "--out", "json=-", "--quiet", str(script_path)]

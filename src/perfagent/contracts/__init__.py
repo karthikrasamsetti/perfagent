@@ -1,5 +1,6 @@
 from perfagent.contracts.artifacts import PlanArtifact, ScriptArtifact
 from perfagent.contracts.load_model import (
+    DataFile,
     HttpMethod,
     LoadModel,
     LoadProfile,
@@ -21,6 +22,7 @@ __all__ = [
     "Step",
     "ThinkTime",
     "Threshold",
+    "DataFile",
     "PlanArtifact",
     "ScriptArtifact",
 ]

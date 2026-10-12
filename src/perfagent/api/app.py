@@ -1,13 +1,18 @@
 """FastAPI service — the agent's API plus the web UI.
 
 Endpoints:
-  GET  /                      -> the web UI (HTML)
-  GET  /api/tools            -> supported tools (k6 first)
-  POST /api/plan             -> AI drafts a LoadModel, saved; returns it for review
-  POST /api/plan/{id}/generate  -> render a saved (possibly edited) plan to a script
-  GET  /api/plans            -> list saved plans
-  GET  /api/plans/{id}       -> one plan + its scripts (lineage)
+  GET  /                          -> the web UI (HTML)
+  GET  /api/tools                 -> supported tools (k6 first)
+  POST /api/data                  -> upload + parse + validate a test-data file
+  POST /api/plan                  -> AI drafts a LoadModel, saved; returns it for review
+  POST /api/plan/{id}/generate    -> render a saved (possibly edited) plan to a script
+  GET  /api/plans                 -> list saved plans
+  GET  /api/plans/{id}            -> one plan + its scripts (lineage)
   GET  /api/scripts/{id}/download -> download a script file
+  POST /api/scripts/{id}/run      -> launch a live run
+  GET  /api/runs/{id}             -> live status + metrics
+  POST /api/runs/{id}/stop        -> stop a run
+  GET  /api/runs/{id}/report      -> verdict + narrative
 
 Start with:  uv run uvicorn perfagent.api.app:app --reload
 Then open:   http://127.0.0.1:8080
@@ -15,16 +20,18 @@ Then open:   http://127.0.0.1:8080
 
 from __future__ import annotations
 
+import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from perfagent.contracts.artifacts import PlanArtifact
-from perfagent.contracts.load_model import LoadModel
-from perfagent.db import PlanRow, ScriptRow, get_session
+from perfagent.contracts.load_model import DataFile, LoadModel
+from perfagent.data import DataValidationError, load_data
+from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
 from perfagent.generator import generate_script, supported_tools
 from perfagent.planner import PlanRequest, draft_plan
 from perfagent.providers import build_provider
@@ -41,6 +48,35 @@ class GenerateBody(BaseModel):
     tool: str = "k6"
     # Optional: the (possibly human-edited) LoadModel to use instead of the stored one.
     load_model: LoadModel | None = None
+    # Optional: id of an uploaded data file to attach to this plan for the run.
+    data_file_id: str | None = None
+
+
+# ---------- guardrail reporting ----------
+
+_REDACTION_LABELS = {
+    "EMAIL": "email",
+    "JWT": "auth token",
+    "APIKEY": "API key",
+    "CARD": "card number",
+    "SSN": "SSN",
+    "HOST": "internal host",
+    "PRIVATE_IP": "private IP",
+    "INLINE_SECRET": "secret",
+    "FIELD": "secret field",
+    "URL_HOST": "URL host",
+    "QUERY_SECRET": "URL secret",
+}
+
+
+def _summarize_redactions(counts: dict) -> dict:
+    """Turn raw redaction counts into a UI-friendly summary. No raw values, ever."""
+    total = sum(counts.values()) if counts else 0
+    parts = []
+    for key, n in sorted(counts.items()):
+        label = _REDACTION_LABELS.get(key, key.lower())
+        parts.append(f"{n} {label}{'s' if n != 1 else ''}")
+    return {"total": total, "detail": ", ".join(parts)}
 
 
 # ---------- UI ----------
@@ -57,15 +93,58 @@ def tools() -> dict:
     return {"tools": supported_tools()}
 
 
+@app.post("/api/data")
+async def upload_data(file: UploadFile) -> dict:
+    """Upload a test-data file (CSV/TSV/TXT/JSON/JSONL). Parse + validate + store.
+
+    Returns the detected columns and row count. The actual values are stored for the
+    runner but never sent to the LLM — only the column names (schema) are used in
+    planning.
+    """
+    raw = await file.read()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="file must be UTF-8 text") from None
+
+    filename = file.filename or "data.csv"
+    try:
+        dataset = load_data(filename, content)
+    except DataValidationError as e:
+        raise HTTPException(status_code=400, detail=f"invalid data file: {e}") from e
+
+    with get_session() as s:
+        row = DataFileRow(
+            filename=filename,
+            source_format=dataset.source_format,
+            columns_csv=",".join(dataset.fields),
+            row_count=dataset.row_count,
+            content=content,
+        )
+        s.add(row)
+        s.commit()
+        data_id = row.id
+
+    return {
+        "data_file_id": data_id,
+        "filename": filename,
+        "fields": dataset.fields,
+        "row_count": dataset.row_count,
+        "source_format": dataset.source_format,
+        "warnings": dataset.warnings,
+    }
+
+
 @app.post("/api/plan")
 def create_plan(request: PlanRequest) -> dict:
-    """AI drafts a LoadModel from the endpoints, saves it, returns it for review."""
+    """AI drafts a LoadModel from the endpoints, saved; returns it for review."""
     try:
         provider = build_provider()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     plan: PlanArtifact = draft_plan(request, provider)
+    redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
 
     with get_session() as s:
         row = PlanRow(
@@ -81,22 +160,39 @@ def create_plan(request: PlanRequest) -> dict:
         "plan_id": plan.id,
         "provider": provider.name,
         "load_model": plan.load_model.model_dump(),
+        "guardrail": _summarize_redactions(redaction_counts),
     }
 
 
 @app.post("/api/plan/{plan_id}/generate")
 def generate(plan_id: str, body: GenerateBody) -> dict:
-    """Render a plan to a script. Uses the edited LoadModel if provided, else stored."""
+    """Render a plan to a script. Uses the edited LoadModel if provided, else stored.
+
+    If a data_file_id is given, its schema is attached to the LoadModel so the
+    generated script is parameterized from that data file.
+    """
     with get_session() as s:
         row = s.get(PlanRow, plan_id)
         if row is None:
             raise HTTPException(status_code=404, detail="plan not found")
 
         model = body.load_model or LoadModel.model_validate_json(row.load_model_json)
-        # If the human edited the plan, persist the new version.
-        if body.load_model is not None:
-            row.load_model_json = model.model_dump_json()
-            row.target_base_url = model.target_base_url
+
+        # Attach the uploaded data file's schema to the model (values stay in the DB).
+        if body.data_file_id:
+            data_row = s.get(DataFileRow, body.data_file_id)
+            if data_row is None:
+                raise HTTPException(status_code=404, detail="data file not found")
+            model.data_file = DataFile(
+                filename=data_row.filename,
+                fields=data_row.columns,
+                row_count=data_row.row_count,
+                source_format=data_row.source_format,
+            )
+
+        # Persist the (possibly edited / data-attached) model.
+        row.load_model_json = model.model_dump_json()
+        row.target_base_url = model.target_base_url
 
         plan = PlanArtifact(id=plan_id, load_model=model)
         try:
@@ -184,6 +280,27 @@ def run_available() -> dict:
     return {"k6": k6_available()}
 
 
+def _data_for_plan(session, plan_row) -> tuple[str, str]:
+    """Return (filename, content) of the data file referenced by a plan, or ('','')."""
+    try:
+        model = LoadModel.model_validate_json(plan_row.load_model_json)
+    except Exception:  # noqa: BLE001
+        return "", ""
+    if not model.data_file:
+        return "", ""
+    fname = model.data_file.filename
+    # find the most recent uploaded data file with this filename
+    dr = (
+        session.query(DataFileRow)
+        .filter(DataFileRow.filename == fname)
+        .order_by(DataFileRow.created_at.desc())
+        .first()
+    )
+    if dr is None:
+        return "", ""
+    return dr.filename, dr.content
+
+
 @app.post("/api/scripts/{script_id}/run")
 def run_script(script_id: str) -> dict:
     """Launch a script as a live run. Returns a run_id the UI polls for status."""
@@ -192,9 +309,11 @@ def run_script(script_id: str) -> dict:
         if row is None:
             raise HTTPException(status_code=404, detail="script not found")
         target = ""
+        data_filename, data_content = "", ""
         plan = s.get(PlanRow, row.plan_id)
         if plan is not None:
             target = plan.target_base_url
+            data_filename, data_content = _data_for_plan(s, plan)
         run_id = uuid.uuid4().hex
         run = start_run(
             run_id=run_id,
@@ -203,6 +322,8 @@ def run_script(script_id: str) -> dict:
             target=target,
             content=row.content,
             load_model_json=(plan.load_model_json if plan is not None else ""),
+            data_filename=data_filename,
+            data_content=data_content,
         )
     return {"run_id": run.run_id, "status": run.status, "message": run.message}
 
@@ -220,7 +341,7 @@ def run_status(run_id: str) -> dict:
         "target": run.target,
         "status": run.status,
         "message": run.message,
-        "elapsed_s": round((run.ended_at or __import__("time").time()) - run.started_at, 1),
+        "elapsed_s": round((run.ended_at or time.time()) - run.started_at, 1),
         "snapshot": run.snapshot,
     }
 
@@ -242,7 +363,6 @@ def _build_report(run) -> tuple[dict, str]:
     if run.load_model_json:
         model = LoadModel.model_validate_json(run.load_model_json)
     else:
-        # minimal empty-threshold model so evaluation still runs
         model = LoadModel.model_validate_json(
             '{"target_base_url":"' + (run.target or "http://unknown")
             + '","scenarios":[{"name":"s","steps":[{"name":"x","path":"/"}]}],'
@@ -252,7 +372,6 @@ def _build_report(run) -> tuple[dict, str]:
 
     verdict = evaluate(model, run.snapshot)
 
-    # narration uses the LLM if configured, else a deterministic fallback
     try:
         provider = build_provider()
     except ValueError:

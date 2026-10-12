@@ -1,3 +1,10 @@
-from perfagent.db.models import Base, PlanRow, ScriptRow, get_engine, get_session
+from perfagent.db.models import (
+    Base,
+    DataFileRow,
+    PlanRow,
+    ScriptRow,
+    get_engine,
+    get_session,
+)
 
-__all__ = ["Base", "PlanRow", "ScriptRow", "get_engine", "get_session"]
+__all__ = ["Base", "PlanRow", "ScriptRow", "DataFileRow", "get_engine", "get_session"]

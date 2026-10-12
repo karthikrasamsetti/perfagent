@@ -2,6 +2,10 @@
 
 k6 is the primary tool. No LLM - pure templating plus arithmetic to turn the load
 profile into k6 ramping-vus stages and the thresholds into k6 threshold expressions.
+
+If the LoadModel has a data_file and steps reference ${field} placeholders, the
+script also loads that file (SharedArray) and each virtual user picks a row, so
+requests are parameterized from real test data.
 """
 
 from __future__ import annotations
@@ -12,6 +16,13 @@ import re
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from perfagent.contracts.load_model import LoadModel
+from perfagent.generator.k6_data import (
+    body_to_k6_expr,
+    k6_data_loader,
+    k6_row_pick,
+    path_to_k6_template,
+    uses_data,
+)
 
 _env = Environment(
     loader=PackageLoader("perfagent.generator", "templates"),
@@ -78,19 +89,30 @@ def _thresholds(model: LoadModel) -> list[dict]:
     return out
 
 
-def _prepare_scenarios(model: LoadModel) -> list[dict]:
+def _prepare_scenarios(model: LoadModel, data_on: bool) -> list[dict]:
     fractions = model.normalised_weights()
     scenarios = []
     for i, (sc, frac) in enumerate(zip(model.scenarios, fractions, strict=False)):
         steps = []
         for st in sc.steps:
+            has_ph = "${" in st.path or (st.body and "${" in json.dumps(st.body))
+            # When data is on, render ${field} -> row.field (template path / JS body expr).
+            if data_on:
+                path_expr = path_to_k6_template(st.path)   # for a `template` literal
+                body_expr = body_to_k6_expr(st.body)        # JS expression string
+            else:
+                path_expr = st.path
+                body_expr = None
             steps.append(
                 {
                     "name": st.name,
                     "method": st.method.value,
                     "method_lower": st.method.value.lower(),
-                    "path": st.path,
-                    "body_literal": json.dumps(st.body or {}),
+                    "path": st.path,                 # literal path (no data)
+                    "path_expr": path_expr,          # data path (template literal body)
+                    "body_literal": json.dumps(st.body or {}),  # literal body (no data)
+                    "body_expr": body_expr,          # data body (JS expression)
+                    "parameterized": bool(has_ph),
                 }
             )
         scenarios.append(
@@ -109,6 +131,7 @@ def _prepare_scenarios(model: LoadModel) -> list[dict]:
 
 def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
     """Render a LoadModel to k6 script source (returns the file content)."""
+    data_on = uses_data(model)
     template = _env.get_template("k6.js.j2")
     return template.render(
         target_base_url=model.target_base_url,
@@ -116,6 +139,9 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
         profile_type=model.load_profile.type.value,
         peak_users=model.load_profile.peak_users,
         total_seconds=model.load_profile.total_seconds,
-        scenarios=_prepare_scenarios(model),
+        scenarios=_prepare_scenarios(model, data_on),
         thresholds=_thresholds(model),
+        data_on=data_on,
+        data_loader=k6_data_loader(model) if data_on else "",
+        row_pick=k6_row_pick() if data_on else "",
     )

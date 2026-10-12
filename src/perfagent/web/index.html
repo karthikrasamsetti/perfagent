@@ -55,6 +55,12 @@
   .badge.pass { background:#e1f5ee; color:#0a4f3e; }
   .badge.fail { background:#faeaea; color:#a32d2d; }
   .badge.na { background:#f1efe8; color:#6b6a64; }
+  .guardrail { font-size:12.5px; border-radius:6px; padding:8px 12px; margin-top:10px; }
+  .guardrail.on { background:#e1f5ee; border:1px solid #9fe1cb; color:#085041; }
+  .guardrail.off { background:#f1efe8; border:1px solid #d3d1c7; color:#5f5e5a; }
+  .datainfo { font-size:12px; border-radius:6px; padding:8px 12px; margin-top:8px;
+              background:#eef3fb; border:1px solid #cadbf0; color:#274b73; }
+  code.k { background:#eef1ee; padding:1px 5px; border-radius:4px; font-size:11.5px; }
 </style>
 </head>
 <body>
@@ -67,9 +73,7 @@
   <div style="background:#faeeda;border:1px solid #e0c48a;color:#633806;border-radius:8px;padding:10px 14px;font-size:12.5px;line-height:1.5">
     <b>To actually run a generated script:</b> (1) start a target &mdash; for a safe demo, run
     <code>uv run python -m perfagent.sample_target.app</code> in another terminal (serves sample
-    endpoints on http://127.0.0.1:8000). (2) Download the script below. (3) With <b>k6 installed</b>, run
-    <code>k6 run -e BASE_URL=http://127.0.0.1:8000 loadtest.js</code>. This screen only
-    <i>generates</i> the script &mdash; it does not fire load.
+    endpoints on http://127.0.0.1:8000). (2) Generate, then <b>Run &amp; monitor live</b> (needs <b>k6</b> installed).
   </div>
 </div>
 
@@ -93,6 +97,13 @@
     <div id="endpoints"></div>
     <button class="btn sec small" onclick="addEndpoint()">+ Add endpoint</button>
 
+    <label style="margin-top:14px">Test data file (optional)</label>
+    <div class="row">
+      <input type="file" id="dataFile" accept=".csv,.tsv,.txt,.json,.jsonl"
+             style="flex:1" onchange="uploadData()" />
+    </div>
+    <div class="datainfo" id="dataInfo" style="display:none"></div>
+
     <div class="row mt">
       <button class="btn" id="planBtn" onclick="doPlan()">Draft plan with AI</button>
       <span class="muted">Calls your configured LLM (set the key in .env)</span>
@@ -107,6 +118,7 @@
     <p class="muted">The AI drafted this LoadModel. Edit it if you want, then generate.
        Nothing runs load — this only produces a script.</p>
     <textarea class="plan-json" id="planJson" placeholder="The drafted plan (JSON) appears here after you click Draft plan."></textarea>
+    <div class="guardrail" id="guardrailBadge" style="display:none"></div>
     <div class="row mt">
       <button class="btn amber" id="genBtn" onclick="doGenerate()" disabled>Approve &amp; generate script</button>
     </div>
@@ -163,6 +175,7 @@
 <script>
 let currentPlanId = null;
 let currentScriptId = null;
+let currentDataFileId = null;   // set when a data file is uploaded
 
 function addEndpoint(method="GET", path="", body="") {
   const div = document.createElement("div");
@@ -189,6 +202,30 @@ function readEndpoints() {
     }
     return ep;
   }).filter(Boolean);
+}
+
+async function uploadData() {
+  const input = document.getElementById("dataFile");
+  const info = document.getElementById("dataInfo");
+  if (!input.files || input.files.length === 0) return;
+  const fd = new FormData();
+  fd.append("file", input.files[0]);
+  info.style.display = "block";
+  info.textContent = "Uploading & validating...";
+  try {
+    const r = await fetch("/api/data", { method: "POST", body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "upload failed");
+    currentDataFileId = j.data_file_id;
+    const cols = j.fields.map(f => `<code class="k">\${${f}}</code>`).join(" ");
+    let msg = `&#128193; <b>${j.filename}</b> — ${j.row_count} rows, ${j.fields.length} columns. ` +
+              `Use in endpoint bodies/paths as: ${cols}`;
+    if (j.warnings && j.warnings.length) msg += `<br><span class="muted">Warnings: ${j.warnings.join("; ")}</span>`;
+    info.innerHTML = msg;
+  } catch(e) {
+    currentDataFileId = null;
+    info.textContent = "Error: " + e.message;
+  }
 }
 
 async function loadTools() {
@@ -221,11 +258,25 @@ async function doPlan() {
     const pill = document.getElementById("planPill"); pill.style.display="inline-block";
     pill.textContent = "drafted by " + j.provider;
     status.className="status ok"; status.textContent="Plan drafted. Review it, then approve & generate.";
+    showGuardrailBadge(j.guardrail);
     loadPlans();
   } catch(e) {
     status.className="status err"; status.textContent="Error: " + e.message;
   } finally {
     document.getElementById("planBtn").disabled = false;
+  }
+}
+
+function showGuardrailBadge(g) {
+  const badge = document.getElementById("guardrailBadge");
+  badge.style.display = "block";
+  if (g && g.total > 0) {
+    badge.className = "guardrail on";
+    badge.innerHTML = "&#128737; <b>" + g.total + " sensitive value" +
+      (g.total !== 1 ? "s" : "") + "</b> redacted before sending to the AI (" + g.detail + ")";
+  } else {
+    badge.className = "guardrail off";
+    badge.innerHTML = "&#128737; No sensitive data detected in this plan's inputs.";
   }
 }
 
@@ -237,9 +288,11 @@ async function doGenerate() {
   catch(e) { status.className="status err"; status.textContent="Plan JSON is invalid: " + e.message; return; }
   status.className="status"; status.textContent="Generating script...";
   try {
+    const payload = { tool: document.getElementById("tool").value, load_model: model };
+    if (currentDataFileId) payload.data_file_id = currentDataFileId;
     const r = await fetch(`/api/plan/${currentPlanId}/generate`, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ tool: document.getElementById("tool").value, load_model: model })
+      body: JSON.stringify(payload)
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || "generate failed");
@@ -279,6 +332,7 @@ async function openPlan(id) {
   document.getElementById("planJson").value = JSON.stringify(j.load_model, null, 2);
   document.getElementById("genBtn").disabled = false;
   const pill = document.getElementById("planPill"); pill.style.display="inline-block"; pill.textContent="loaded";
+  document.getElementById("guardrailBadge").style.display = "none";
   document.getElementById("planStatus").className="status ok";
   document.getElementById("planStatus").textContent = `Loaded plan ${id.slice(0,8)} (${j.scripts.length} script(s)).`;
   window.scrollTo({top:0, behavior:"smooth"});
@@ -293,7 +347,6 @@ async function runScript() {
   document.getElementById("monitorCard").style.display = "block";
   rs.className = "status"; rs.textContent = "Starting run...";
 
-  // Warn early if k6 isn't installed.
   try {
     const av = await (await fetch("/api/run/available")).json();
     if (!av.k6) {
@@ -341,7 +394,6 @@ async function pollRun() {
     if (j.status === "running") {
       rs.className = "status"; rs.textContent = "Running against " + j.target + " ...";
     } else {
-      // terminal state
       clearInterval(pollTimer); pollTimer = null;
       document.getElementById("runBtn").disabled = false;
       document.getElementById("stopBtn").disabled = true;

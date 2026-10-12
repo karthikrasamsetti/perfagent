@@ -1,8 +1,9 @@
-"""Database — persists plans and scripts with lineage.
+"""Database — persists plans, scripts, and uploaded data files, with lineage.
 
 Phase 3 uses SQLite by default (a file on disk) so there's nothing to install.
 Swapping to Postgres later is a one-line URL change. Each script row points back to
-the plan row it came from, so lineage is queryable.
+the plan row it came from; a data-file row is standalone (uploaded once, referenced
+by filename in the plan's LoadModel) so lineage is queryable.
 """
 
 from __future__ import annotations
@@ -52,6 +53,25 @@ class ScriptRow(Base):
     content: Mapped[str] = mapped_column(Text)
 
     plan: Mapped[PlanRow] = relationship(back_populates="scripts")
+
+
+class DataFileRow(Base):
+    """An uploaded test-data file. Content is stored so the runner can write it
+    next to the generated script at run time. Values never go to the LLM."""
+
+    __tablename__ = "data_files"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    filename: Mapped[str] = mapped_column(String(255))
+    source_format: Mapped[str] = mapped_column(String(20), default="csv")
+    columns_csv: Mapped[str] = mapped_column(Text, default="")   # comma-joined field names
+    row_count: Mapped[int] = mapped_column(default=0)
+    content: Mapped[str] = mapped_column(Text)                    # the raw file text
+
+    @property
+    def columns(self) -> list[str]:
+        return [c for c in self.columns_csv.split(",") if c]
 
 
 _engine = None
