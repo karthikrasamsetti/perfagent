@@ -32,6 +32,7 @@ from perfagent.contracts.artifacts import PlanArtifact
 from perfagent.contracts.load_model import DataFile, LoadModel
 from perfagent.data import DataValidationError, load_data
 from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
+from perfagent.evaluation import evaluate_plan, evaluate_report
 from perfagent.generator import generate_script, supported_tools
 from perfagent.planner import PlanRequest, draft_plan
 from perfagent.providers import build_provider
@@ -156,11 +157,15 @@ def create_plan(request: PlanRequest) -> dict:
         s.add(row)
         s.commit()
 
+    # Grade the drafted plan against the endpoints that were actually supplied.
+    plan_eval = evaluate_plan(plan.load_model, request).summary()
+
     return {
         "plan_id": plan.id,
         "provider": provider.name,
         "load_model": plan.load_model.model_dump(),
         "guardrail": _summarize_redactions(redaction_counts),
+        "evaluation": plan_eval,
     }
 
 
@@ -413,11 +418,19 @@ def run_report(run_id: str) -> dict:
         provider = None
     narrative = narrate(run.target, run.snapshot, verdict, provider)
 
+    # Check the AI narrative cites only real, computed numbers.
+    narrative_text = " ".join([
+        narrative.headline, narrative.summary,
+        " ".join(narrative.observations), " ".join(narrative.recommendations),
+    ])
+    report_eval = evaluate_report(narrative_text, run.snapshot, verdict).summary()
+
     return {
         "run_id": run.run_id,
         "target": run.target,
         "verdict": verdict,
         "narrative": narrative.model_dump(),
+        "evaluation": report_eval,
     }
 
 
