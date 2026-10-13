@@ -5,483 +5,695 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AI Performance Testing Agent</title>
 <style>
-  :root { --ink:#1f2421; --teal:#0f6e56; --teal-d:#0a4f3e; --amber:#854f0b;
-          --line:#e2e0d8; --bg:#f7f6f2; --card:#fff; --muted:#6b6a64; }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-         color: var(--ink); background: var(--bg); }
-  header { background: var(--teal); color:#fff; padding: 16px 24px; }
-  header h1 { margin:0; font-size: 18px; font-weight:600; }
-  header p { margin:4px 0 0; font-size: 13px; opacity:.9; }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; display:grid;
-          grid-template-columns: 1fr 1fr; gap: 20px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
-          padding:18px; }
-  .card h2 { margin:0 0 12px; font-size:15px; color:var(--teal-d); }
-  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
-  input, textarea, select { width:100%; padding:8px 10px; border:1px solid var(--line);
-          border-radius:6px; font-size:13px; font-family:inherit; background:#fff; }
-  textarea { resize:vertical; }
-  .endpoint { display:grid; grid-template-columns: 90px 1fr 1.2fr 32px; gap:6px; margin-bottom:6px; }
-  .endpoint input { margin:0; }
-  .btn { background:var(--teal); color:#fff; border:none; padding:9px 16px; border-radius:6px;
-         font-size:13px; cursor:pointer; font-weight:500; }
-  .btn:hover { background:var(--teal-d); }
-  .btn.sec { background:#fff; color:var(--teal-d); border:1px solid var(--teal); }
-  .btn.amber { background:var(--amber); }
-  .btn:disabled { opacity:.5; cursor:not-allowed; }
-  .btn.small { padding:5px 10px; font-size:12px; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .row.mt { margin-top:12px; }
-  .muted { color:var(--muted); font-size:12px; }
-  .full { grid-column: 1 / -1; }
-  pre { background:#1e2b26; color:#d7e6df; padding:14px; border-radius:8px; overflow:auto;
-        font-size:12px; line-height:1.5; max-height:420px; }
-  .plan-json { width:100%; min-height:280px; font-family: ui-monospace, Menlo, Consolas, monospace;
-        font-size:12px; }
-  .pill { display:inline-block; background:#e1f5ee; color:var(--teal-d); padding:2px 8px;
-          border-radius:999px; font-size:11px; margin-left:6px; }
-  .status { font-size:12px; margin-top:8px; min-height:16px; }
-  .status.err { color:#a32d2d; }
-  .status.ok { color:var(--teal); }
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
-  .x { background:#faeeea; color:#a32d2d; border:none; border-radius:6px; cursor:pointer; }
-  .steps { margin:2px 0 0 0; padding-left:16px; }
-  .metric { font-size:22px; font-weight:600; color:var(--teal-d); }
-  .headline-box { font-size:15px; padding:12px 14px; border-radius:8px; background:#f1efe8;
-                  border-left:5px solid var(--teal); margin:8px 0 12px; }
-  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; }
-  .badge.pass { background:#e1f5ee; color:#0a4f3e; }
-  .badge.fail { background:#faeaea; color:#a32d2d; }
-  .badge.na { background:#f1efe8; color:#6b6a64; }
-  .guardrail { font-size:12.5px; border-radius:6px; padding:8px 12px; margin-top:10px; }
-  .guardrail.on { background:#e1f5ee; border:1px solid #9fe1cb; color:#085041; }
-  .guardrail.off { background:#f1efe8; border:1px solid #d3d1c7; color:#5f5e5a; }
-  .datainfo { font-size:12px; border-radius:6px; padding:8px 12px; margin-top:8px;
-              background:#eef3fb; border:1px solid #cadbf0; color:#274b73; }
-  code.k { background:#eef1ee; padding:1px 5px; border-radius:4px; font-size:11.5px; }
-  .evalinfo { font-size:12px; border-radius:6px; padding:7px 11px; margin-top:8px; }
-  .evalinfo.ok  { background:#e1f5ee; border:1px solid #9fe1cb; color:#085041; }
-  .evalinfo.warn{ background:#faeeda; border:1px solid #e0c48a; color:#633806; }
+  :root{
+    --ink:#1b211e; --muted:#6b7280; --line:#e6e4dd; --bg:#f5f6f4; --card:#ffffff;
+    --teal:#0f6e56; --teal-d:#0a5343; --teal-l:#e6f4ef; --teal-ring:#bfe4d7;
+    --amber:#9a6412; --amber-l:#fbf0dc; --amber-line:#e8cf9b;
+    --red:#b4342b; --red-l:#fbe9e7; --blue:#2563a8; --blue-l:#e8f0f9;
+    --shadow:0 1px 2px rgba(20,30,26,.04), 0 4px 16px rgba(20,30,26,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+       color:var(--ink);background:var(--bg);font-size:14px;line-height:1.5;}
+  a{color:var(--teal)}
+  .topbar{background:linear-gradient(100deg,#0f6e56,#0a5343);color:#fff;padding:14px 28px;
+          display:flex;align-items:center;gap:12px;}
+  .topbar .logo{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.16);
+                display:flex;align-items:center;justify-content:center;font-size:16px;}
+  .topbar h1{margin:0;font-size:16px;font-weight:650;letter-spacing:.1px}
+  .topbar p{margin:0;font-size:12px;opacity:.85}
+
+  /* stepper */
+  .stepper{display:flex;gap:6px;max-width:1120px;margin:20px auto 0;padding:0 24px;flex-wrap:wrap}
+  .step{flex:1;min-width:130px;display:flex;align-items:center;gap:10px;padding:10px 12px;
+        background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+        opacity:.55;transition:.15s}
+  .step.active{opacity:1;border-color:var(--teal-ring);background:var(--teal-l)}
+  .step.done{opacity:1}
+  .step .num{width:26px;height:26px;border-radius:50%;background:#eef0ee;color:var(--muted);
+             display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:none}
+  .step.active .num{background:var(--teal);color:#fff}
+  .step.done .num{background:var(--teal-l);color:var(--teal-d);border:1px solid var(--teal-ring)}
+  .step .lbl{font-size:12.5px;font-weight:600}
+  .step .sub{font-size:11px;color:var(--muted);font-weight:500}
+
+  .wrap{max-width:1120px;margin:20px auto 60px;padding:0 24px}
+  .panel{display:none}
+  .panel.show{display:block;animation:fade .2s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;
+        box-shadow:var(--shadow);margin-bottom:18px}
+  .card h2{margin:0 0 4px;font-size:16px;font-weight:650}
+  .card .hint{color:var(--muted);font-size:12.5px;margin:0 0 16px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+
+  label{display:block;font-size:12px;color:var(--muted);font-weight:600;margin:0 0 5px}
+  input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+        font-size:13.5px;font-family:inherit;background:#fff;color:var(--ink);transition:.12s}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-ring)}
+  .field{margin-bottom:14px}
+
+  .btn{display:inline-flex;align-items:center;gap:7px;background:var(--teal);color:#fff;border:none;
+       padding:11px 18px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;transition:.12s}
+  .btn:hover{background:var(--teal-d)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.ghost{background:#fff;color:var(--teal-d);border:1px solid var(--teal-ring)}
+  .btn.ghost:hover{background:var(--teal-l)}
+  .btn.amber{background:var(--amber)}.btn.amber:hover{filter:brightness(.95)}
+  .btn.sm{padding:7px 12px;font-size:12.5px}
+  .btn.danger{background:var(--red-l);color:var(--red);border:1px solid #f0c8c3}
+  .btn.danger:hover{background:#f7ddd9}
+  .btnrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .spacer{flex:1}
+
+  .endpoint{display:grid;grid-template-columns:96px 1fr 1.3fr 34px;gap:8px;margin-bottom:8px}
+  .endpoint input,.endpoint select{margin:0}
+  .iconbtn{border:none;border-radius:9px;cursor:pointer;color:var(--red);
+           background:var(--red-l);font-size:15px;line-height:1}
+  .iconbtn:hover{background:#f7ddd9}
+
+  .dz{border:1.5px dashed var(--teal-ring);border-radius:12px;padding:14px;text-align:center;
+      background:var(--teal-l);cursor:pointer;transition:.12s;font-size:13px;color:var(--teal-d)}
+  .dz:hover{background:#dcefe8}
+  .note{font-size:12.5px;border-radius:10px;padding:10px 13px;margin-top:10px;display:flex;gap:8px;align-items:flex-start}
+  .note.info{background:var(--blue-l);color:#1d4e82;border:1px solid #c9dcf0}
+  .note.ok{background:var(--teal-l);color:var(--teal-d);border:1px solid var(--teal-ring)}
+  .note.warn{background:var(--amber-l);color:var(--amber);border:1px solid var(--amber-line)}
+  .note.err{background:var(--red-l);color:var(--red);border:1px solid #f0c8c3}
+  code.k{background:#eef1ee;padding:1px 6px;border-radius:5px;font-size:12px;font-family:ui-monospace,Menlo,monospace}
+
+  /* plan editor */
+  .scn{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px;background:#fcfcfb}
+  .scn-head{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+  .scn-head input.name{font-weight:650;font-size:14px}
+  .weightwrap{display:flex;align-items:center;gap:8px;min-width:170px}
+  .weightwrap input[type=range]{accent-color:var(--teal)}
+  .wbadge{font-size:11px;font-weight:700;color:var(--teal-d);background:var(--teal-l);
+          border:1px solid var(--teal-ring);border-radius:999px;padding:2px 8px;white-space:nowrap}
+  .stepline{display:grid;grid-template-columns:90px 1fr 1.1fr 30px;gap:7px;margin-bottom:6px;align-items:center}
+  .stepline input,.stepline select{margin:0;font-size:12.5px;padding:7px 9px}
+  .mini{font-size:11px;color:var(--muted);margin:10px 0 4px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+  .thr{display:grid;grid-template-columns:1fr 70px 1fr 30px;gap:7px;margin-bottom:6px;align-items:center}
+  .thr input,.thr select{margin:0;font-size:12.5px;padding:7px 9px}
+  .toggle{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+
+  /* script */
+  pre{background:#10211b;color:#cfe7dd;padding:16px;border-radius:12px;overflow:auto;font-size:12px;
+      line-height:1.6;max-height:440px;font-family:ui-monospace,Menlo,Consolas,monospace;margin:0}
+  pre .kw{color:#7fd6b4}pre .str{color:#e6c07b}pre .com{color:#6b8277}
+
+  /* metrics */
+  .tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:4px 0 16px}
+  .tile{background:#fcfcfb;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .tile .v{font-size:22px;font-weight:750;color:var(--teal-d);letter-spacing:-.3px}
+  .tile .l{font-size:11px;color:var(--muted);font-weight:600;margin-top:2px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700}
+  .pill.pass{background:var(--teal-l);color:var(--teal-d)}
+  .pill.fail{background:var(--red-l);color:var(--red)}
+  .pill.na{background:var(--amber-l);color:var(--amber)}
+  .pill.ghost{background:#eef0ee;color:var(--muted)}
+  .verdict-hero{display:flex;align-items:center;gap:14px;padding:16px 18px;border-radius:14px;margin-bottom:14px}
+  .verdict-hero.pass{background:var(--teal-l);border:1px solid var(--teal-ring)}
+  .verdict-hero.fail{background:var(--red-l);border:1px solid #f0c8c3}
+  .verdict-hero.na{background:var(--amber-l);border:1px solid var(--amber-line)}
+  .verdict-hero .big{font-size:20px}
+  .statusline{font-size:12.5px;color:var(--muted);min-height:18px;margin-top:8px}
+  .statusline.ok{color:var(--teal-d)}.statusline.err{color:var(--red)}
+  .histrow td{font-size:12.5px}
+  details summary{cursor:pointer;font-size:12.5px;color:var(--teal-d);font-weight:600}
+  @media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr}.tiles{grid-template-columns:repeat(3,1fr)}
+    .stepper{flex-direction:column}}
 </style>
 </head>
 <body>
-<header>
-  <h1>AI Performance Testing Agent</h1>
-  <p>Plan &rarr; review &amp; approve &rarr; generate script. AI drafts; you approve; code generates.</p>
-</header>
 
-<div style="max-width:1100px;margin:16px auto 0;padding:0 24px">
-  <div style="background:#faeeda;border:1px solid #e0c48a;color:#633806;border-radius:8px;padding:10px 14px;font-size:12.5px;line-height:1.5">
-    <b>To actually run a generated script:</b> (1) start a target &mdash; for a safe demo, run
-    <code>uv run python -m perfagent.sample_target.app</code> in another terminal (serves sample
-    endpoints on http://127.0.0.1:8000). (2) Generate, then <b>Run &amp; monitor live</b> (needs <b>k6</b> installed).
+<div class="topbar">
+  <div class="logo">⚡</div>
+  <div>
+    <h1>AI Performance Testing Agent</h1>
+    <p>AI drafts the plan · you approve · code generates, runs &amp; reports</p>
   </div>
+</div>
+
+<!-- STEPPER -->
+<div class="stepper" id="stepper">
+  <div class="step" data-step="1"><div class="num">1</div><div><div class="lbl">Describe</div><div class="sub">target &amp; endpoints</div></div></div>
+  <div class="step" data-step="2"><div class="num">2</div><div><div class="lbl">Review plan</div><div class="sub">edit &amp; approve</div></div></div>
+  <div class="step" data-step="3"><div class="num">3</div><div><div class="lbl">Script</div><div class="sub">generated code</div></div></div>
+  <div class="step" data-step="4"><div class="num">4</div><div><div class="lbl">Run</div><div class="sub">live metrics</div></div></div>
+  <div class="step" data-step="5"><div class="num">5</div><div><div class="lbl">Report</div><div class="sub">verdict</div></div></div>
 </div>
 
 <div class="wrap">
-  <!-- LEFT: input -->
-  <div class="card">
-    <h2>1 &middot; Describe the test</h2>
-    <label>Target base URL</label>
-    <input id="target" value="http://127.0.0.1:8000" />
 
-    <label>Goal (plain language)</label>
-    <input id="goal" value="Realistic load test of browsing and checkout" />
+  <!-- ===== STEP 1: DESCRIBE ===== -->
+  <div class="panel show" id="panel1">
+    <div class="card">
+      <h2>Describe the test</h2>
+      <p class="hint">Tell the agent what to test. It will draft a plan you can edit and approve.</p>
 
-    <div class="row">
-      <div style="flex:1"><label>Max users</label><input id="maxUsers" type="number" value="100" /></div>
-      <div style="flex:1"><label>Duration (s)</label><input id="duration" type="number" value="240" /></div>
-      <div style="flex:1"><label>Tool</label><select id="tool"></select></div>
+      <div class="grid2">
+        <div class="field"><label>Target base URL</label><input id="target" value="http://127.0.0.1:8000" /></div>
+        <div class="field"><label>Goal (plain language)</label><input id="goal" value="Realistic load test of browsing and checkout" /></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>Max users</label><input id="maxUsers" type="number" value="50" /></div>
+        <div class="field"><label>Duration (seconds)</label><input id="duration" type="number" value="60" /></div>
+        <div class="field"><label>Load tool</label><select id="tool"></select></div>
+      </div>
+
+      <label>Endpoints</label>
+      <div id="endpoints"></div>
+      <button class="btn ghost sm" onclick="addEndpoint()">+ Add endpoint</button>
+
+      <div class="field" style="margin-top:16px">
+        <label>Test data file (optional) — parameterize requests per virtual user</label>
+        <div class="dz" id="dz" onclick="document.getElementById('dataFile').click()">
+          📁 Click to upload a CSV / TSV / TXT / JSON file
+        </div>
+        <input type="file" id="dataFile" accept=".csv,.tsv,.txt,.json,.jsonl" style="display:none" onchange="uploadData()" />
+        <div class="note info" id="dataInfo" style="display:none"></div>
+      </div>
+
+      <div class="field" style="margin-top:4px">
+        <label>Custom headers (optional) — sent with every request (e.g. Authorization)</label>
+        <div id="headersList"></div>
+        <button class="btn ghost sm" onclick="addHeader()">+ Add header</button>
+      </div>
+
+
+      <div class="btnrow">
+        <button class="btn" id="planBtn" onclick="doPlan()">✨ Draft plan with AI</button>
+        <span class="hint" style="margin:0">Calls your configured LLM (key in .env)</span>
+      </div>
+      <div class="statusline" id="planStatus"></div>
     </div>
-
-    <label>Endpoints</label>
-    <div id="endpoints"></div>
-    <button class="btn sec small" onclick="addEndpoint()">+ Add endpoint</button>
-
-    <label style="margin-top:14px">Test data file (optional)</label>
-    <div class="row">
-      <input type="file" id="dataFile" accept=".csv,.tsv,.txt,.json,.jsonl"
-             style="flex:1" onchange="uploadData()" />
-    </div>
-    <div class="datainfo" id="dataInfo" style="display:none"></div>
-
-    <div class="row mt">
-      <button class="btn" id="planBtn" onclick="doPlan()">Draft plan with AI</button>
-      <span class="muted">Calls your configured LLM (set the key in .env)</span>
-    </div>
-    <div class="status" id="planStatus"></div>
   </div>
 
-  <!-- RIGHT: review + approve -->
-  <div class="card">
-    <h2>2 &middot; Review &amp; approve the plan
-      <span class="pill" id="planPill" style="display:none"></span></h2>
-    <p class="muted">The AI drafted this LoadModel. Edit it if you want, then generate.
-       Nothing runs load — this only produces a script.</p>
-    <textarea class="plan-json" id="planJson" placeholder="The drafted plan (JSON) appears here after you click Draft plan."></textarea>
-    <div class="guardrail" id="guardrailBadge" style="display:none"></div>
-    <div class="evalinfo" id="planEval" style="display:none"></div>
-    <div class="row mt">
-      <button class="btn amber" id="genBtn" onclick="doGenerate()" disabled>Approve &amp; generate script</button>
+  <!-- ===== STEP 2: REVIEW PLAN ===== -->
+  <div class="panel" id="panel2">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+        <h2 style="margin:0">Review &amp; approve the plan</h2>
+        <span class="pill ghost" id="planMeta" style="display:none"></span>
+      </div>
+      <p class="hint">The AI drafted this. Adjust scenarios, weights, think-times and thresholds — then approve. Nothing runs load here.</p>
+
+      <div class="note" id="guardrailBadge" style="display:none"></div>
+      <div class="note" id="planEval" style="display:none"></div>
+
+      <label class="toggle" style="margin:14px 0 10px">
+        <input type="checkbox" id="rawToggle" style="width:auto" onchange="toggleRaw()" /> Edit as raw JSON (advanced)
+      </label>
+
+      <!-- form editor -->
+      <div id="planForm">
+        <div class="field">
+          <label>Target base URL</label>
+          <input id="pfTarget" />
+        </div>
+        <div id="scenarios"></div>
+        <button class="btn ghost sm" onclick="addScenario()">+ Add scenario</button>
+
+        <div class="mini" style="margin-top:18px">Pass / fail thresholds</div>
+        <div id="thresholds"></div>
+        <button class="btn ghost sm" onclick="addThreshold()">+ Add threshold</button>
+      </div>
+
+      <!-- raw editor -->
+      <textarea id="planJson" style="display:none;min-height:340px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px"></textarea>
+
+      <div class="btnrow" style="margin-top:16px">
+        <button class="btn ghost sm" onclick="goStep(1)">← Back</button>
+        <div class="spacer"></div>
+        <button class="btn amber" id="genBtn" onclick="doGenerate()">✓ Approve &amp; generate script</button>
+      </div>
+      <div class="statusline" id="genStatus"></div>
     </div>
-    <div class="status" id="genStatus"></div>
   </div>
 
-  <!-- SCRIPT OUTPUT -->
-  <div class="card full">
-    <h2>3 &middot; Generated script <span class="pill" id="scriptPill" style="display:none"></span></h2>
-    <div class="row" style="margin-bottom:8px">
-      <button class="btn sec small" id="dlBtn" onclick="download()" disabled>Download</button>
-      <button class="btn small" id="runBtn" onclick="runScript()" disabled>Run &amp; monitor live</button>
-      <button class="btn sec small" id="stopBtn" onclick="stopRun()" disabled>Stop</button>
-      <span class="muted" id="scriptMeta"></span>
+  <!-- ===== STEP 3: SCRIPT ===== -->
+  <div class="panel" id="panel3">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="margin:0">Generated script</h2>
+        <span class="pill ghost" id="scriptPill" style="display:none"></span>
+      </div>
+      <p class="hint" id="scriptMeta">Deterministic — same plan always produces the same script.</p>
+      <pre id="scriptOut">The generated script appears here.</pre>
+      <div class="btnrow">
+        <button class="btn ghost sm" onclick="goStep(2)">← Back to plan</button>
+        <button class="btn ghost sm" id="dlBtn" onclick="download()" disabled>⬇ Download</button>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="preflightBtn" onclick="doPreflight()" disabled>✈ Pre-flight check</button>
+        <button class="btn" id="runBtn" onclick="runScript()" disabled>▶ Run &amp; monitor live</button>
+      </div>
+      <div class="note warn" style="margin-top:10px" id="runHint" style="display:none"></div>
+      <div class="note" id="preflightResult" style="display:none"></div>
     </div>
-    <pre id="scriptOut">The generated script appears here.</pre>
   </div>
 
-  <!-- LIVE MONITOR -->
-  <div class="card full" id="monitorCard" style="display:none">
-    <h2>4 &middot; Live run <span class="pill" id="runPill"></span></h2>
-    <div class="status" id="runStatus"></div>
-    <div class="row" style="gap:24px;margin:10px 0">
-      <div><div class="muted">Elapsed</div><div class="metric" id="mElapsed">0s</div></div>
-      <div><div class="muted">Requests</div><div class="metric" id="mReqs">0</div></div>
-      <div><div class="muted">RPS</div><div class="metric" id="mRps">0</div></div>
-      <div><div class="muted">Error rate</div><div class="metric" id="mErr">0%</div></div>
-      <div><div class="muted">p95 latency</div><div class="metric" id="mP95">0 ms</div></div>
-      <div><div class="muted">p99 latency</div><div class="metric" id="mP99">0 ms</div></div>
+  <!-- ===== STEP 4: RUN ===== -->
+  <div class="panel" id="panel4">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="margin:0">Live run</h2>
+        <span class="pill ghost" id="runPill">idle</span>
+        <div class="spacer"></div>
+        <button class="btn danger sm" id="stopBtn" onclick="stopRun()" disabled>■ Stop</button>
+      </div>
+      <div class="statusline" id="runStatus"></div>
+            <canvas id="liveChart" height="120" style="width:100%;margin:6px 0 14px;border:1px solid var(--line);border-radius:12px;background:#fcfcfb"></canvas>
+      <div class="tiles">
+        <div class="tile"><div class="v" id="mElapsed">0s</div><div class="l">Elapsed</div></div>
+        <div class="tile"><div class="v" id="mReqs">0</div><div class="l">Requests</div></div>
+        <div class="tile"><div class="v" id="mRps">0</div><div class="l">Req/sec</div></div>
+        <div class="tile"><div class="v" id="mErr">0%</div><div class="l">Error rate</div></div>
+        <div class="tile"><div class="v" id="mP95">0 ms</div><div class="l">p95 latency</div></div>
+        <div class="tile"><div class="v" id="mP99">0 ms</div><div class="l">p99 latency</div></div>
+      </div>
+      <table id="epTable"><thead><tr><th>Endpoint</th><th>Requests</th><th>Failed</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead><tbody></tbody></table>
     </div>
-    <table id="epTable"><thead><tr><th>Endpoint</th><th>Requests</th><th>Failed</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead><tbody></tbody></table>
   </div>
 
-  <!-- REPORT -->
-  <div class="card full" id="reportCard" style="display:none">
-    <h2>5 &middot; Report for stakeholders <span class="pill" id="verdictPill"></span></h2>
-    <div class="row" style="margin-bottom:8px">
-      <button class="btn small" id="reportDlBtn" onclick="downloadReport()">Download HTML report</button>
-      <span class="muted">Deterministic verdict + AI-written summary from the real numbers</span>
+  <!-- ===== STEP 5: REPORT ===== -->
+  <div class="panel" id="panel5">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+        <h2 style="margin:0">Report for stakeholders</h2>
+        <div class="spacer"></div>
+        <button class="btn ghost sm" onclick="downloadReport()">⬇ Download HTML report</button>
+      </div>
+      <div class="verdict-hero na" id="verdictHero">
+        <div class="big" id="verdictEmoji">⏳</div>
+        <div><div style="font-weight:700" id="verdictHeadline">Waiting for a finished run…</div>
+             <div class="hint" id="verdictSub" style="margin:0"></div></div>
+      </div>
+      <div class="note" id="reportEval" style="display:none"></div>
+      <p id="reportSummary"></p>
+      <div id="reportObs"></div>
+      <div id="reportRecs"></div>
     </div>
-    <div class="headline-box" id="reportHeadline"></div>
-    <p id="reportSummary"></p>
-    <div id="reportObs"></div>
-    <div id="reportRecs"></div>
   </div>
 
   <!-- HISTORY -->
-  <div class="card full">
-    <h2>Saved plans <button class="btn sec small" onclick="loadPlans()" style="margin-left:8px">Refresh</button></h2>
-    <table id="plansTable"><thead><tr><th>Created</th><th>Target</th><th>Goal</th><th>Scripts</th><th></th></tr></thead><tbody></tbody></table>
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:14px">Saved plans</h2>
+      <button class="btn ghost sm" onclick="loadPlans()">↻ Refresh</button>
+    </div>
+    <table id="plansTable" style="margin-top:10px"><thead><tr><th>Created</th><th>Target</th><th>Goal</th><th>Scripts</th><th></th></tr></thead><tbody></tbody></table>
   </div>
+
 </div>
 
 <script>
-let currentPlanId = null;
-let currentScriptId = null;
-let currentDataFileId = null;   // set when a data file is uploaded
+let currentPlanId=null, currentScriptId=null, currentDataFileId=null, currentRunId=null, pollTimer=null;
+let planModel=null;        // the editable plan object
+let dataColumns=[];        // uploaded data file columns
 
-function addEndpoint(method="GET", path="", body="") {
-  const div = document.createElement("div");
-  div.className = "endpoint";
-  div.innerHTML = `
-    <select>${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${m===method?"selected":""}>${m}</option>`).join("")}</select>
+/* ---------- stepper ---------- */
+function goStep(n){
+  for(let i=1;i<=5;i++){
+    document.getElementById('panel'+i).classList.toggle('show', i===n);
+  }
+  document.querySelectorAll('.step').forEach(s=>{
+    const si=+s.dataset.step;
+    s.classList.toggle('active', si===n);
+    s.classList.toggle('done', si<n);
+  });
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+document.querySelectorAll('.step').forEach(s=>s.addEventListener('click',()=>{
+  const n=+s.dataset.step;
+  // allow going back, or forward only if that step is reachable
+  if(n===1) goStep(1);
+  else if(n===2 && planModel) goStep(2);
+  else if(n===3 && currentScriptId) goStep(3);
+  else if(n===4 && currentRunId) goStep(4);
+  else if(n===5 && currentRunId) goStep(5);
+}));
+
+/* ---------- endpoints (step 1) ---------- */
+function addEndpoint(method="GET",path="",body=""){
+  const d=document.createElement('div');d.className='endpoint';
+  d.innerHTML=`<select>${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${m===method?'selected':''}>${m}</option>`).join('')}</select>
     <input placeholder="/path" value="${path}" />
     <input placeholder='body JSON e.g. {"user":"demo"}' value='${body}' />
-    <button class="x" onclick="this.parentElement.remove()">&times;</button>`;
-  document.getElementById("endpoints").appendChild(div);
+    <button class="iconbtn" onclick="this.parentElement.remove()">×</button>`;
+  document.getElementById('endpoints').appendChild(d);
 }
-
-function readEndpoints() {
-  return [...document.querySelectorAll("#endpoints .endpoint")].map(d => {
-    const method = d.querySelector("select").value;
-    const inputs = d.querySelectorAll("input");
-    const path = inputs[0].value.trim();
-    const bodyRaw = inputs[1].value.trim();
-    if (!path) return null;
-    const ep = { method, path };
-    if (bodyRaw) {
-      try { ep.example_body = JSON.parse(bodyRaw); }
-      catch(e) { throw new Error(`Body for ${method} ${path} is not valid JSON: ${e.message}`); }
-    }
+function readEndpoints(){
+  return [...document.querySelectorAll('#endpoints .endpoint')].map(d=>{
+    const method=d.querySelector('select').value;
+    const ins=d.querySelectorAll('input');
+    const path=ins[0].value.trim(); const bodyRaw=ins[1].value.trim();
+    if(!path) return null;
+    const ep={method,path};
+    if(bodyRaw){ try{ep.example_body=JSON.parse(bodyRaw)}catch(e){throw new Error(`Body for ${method} ${path} isn't valid JSON: ${e.message}`)} }
     return ep;
   }).filter(Boolean);
 }
 
-async function uploadData() {
-  const input = document.getElementById("dataFile");
-  const info = document.getElementById("dataInfo");
-  if (!input.files || input.files.length === 0) return;
-  const fd = new FormData();
-  fd.append("file", input.files[0]);
-  info.style.display = "block";
-  info.textContent = "Uploading & validating...";
-  try {
-    const r = await fetch("/api/data", { method: "POST", body: fd });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || "upload failed");
-    currentDataFileId = j.data_file_id;
-    const cols = j.fields.map(f => `<code class="k">\${${f}}</code>`).join(" ");
-    let msg = `&#128193; <b>${j.filename}</b> — ${j.row_count} rows, ${j.fields.length} columns. ` +
-              `Use in endpoint bodies/paths as: ${cols}`;
-    if (j.warnings && j.warnings.length) msg += `<br><span class="muted">Warnings: ${j.warnings.join("; ")}</span>`;
-    info.innerHTML = msg;
-  } catch(e) {
-    currentDataFileId = null;
-    info.textContent = "Error: " + e.message;
+/* ---------- data upload ---------- */
+async function uploadData(){
+  const input=document.getElementById('dataFile'); const info=document.getElementById('dataInfo');
+  if(!input.files||!input.files.length) return;
+  const fd=new FormData(); fd.append('file',input.files[0]);
+  info.style.display='flex'; info.className='note info'; info.textContent='Uploading & validating…';
+  try{
+    const r=await fetch('/api/data',{method:'POST',body:fd}); const j=await r.json();
+    if(!r.ok) throw new Error(j.detail||'upload failed');
+    currentDataFileId=j.data_file_id; dataColumns=j.fields;
+    const cols=j.fields.map(f=>`<code class="k">\${${f}}</code>`).join(' ');
+    info.className='note ok';
+    info.innerHTML=`📁 <b>${j.filename}</b> — ${j.row_count} rows, ${j.fields.length} columns. Use in bodies/paths: ${cols}`;
+    document.getElementById('dz').innerHTML='📁 '+j.filename+' — click to replace';
+  }catch(e){ currentDataFileId=null; info.className='note err'; info.textContent='Error: '+e.message; }
+}
+
+async function loadTools(){
+  const j=await (await fetch('/api/tools')).json();
+  document.getElementById('tool').innerHTML=j.tools.map(t=>`<option value="${t}">${t}</option>`).join('');
+}
+
+/* ---------- draft plan ---------- */
+async function doPlan(){
+  const status=document.getElementById('planStatus');
+  let eps; try{eps=readEndpoints()}catch(e){status.className='statusline err';status.textContent=e.message;return;}
+  if(!eps.length){status.className='statusline err';status.textContent='Add at least one endpoint.';return;}
+  status.className='statusline';status.textContent='Asking the AI to draft a plan…';
+  document.getElementById('planBtn').disabled=true;
+  try{
+    const body={target_base_url:document.getElementById('target').value.trim(),
+      goal:document.getElementById('goal').value.trim(),
+      max_users:parseInt(document.getElementById('maxUsers').value),
+      duration_seconds:parseInt(document.getElementById('duration').value),endpoints:eps};
+    const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
+    currentPlanId=j.plan_id; planModel=j.load_model;
+    renderPlanForm(); renderRawFromModel();
+    showGuardrail(j.guardrail); showPlanEval(j.evaluation);
+    document.getElementById('planMeta').style.display='inline-flex';
+    document.getElementById('planMeta').textContent='drafted by '+j.provider;
+    goStep(2); loadPlans();
+  }catch(e){ status.className='statusline err'; status.textContent='Error: '+e.message; }
+  finally{ document.getElementById('planBtn').disabled=false; }
+}
+
+function showGuardrail(g){
+  const b=document.getElementById('guardrailBadge'); b.style.display='flex';
+  if(g&&g.total>0){ b.className='note ok'; b.innerHTML=`🛡 <b>${g.total} sensitive value${g.total!==1?'s':''}</b> redacted before the AI saw them (${g.detail})`; }
+  else { b.className='note info'; b.innerHTML='🛡 No sensitive data detected in the inputs.'; }
+}
+function showPlanEval(e){
+  const el=document.getElementById('planEval'); if(!e){el.style.display='none';return;} el.style.display='flex';
+  if(e.grounded){ el.className='note ok'; el.innerHTML=`✅ Plan grounded — ${e.passed}/${e.total} checks passed`; }
+  else { el.className='note warn'; const f=(e.checks||[]).filter(c=>!c.passed).map(c=>c.name).join(', ');
+         el.innerHTML=`⚠ Plan needs review — ${e.passed}/${e.total} checks passed. Issues: ${f||'see plan'}`; }
+}
+
+/* ---------- editable plan form ---------- */
+const METHODS=["GET","POST","PUT","PATCH","DELETE"];
+function renderPlanForm(){
+  document.getElementById('pfTarget').value=planModel.target_base_url||'';
+  const host=document.getElementById('scenarios'); host.innerHTML='';
+  (planModel.scenarios||[]).forEach((sc,si)=>host.appendChild(scenarioCard(sc,si)));
+  const th=document.getElementById('thresholds'); th.innerHTML='';
+  (planModel.thresholds||[]).forEach((t,ti)=>th.appendChild(thresholdRow(t,ti)));
+  updateWeightBadges();
+}
+function scenarioCard(sc,si){
+  const el=document.createElement('div'); el.className='scn'; el.dataset.si=si;
+  el.innerHTML=`
+    <div class="scn-head">
+      <input class="name" value="${esc(sc.name||'')}" oninput="planModel.scenarios[${si}].name=this.value" placeholder="Scenario name"/>
+      <div class="weightwrap">
+        <input type="range" min="1" max="10" step="1" value="${Math.max(1,Math.round(sc.weight*10)||1)}"
+               oninput="setWeight(${si},this.value)"/>
+        <span class="wbadge" id="wb${si}">—</span>
+      </div>
+      <button class="iconbtn" onclick="delScenario(${si})">×</button>
+    </div>
+    <div class="mini">Steps (use \${column} to pull from your data file)</div>
+    <div id="steps${si}"></div>
+    <button class="btn ghost sm" onclick="addStep(${si})">+ Add step</button>`;
+  // steps
+  setTimeout(()=>{ const sh=el.querySelector('#steps'+si);
+    (sc.steps||[]).forEach((st,sti)=>sh.appendChild(stepRow(si,sti,st))); },0);
+  return el;
+}
+function stepRow(si,sti,st){
+  const el=document.createElement('div'); el.className='stepline';
+  el.innerHTML=`
+    <select onchange="planModel.scenarios[${si}].steps[${sti}].method=this.value">
+      ${METHODS.map(m=>`<option ${m===(st.method||'GET')?'selected':''}>${m}</option>`).join('')}</select>
+    <input value="${esc(st.path||'')}" placeholder="/path" oninput="planModel.scenarios[${si}].steps[${sti}].path=this.value"/>
+    <input value='${st.body?esc(JSON.stringify(st.body)):""}' placeholder='body JSON (optional)'
+           oninput="setStepBody(${si},${sti},this.value)"/>
+    <button class="iconbtn" onclick="delStep(${si},${sti})">×</button>`;
+  return el;
+}
+function thresholdRow(t,ti){
+  const el=document.createElement('div'); el.className='thr';
+  const metrics=["p95_ms","p99_ms","p50_ms","avg_ms","max_ms","error_rate"];
+  el.innerHTML=`
+    <select onchange="planModel.thresholds[${ti}].metric=this.value">
+      ${metrics.map(m=>`<option ${m===t.metric?'selected':''}>${m}</option>`).join('')}
+      ${metrics.includes(t.metric)?'':`<option selected>${esc(t.metric)}</option>`}</select>
+    <select onchange="planModel.thresholds[${ti}].op=this.value">
+      ${["<","<=",">",">="].map(o=>`<option ${o===t.op?'selected':''}>${o}</option>`).join('')}</select>
+    <input type="number" step="any" value="${t.value}" oninput="planModel.thresholds[${ti}].value=parseFloat(this.value)"/>
+    <button class="iconbtn" onclick="delThreshold(${ti})">×</button>`;
+  return el;
+}
+function setWeight(si,v){ planModel.scenarios[si].weight=(+v)/10; updateWeightBadges(); }
+function updateWeightBadges(){
+  const total=(planModel.scenarios||[]).reduce((a,s)=>a+(s.weight||0),0)||1;
+  (planModel.scenarios||[]).forEach((s,i)=>{
+    const b=document.getElementById('wb'+i); if(b) b.textContent=Math.round((s.weight/total)*100)+'%';
+  });
+}
+function setStepBody(si,sti,v){
+  v=v.trim();
+  if(!v){ planModel.scenarios[si].steps[sti].body=null; return; }
+  try{ planModel.scenarios[si].steps[sti].body=JSON.parse(v); }catch(e){ /* keep typing */ }
+}
+function addScenario(){ planModel.scenarios.push({name:"New scenario",weight:1,
+  steps:[{name:"step",method:"GET",path:"/",body:null}],think_time:{min_seconds:1,max_seconds:3}});
+  renderPlanForm(); }
+function delScenario(si){ planModel.scenarios.splice(si,1); renderPlanForm(); }
+function addStep(si){ planModel.scenarios[si].steps.push({name:"step",method:"GET",path:"/",body:null}); renderPlanForm(); }
+function delStep(si,sti){ planModel.scenarios[si].steps.splice(sti,1); renderPlanForm(); }
+function addThreshold(){ planModel.thresholds=planModel.thresholds||[];
+  planModel.thresholds.push({metric:"p95_ms",op:"<=",value:500}); renderPlanForm(); }
+function delThreshold(ti){ planModel.thresholds.splice(ti,1); renderPlanForm(); }
+
+/* raw <-> form sync */
+function renderRawFromModel(){ document.getElementById('planJson').value=JSON.stringify(planModel,null,2); }
+function toggleRaw(){
+  const raw=document.getElementById('rawToggle').checked;
+  if(raw){ renderRawFromModel(); document.getElementById('planForm').style.display='none';
+           document.getElementById('planJson').style.display='block'; }
+  else{ try{ planModel=JSON.parse(document.getElementById('planJson').value); }catch(e){ alert('Raw JSON is invalid — fix it before switching back.'); document.getElementById('rawToggle').checked=true; return; }
+        document.getElementById('planForm').style.display='block';
+        document.getElementById('planJson').style.display='none'; renderPlanForm(); }
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+/* ---------- generate ---------- */
+async function doGenerate(){
+  const status=document.getElementById('genStatus');
+  // sync model from the active editor
+  document.getElementById('pfTarget') && (planModel.target_base_url=document.getElementById('pfTarget').value.trim());
+  if(document.getElementById('rawToggle').checked){
+    try{ planModel=JSON.parse(document.getElementById('planJson').value); }
+    catch(e){ status.className='statusline err'; status.textContent='Raw JSON invalid: '+e.message; return; }
   }
+  status.className='statusline'; status.textContent='Generating script…';
+  try{
+    const payload={tool:document.getElementById('tool').value, load_model:planModel};
+    if(currentDataFileId) payload.data_file_id=currentDataFileId;
+    const hdrs=readHeaders(); if(Object.keys(hdrs).length) payload.headers=hdrs;
+    const r=await fetch(`/api/plan/${currentPlanId}/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'generate failed');
+    currentScriptId=j.script_id;
+    document.getElementById('scriptOut').textContent=j.content;
+    document.getElementById('dlBtn').disabled=false;
+    document.getElementById('runBtn').disabled=(j.tool!=='k6');
+    document.getElementById('preflightBtn').disabled=false;
+    document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — from plan ${j.plan_id.slice(0,8)}`;
+    const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
+    if(j.tool!=='k6'){ const h=document.getElementById('runHint'); h.style.display='flex'; h.textContent='Live run is implemented for k6; download and run this '+j.tool+' script yourself.'; }
+    goStep(3); loadPlans();
+  }catch(e){ status.className='statusline err'; status.textContent='Error: '+e.message; }
 }
+function download(){ if(currentScriptId) location=`/api/scripts/${currentScriptId}/download`; }
 
-async function loadTools() {
-  const r = await fetch("/api/tools"); const j = await r.json();
-  document.getElementById("tool").innerHTML = j.tools.map(t=>`<option value="${t}">${t}</option>`).join("");
+/* ---------- run ---------- */
+async function runScript(){
+  if(!currentScriptId) return;
+  goStep(4);
+  const rs=document.getElementById('runStatus'); rs.className='statusline'; rs.textContent='Starting run…';
+  try{ const av=await (await fetch('/api/run/available')).json();
+    if(!av.k6){ rs.className='statusline err'; rs.textContent='k6 is not installed or not on PATH. Install k6 to run.'; return; } }catch(e){}
+  try{
+    const r=await fetch(`/api/scripts/${currentScriptId}/run`,{method:'POST'}); const j=await r.json();
+    if(!r.ok) throw new Error(j.detail||'run failed');
+    currentRunId=j.run_id; resetChart(); document.getElementById('runBtn').disabled=true;
+    document.getElementById('stopBtn').disabled=false; pollTimer=setInterval(pollRun,500);
+  }catch(e){ rs.className='statusline err'; rs.textContent='Error: '+e.message; }
 }
-
-async function doPlan() {
-  const status = document.getElementById("planStatus");
-  let eps;
-  try { eps = readEndpoints(); }
-  catch(e) { status.className="status err"; status.textContent = e.message; return; }
-  if (eps.length === 0) { status.className="status err"; status.textContent="Add at least one endpoint."; return; }
-  status.className="status"; status.textContent="Asking the AI to draft a plan...";
-  document.getElementById("planBtn").disabled = true;
-  try {
-    const body = {
-      target_base_url: document.getElementById("target").value.trim(),
-      goal: document.getElementById("goal").value.trim(),
-      max_users: parseInt(document.getElementById("maxUsers").value),
-      duration_seconds: parseInt(document.getElementById("duration").value),
-      endpoints: eps,
-    };
-    const r = await fetch("/api/plan", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || "plan failed");
-    currentPlanId = j.plan_id;
-    document.getElementById("planJson").value = JSON.stringify(j.load_model, null, 2);
-    document.getElementById("genBtn").disabled = false;
-    const pill = document.getElementById("planPill"); pill.style.display="inline-block";
-    pill.textContent = "drafted by " + j.provider;
-    status.className="status ok"; status.textContent="Plan drafted. Review it, then approve & generate.";
-    showGuardrailBadge(j.guardrail);
-    showPlanEval(j.evaluation);
-    loadPlans();
-  } catch(e) {
-    status.className="status err"; status.textContent="Error: " + e.message;
-  } finally {
-    document.getElementById("planBtn").disabled = false;
-  }
-}
-
-function showGuardrailBadge(g) {
-  const badge = document.getElementById("guardrailBadge");
-  badge.style.display = "block";
-  if (g && g.total > 0) {
-    badge.className = "guardrail on";
-    badge.innerHTML = "&#128737; <b>" + g.total + " sensitive value" +
-      (g.total !== 1 ? "s" : "") + "</b> redacted before sending to the AI (" + g.detail + ")";
-  } else {
-    badge.className = "guardrail off";
-    badge.innerHTML = "&#128737; No sensitive data detected in this plan's inputs.";
-  }
-}
-
-function showPlanEval(e) {
-  const el = document.getElementById("planEval");
-  if (!el || !e) return;
-  el.style.display = "block";
-  if (e.grounded) {
-    el.className = "evalinfo ok";
-    el.innerHTML = "&#9989; Plan grounded — " + e.passed + "/" + e.total + " checks passed";
-  } else {
-    el.className = "evalinfo warn";
-    const failed = (e.checks || []).filter(c => !c.passed).map(c => c.name).join(", ");
-    el.innerHTML = "&#9888; Plan needs review — " + e.passed + "/" + e.total +
-      " checks passed. Issues: " + (failed || "see plan");
-  }
-}
-
-async function doGenerate() {
-  const status = document.getElementById("genStatus");
-  if (!currentPlanId) return;
-  let model;
-  try { model = JSON.parse(document.getElementById("planJson").value); }
-  catch(e) { status.className="status err"; status.textContent="Plan JSON is invalid: " + e.message; return; }
-  status.className="status"; status.textContent="Generating script...";
-  try {
-    const payload = { tool: document.getElementById("tool").value, load_model: model };
-    if (currentDataFileId) payload.data_file_id = currentDataFileId;
-    const r = await fetch(`/api/plan/${currentPlanId}/generate`, {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify(payload)
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || "generate failed");
-    currentScriptId = j.script_id;
-    document.getElementById("scriptOut").textContent = j.content;
-    document.getElementById("dlBtn").disabled = false;
-    document.getElementById("runBtn").disabled = (j.tool !== "k6");
-    document.getElementById("scriptMeta").textContent = `${j.filename} (${j.tool}) from plan ${j.plan_id.slice(0,8)}`;
-    const pill = document.getElementById("scriptPill"); pill.style.display="inline-block"; pill.textContent=j.tool;
-    status.className="status ok"; status.textContent="Script generated and saved.";
-    loadPlans();
-  } catch(e) {
-    status.className="status err"; status.textContent="Error: " + e.message;
-  }
-}
-
-function download() {
-  if (currentScriptId) window.location = `/api/scripts/${currentScriptId}/download`;
-}
-
-async function loadPlans() {
-  const r = await fetch("/api/plans"); const j = await r.json();
-  const tb = document.querySelector("#plansTable tbody");
-  tb.innerHTML = j.plans.map(p => `
-    <tr>
-      <td>${new Date(p.created_at).toLocaleString()}</td>
-      <td>${p.target}</td>
-      <td>${p.goal || ""}</td>
-      <td>${p.script_count}</td>
-      <td><button class="btn sec small" onclick="openPlan('${p.plan_id}')">Open</button></td>
-    </tr>`).join("");
-}
-
-async function openPlan(id) {
-  const r = await fetch(`/api/plans/${id}`); const j = await r.json();
-  currentPlanId = id;
-  document.getElementById("planJson").value = JSON.stringify(j.load_model, null, 2);
-  document.getElementById("genBtn").disabled = false;
-  const pill = document.getElementById("planPill"); pill.style.display="inline-block"; pill.textContent="loaded";
-  document.getElementById("guardrailBadge").style.display = "none";
-  document.getElementById("planEval").style.display = "none";
-  document.getElementById("planStatus").className="status ok";
-  document.getElementById("planStatus").textContent = `Loaded plan ${id.slice(0,8)} (${j.scripts.length} script(s)).`;
-  window.scrollTo({top:0, behavior:"smooth"});
-}
-
-let currentRunId = null;
-let pollTimer = null;
-
-async function runScript() {
-  if (!currentScriptId) return;
-  const rs = document.getElementById("runStatus");
-  document.getElementById("monitorCard").style.display = "block";
-  rs.className = "status"; rs.textContent = "Starting run...";
-
-  try {
-    const av = await (await fetch("/api/run/available")).json();
-    if (!av.k6) {
-      rs.className = "status err";
-      rs.textContent = "k6 is not installed or not on PATH. Install k6 to run tests.";
-      return;
+async function pollRun(){
+  if(!currentRunId) return;
+  try{
+    const j=await (await fetch(`/api/runs/${currentRunId}`)).json();
+    const rs=document.getElementById('runStatus'); const pill=document.getElementById('runPill');
+    pill.textContent=j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':j.status==='error'?'fail':'ghost');
+    const s=j.snapshot||{}; const lat=s.latency||{};
+    document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
+    document.getElementById('mReqs').textContent=s.requests??0;
+    document.getElementById('mRps').textContent=s.rps??0;
+    document.getElementById('mErr').textContent=((s.error_rate??0)*100).toFixed(2)+'%';
+    document.getElementById('mP95').textContent=(lat.p95_ms??0)+' ms';
+    document.getElementById('mP99').textContent=(lat.p99_ms??0)+' ms';
+    pushChart(j.elapsed_s??0, s.rps??0, lat.p95_ms??0);
+    document.querySelector('#epTable tbody').innerHTML=(s.per_endpoint||[]).map(e=>
+      `<tr><td>${esc(e.name)}</td><td>${e.requests}</td><td>${e.failed}</td><td>${e.avg_ms}</td><td>${e.p95_ms}</td></tr>`).join('');
+    if(j.status==='running'){ rs.className='statusline'; rs.textContent='Running against '+j.target+' …'; }
+    else{
+      clearInterval(pollTimer); pollTimer=null;
+      document.getElementById('runBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
+      if(j.status==='finished'){ rs.className='statusline ok'; rs.textContent='Run finished.'; loadReport(); }
+      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent='Run stopped.'; loadReport(); }
+      else{ rs.className='statusline err'; rs.textContent='Run error: '+(j.message||'unknown'); }
     }
-  } catch(e) {}
+  }catch(e){}
+}
+async function stopRun(){ if(currentRunId){ try{await fetch(`/api/runs/${currentRunId}/stop`,{method:'POST'})}catch(e){} } }
 
-  try {
-    const r = await fetch(`/api/scripts/${currentScriptId}/run`, {method:"POST"});
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || "run failed");
-    currentRunId = j.run_id;
-    document.getElementById("runBtn").disabled = true;
-    document.getElementById("stopBtn").disabled = false;
-    pollTimer = setInterval(pollRun, 500);
-  } catch(e) {
-    rs.className = "status err"; rs.textContent = "Error: " + e.message;
+/* ---------- report ---------- */
+async function loadReport(){
+  if(!currentRunId) return;
+  try{
+    const r=await fetch(`/api/runs/${currentRunId}/report`); const j=await r.json(); if(!r.ok) return;
+    const v=j.verdict.overall_passed;
+    const hero=document.getElementById('verdictHero');
+    hero.className='verdict-hero '+(v===true?'pass':v===false?'fail':'na');
+    document.getElementById('verdictEmoji').textContent=v===true?'✅':v===false?'❌':'⚠️';
+    document.getElementById('verdictHeadline').textContent=v===true?'PASS — all thresholds met':v===false?'FAIL — a threshold was breached':'INCONCLUSIVE — a threshold could not be evaluated';
+    const n=j.narrative;
+    document.getElementById('verdictSub').textContent=n.headline||'';
+    document.getElementById('reportSummary').textContent=n.summary||'';
+    document.getElementById('reportObs').innerHTML=(n.observations&&n.observations.length)?'<div class="mini">Observations</div><ul>'+n.observations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
+    document.getElementById('reportRecs').innerHTML=(n.recommendations&&n.recommendations.length)?'<div class="mini">Recommendations</div><ul>'+n.recommendations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
+    const ev=j.evaluation; const el=document.getElementById('reportEval');
+    if(ev){ el.style.display='flex';
+      if(ev.grounded){ el.className='note ok'; el.innerHTML=`✅ Report verified — all ${ev.numbers_in_text??0} figures trace to real metrics`; }
+      else{ el.className='note warn'; el.innerHTML=`⚠ ${ev.hallucinated} figure(s) could not be verified: ${(ev.unsupported||[]).join(', ')}`; } }
+    else el.style.display='none';
+    goStep(5);
+  }catch(e){}
+}
+function downloadReport(){ if(currentRunId) location=`/api/runs/${currentRunId}/report/download`; }
+
+/* ---------- history ---------- */
+async function loadPlans(){
+  const j=await (await fetch('/api/plans')).json();
+  document.querySelector('#plansTable tbody').innerHTML=j.plans.map(p=>
+    `<tr class="histrow"><td>${new Date(p.created_at).toLocaleString()}</td><td>${esc(p.target)}</td>
+     <td>${esc(p.goal||'')}</td><td>${p.script_count}</td>
+     <td><button class="btn ghost sm" onclick="openPlan('${p.plan_id}')">Open</button></td></tr>`).join('');
+}
+async function openPlan(id){
+  const j=await (await fetch(`/api/plans/${id}`)).json();
+  currentPlanId=id; planModel=j.load_model; renderPlanForm(); renderRawFromModel();
+  document.getElementById('guardrailBadge').style.display='none';
+  document.getElementById('planEval').style.display='none';
+  document.getElementById('planMeta').style.display='inline-flex';
+  document.getElementById('planMeta').textContent='loaded · '+j.scripts.length+' script(s)';
+  goStep(2);
+}
+
+
+/* ---------- custom headers ---------- */
+function addHeader(k="",v=""){
+  const d=document.createElement('div'); d.className='endpoint'; d.style.gridTemplateColumns='1fr 1.3fr 34px';
+  d.innerHTML=`<input placeholder="Header name e.g. Authorization" value="${esc(k)}"/>
+    <input placeholder="Value e.g. Bearer xxx" value="${esc(v)}"/>
+    <button class="iconbtn" onclick="this.parentElement.remove()">×</button>`;
+  document.getElementById('headersList').appendChild(d);
+}
+function readHeaders(){
+  const out={};
+  document.querySelectorAll('#headersList .endpoint').forEach(d=>{
+    const ins=d.querySelectorAll('input'); const k=ins[0].value.trim(); const v=ins[1].value.trim();
+    if(k) out[k]=v;
+  });
+  return out;
+}
+
+/* ---------- pre-flight check ---------- */
+async function doPreflight(){
+  const el=document.getElementById('preflightResult'); el.style.display='flex'; el.className='note info';
+  el.textContent='Pre-flight: sending one request per endpoint…';
+  try{
+    const payload={ load_model: planModel, headers: readHeaders() };
+    if(currentDataFileId) payload.data_file_id=currentDataFileId;
+    const r=await fetch('/api/preflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'preflight failed');
+    const rows=j.results.map(x=>{
+      const dot = x.ok ? '🟢' : '🔴';
+      const st = x.status!==null ? x.status : (x.error||'no response');
+      return `${dot} <b>${x.method}</b> ${esc(x.path)} → ${st}`;
+    }).join('<br>');
+    el.className = j.all_ok ? 'note ok' : 'note warn';
+    el.innerHTML = `<div><b>Pre-flight: ${j.ok}/${j.total} endpoints responded OK</b>` +
+      (j.all_ok ? ' — all good, safe to run.' : ' — check the failures below before a full run.') +
+      `<div style="margin-top:6px">${rows}</div></div>`;
+  }catch(e){ el.className='note err'; el.textContent='Pre-flight error: '+e.message; }
+}
+
+/* ---------- live chart ---------- */
+let chartData=[];  // [{t, rps, p95}]
+function resetChart(){ chartData=[]; drawChart(); }
+function pushChart(elapsed, rps, p95){ chartData.push({t:elapsed,rps:rps||0,p95:p95||0}); if(chartData.length>120) chartData.shift(); drawChart(); }
+function drawChart(){
+  const c=document.getElementById('liveChart'); if(!c) return;
+  const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=120;
+  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  if(chartData.length<2){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('waiting for data…',10,20); return; }
+  const pad=24; const n=chartData.length;
+  const maxRps=Math.max(1,...chartData.map(d=>d.rps));
+  const maxP95=Math.max(1,...chartData.map(d=>d.p95));
+  function line(key,max,color){
+    x.beginPath(); x.strokeStyle=color; x.lineWidth=2;
+    chartData.forEach((d,i)=>{
+      const px=pad + (i/(n-1))*(W-pad*2);
+      const py=H-pad - (d[key]/max)*(H-pad*1.4);
+      i?x.lineTo(px,py):x.moveTo(px,py);
+    }); x.stroke();
   }
+  line('rps',maxRps,'#0f6e56');   // teal = RPS
+  line('p95',maxP95,'#9a6412');   // amber = p95
+  x.fillStyle='#6b7280'; x.font='10px system-ui';
+  x.fillText('RPS (teal) · p95 ms (amber)',pad,12);
 }
 
-async function pollRun() {
-  if (!currentRunId) return;
-  try {
-    const r = await fetch(`/api/runs/${currentRunId}`);
-    const j = await r.json();
-    const rs = document.getElementById("runStatus");
-    const pill = document.getElementById("runPill"); pill.textContent = j.status;
-
-    const s = j.snapshot || {};
-    const lat = s.latency || {};
-    document.getElementById("mElapsed").textContent = (j.elapsed_s ?? 0) + "s";
-    document.getElementById("mReqs").textContent = s.requests ?? 0;
-    document.getElementById("mRps").textContent = s.rps ?? 0;
-    document.getElementById("mErr").textContent = ((s.error_rate ?? 0) * 100).toFixed(2) + "%";
-    document.getElementById("mP95").textContent = (lat.p95_ms ?? 0) + " ms";
-    document.getElementById("mP99").textContent = (lat.p99_ms ?? 0) + " ms";
-
-    const tb = document.querySelector("#epTable tbody");
-    tb.innerHTML = (s.per_endpoint || []).map(e => `
-      <tr><td>${e.name}</td><td>${e.requests}</td><td>${e.failed}</td>
-      <td>${e.avg_ms}</td><td>${e.p95_ms}</td></tr>`).join("");
-
-    if (j.status === "running") {
-      rs.className = "status"; rs.textContent = "Running against " + j.target + " ...";
-    } else {
-      clearInterval(pollTimer); pollTimer = null;
-      document.getElementById("runBtn").disabled = false;
-      document.getElementById("stopBtn").disabled = true;
-      if (j.status === "finished") {
-        rs.className = "status ok"; rs.textContent = "Run finished."; loadReport();
-      } else if (j.status === "stopped") {
-        rs.className = "status"; rs.textContent = "Run stopped."; loadReport();
-      } else {
-        rs.className = "status err"; rs.textContent = "Run error: " + (j.message || "unknown");
-      }
-    }
-  } catch(e) {
-    // keep polling briefly; transient errors happen at startup
-  }
-}
-
-async function stopRun() {
-  if (!currentRunId) return;
-  try { await fetch(`/api/runs/${currentRunId}/stop`, {method:"POST"}); } catch(e) {}
-}
-
-function verdictBadge(passed) {
-  if (passed === true) return '<span class="badge pass">PASS</span>';
-  if (passed === false) return '<span class="badge fail">FAIL</span>';
-  return '<span class="badge na">INCONCLUSIVE</span>';
-}
-
-async function loadReport() {
-  if (!currentRunId) return;
-  try {
-    const r = await fetch(`/api/runs/${currentRunId}/report`);
-    const j = await r.json();
-    if (!r.ok) return;
-    document.getElementById("reportCard").style.display = "block";
-    document.getElementById("verdictPill").innerHTML = verdictBadge(j.verdict.overall_passed);
-    const n = j.narrative;
-    document.getElementById("reportHeadline").textContent = n.headline;
-    document.getElementById("reportSummary").textContent = n.summary;
-    document.getElementById("reportObs").innerHTML =
-      (n.observations && n.observations.length)
-        ? "<b>Observations</b><ul>" + n.observations.map(o=>`<li>${o}</li>`).join("") + "</ul>" : "";
-    document.getElementById("reportRecs").innerHTML =
-      (n.recommendations && n.recommendations.length)
-        ? "<b>Recommendations</b><ul>" + n.recommendations.map(o=>`<li>${o}</li>`).join("") + "</ul>" : "";
-    if (j.evaluation) {
-      const ev = j.evaluation;
-      const note = ev.grounded
-        ? '<div class="evalinfo ok" style="margin-bottom:8px">&#9989; Report verified — all '
-          + (ev.numbers_in_text ?? 0) + ' figures trace to real metrics</div>'
-        : '<div class="evalinfo warn" style="margin-bottom:8px">&#9888; '
-          + ev.hallucinated + ' figure(s) could not be verified: ' + (ev.unsupported||[]).join(", ") + '</div>';
-      document.getElementById("reportObs").insertAdjacentHTML("beforebegin", note);
-    }
-  } catch(e) {}
-}
-
-function downloadReport() {
-  if (currentRunId) window.location = `/api/runs/${currentRunId}/report/download`;
-}
-
-// init
+/* ---------- init ---------- */
 loadTools();
-addEndpoint("GET", "/products");
-addEndpoint("POST", "/login", '{"user":"demo","password":"x"}');
-addEndpoint("POST", "/cart", '{"product_id":1}');
-addEndpoint("POST", "/checkout", '{"pay":"card"}');
+addEndpoint("GET","/products");
+addEndpoint("POST","/login",'{"user":"demo","password":"x"}');
+addEndpoint("POST","/cart",'{"product_id":1}');
+addEndpoint("POST","/checkout",'{"pay":"card"}');
 loadPlans();
+goStep(1);
 </script>
 </body>
 </html>

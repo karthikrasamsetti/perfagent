@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from perfagent.contracts.artifacts import PlanArtifact
 from perfagent.contracts.load_model import DataFile, LoadModel
 from perfagent.data import DataValidationError, load_data
+from perfagent.preflight import preflight
 from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
 from perfagent.evaluation import evaluate_plan, evaluate_report
 from perfagent.generator import generate_script, supported_tools
@@ -51,6 +52,8 @@ class GenerateBody(BaseModel):
     load_model: LoadModel | None = None
     # Optional: id of an uploaded data file to attach to this plan for the run.
     data_file_id: str | None = None
+    # Optional: global headers to apply to every request (e.g. Authorization).
+    headers: dict[str, str] | None = None
 
 
 # ---------- guardrail reporting ----------
@@ -195,6 +198,10 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
                 source_format=data_row.source_format,
             )
 
+        # Attach custom headers (tokens/API keys) — go to the runner, not the LLM.
+        if body.headers:
+            model.headers = {k: v for k, v in body.headers.items() if k and v}
+
         # Persist the (possibly edited / data-attached) model.
         row.load_model_json = model.model_dump_json()
         row.target_base_url = model.target_base_url
@@ -275,6 +282,41 @@ def download_script(script_id: str) -> PlainTextResponse:
             row.content,
             headers={"Content-Disposition": f'attachment; filename="{row.filename}"'},
         )
+
+
+
+# ---------- pre-flight check ----------
+
+class PreflightBody(BaseModel):
+    load_model: LoadModel
+    data_file_id: str | None = None
+    headers: dict[str, str] | None = None
+
+
+@app.post("/api/preflight")
+def api_preflight(body: PreflightBody) -> dict:
+    """Fire one request per endpoint and report status codes (no load)."""
+    model = body.load_model
+    if body.headers:
+        model.headers = {k: v for k, v in body.headers.items() if k and v}
+
+    sample_row = None
+    if body.data_file_id:
+        with get_session() as s:
+            dr = s.get(DataFileRow, body.data_file_id)
+            if dr is not None and dr.content:
+                try:
+                    from perfagent.data import load_data as _ld
+                    ds = _ld(dr.filename, dr.content)
+                    if ds.rows:
+                        sample_row = ds.rows[0]
+                except Exception:  # noqa: BLE001
+                    sample_row = None
+
+    try:
+        return preflight(model, sample_row=sample_row)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"preflight failed: {e}") from e
 
 
 # ---------- run + live monitor ----------

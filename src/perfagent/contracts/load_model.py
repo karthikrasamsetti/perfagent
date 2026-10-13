@@ -24,7 +24,7 @@ class Step(BaseModel):
     """A single request within a scenario (one call in a user journey).
 
     Paths and bodies may contain ${field} placeholders that are filled per virtual
-    user from the LoadModel's data_file (see DataFile below).
+    user from the LoadModel's data_file.
     """
 
     name: str = Field(..., description="Human-readable label, e.g. 'view products'.")
@@ -138,6 +138,10 @@ class LoadModel(BaseModel):
     data_file: DataFile | None = Field(
         default=None,
         description="Optional test data; steps may reference its fields as ${field}.",
+    )
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional global headers applied to every request (e.g. Authorization).",
     )
 
     @field_validator("target_base_url")
