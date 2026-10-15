@@ -168,6 +168,15 @@
         <div class="field"><label>Load tool</label><select id="tool"></select></div>
       </div>
 
+      <div class="field" style="margin-top:4px">
+        <label>Import endpoints (optional) — OpenAPI / Swagger JSON, Postman collection, or HAR</label>
+        <div class="dz" id="impdz" onclick="document.getElementById('importFile').click()" style="padding:10px">
+          📥 Click to import from OpenAPI / Postman / HAR
+        </div>
+        <input type="file" id="importFile" accept=".json,.har" style="display:none" onchange="importEndpoints()" />
+        <div class="note info" id="importInfo" style="display:none"></div>
+      </div>
+
       <label>Endpoints</label>
       <div id="endpoints"></div>
       <button class="btn ghost sm" onclick="addEndpoint()">+ Add endpoint</button>
@@ -621,6 +630,30 @@ async function openPlan(id){
   goStep(2);
 }
 
+
+
+/* ---------- import endpoints ---------- */
+async function importEndpoints(){
+  const input=document.getElementById('importFile'); const info=document.getElementById('importInfo');
+  if(!input.files||!input.files.length) return;
+  const fd=new FormData(); fd.append('file',input.files[0]);
+  info.style.display='flex'; info.className='note info'; info.textContent='Importing…';
+  try{
+    const r=await fetch('/api/import-endpoints',{method:'POST',body:fd});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'import failed');
+    // set target if we found one
+    if(j.base_url){ document.getElementById('target').value=j.base_url; }
+    // clear existing endpoints and add imported
+    document.getElementById('endpoints').innerHTML='';
+    (j.endpoints||[]).forEach(e=>addEndpoint(e.method, e.path, e.example_body?JSON.stringify(e.example_body):''));
+    info.className='note ok';
+    let msg=`📥 Imported <b>${j.endpoints.length}</b> endpoints from ${j.source}`;
+    if(j.base_url) msg+=` · target set to <code class="k">${esc(j.base_url)}</code>`;
+    if(j.warnings&&j.warnings.length) msg+=`<br><span class="muted">${j.warnings.join('; ')}</span>`;
+    info.innerHTML=msg;
+    document.getElementById('impdz').innerHTML='📥 '+input.files[0].name+' — click to re-import';
+  }catch(e){ info.className='note err'; info.textContent='Import error: '+e.message; }
+}
 
 /* ---------- custom headers ---------- */
 function addHeader(k="",v=""){

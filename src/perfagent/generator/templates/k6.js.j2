@@ -6,7 +6,7 @@
 // Run with:
 //   k6 run {{ filename }}
 {% if data_on %}
-// This script is parameterized from a data file — keep the data file next to it.
+// Parameterized from a data file — keep the data file next to this script.
 {% endif %}
 // Override the target at runtime:
 //   k6 run -e BASE_URL={{ target_base_url }} {{ filename }}
@@ -19,10 +19,9 @@ import { Rate } from 'k6/metrics';
 {% endif %}
 const BASE_URL = __ENV.BASE_URL || '{{ target_base_url }}';
 const errorRate = new Rate('errors');
-{% if has_headers %}
-const HEADERS = {{ headers_json }};
+{% if header_decls %}
+{{ header_decls }}
 {% endif %}
-
 export const options = {
   scenarios: {
 {% for scenario in scenarios %}
@@ -44,61 +43,5 @@ export const options = {
 {% endfor %}
   },
 };
-{% for scenario in scenarios %}
 
-export function {{ scenario.func_name }}() {
-{% if data_on %}
-{{ row_pick }}
-{% endif %}
-  group('{{ scenario.name }}', function () {
-{% for step in scenario.steps %}
-{% if data_on and step.parameterized %}
-{% if step.method == "GET" %}
-    {
-      const res = http.get(`${BASE_URL}{{ step.path_expr }}`, { {% if has_headers %}headers: HEADERS, {% endif %}tags: { name: '{{ step.name }}' } });
-      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
-      errorRate.add(res.status >= 400);
-    }
-{% elif step.method == "DELETE" %}
-    {
-      const res = http.del(`${BASE_URL}{{ step.path_expr }}`, null, { {% if has_headers %}headers: HEADERS, {% endif %}tags: { name: '{{ step.name }}' } });
-      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
-      errorRate.add(res.status >= 400);
-    }
-{% else %}
-    {
-      const payload = JSON.stringify({{ step.body_expr }});
-      const params = { headers: Object.assign({ 'Content-Type': 'application/json' }{% if has_headers %}, HEADERS{% endif %}), tags: { name: '{{ step.name }}' } };
-      const res = http.{{ step.method_lower }}(`${BASE_URL}{{ step.path_expr }}`, payload, params);
-      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
-      errorRate.add(res.status >= 400);
-    }
-{% endif %}
-{% else %}
-{% if step.method == "GET" %}
-    {
-      const res = http.get(`${BASE_URL}{{ step.path }}`, { {% if has_headers %}headers: HEADERS, {% endif %}tags: { name: '{{ step.name }}' } });
-      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
-      errorRate.add(res.status >= 400);
-    }
-{% elif step.method == "DELETE" %}
-    {
-      const res = http.del(`${BASE_URL}{{ step.path }}`, null, { {% if has_headers %}headers: HEADERS, {% endif %}tags: { name: '{{ step.name }}' } });
-      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
-      errorRate.add(res.status >= 400);
-    }
-{% else %}
-    {
-      const payload = JSON.stringify({{ step.body_literal }});
-      const params = { headers: Object.assign({ 'Content-Type': 'application/json' }{% if has_headers %}, HEADERS{% endif %}), tags: { name: '{{ step.name }}' } };
-      const res = http.{{ step.method_lower }}(`${BASE_URL}{{ step.path }}`, payload, params);
-      check(res, { '{{ step.name }} status ok': (r) => r.status >= 200 && r.status < 400 });
-      errorRate.add(res.status >= 400);
-    }
-{% endif %}
-{% endif %}
-    sleep(Math.random() * {{ scenario.think_span }} + {{ scenario.min_think }});
-{% endfor %}
-  });
-}
-{% endfor %}
+{{ scenario_funcs }}

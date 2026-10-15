@@ -1,11 +1,13 @@
 """Deterministic k6 renderer: LoadModel -> runnable k6 script.
 
-k6 is the primary tool. No LLM - pure templating plus arithmetic to turn the load
-profile into k6 ramping-vus stages and the thresholds into k6 threshold expressions.
+k6 is the primary tool. No LLM. Supports:
+  - data-file parameterization (${field} -> row.field + SharedArray)
+  - global headers (static or with ${var} references)
+  - correlation: a step can extract a value from its response into vars.X, and later
+    steps reference it as ${X}
 
-Supports:
-  - data-file parameterization (${field} -> row.field + SharedArray loader)
-  - custom global headers (applied to every request)
+The per-step request JS is generated in Python (not Jinja) because correlation needs
+sequential logic (capture into vars, reuse later) that's clearer in code.
 """
 
 from __future__ import annotations
@@ -16,13 +18,16 @@ import re
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from perfagent.contracts.load_model import LoadModel
-from perfagent.generator.k6_data import (
-    body_to_k6_expr,
-    k6_data_loader,
-    k6_row_pick,
-    path_to_k6_template,
-    uses_data,
+from perfagent.generator.k6_corr import (
+    body_expr,
+    captured_vars,
+    extract_code,
+    headers_dynamic,
+    headers_expr,
+    path_expr,
+    uses_correlation,
 )
+from perfagent.generator.k6_data import k6_data_loader, uses_data
 
 _env = Environment(
     loader=PackageLoader("perfagent.generator", "templates"),
@@ -58,19 +63,10 @@ def _func_name(name: str, index: int) -> str:
     return camel or f"scenario{index}"
 
 
-def _scale_stages(model: LoadModel, scenario_weight_fraction: float) -> list[dict]:
-    """Per-scenario stages: total VUs split across scenarios by weight.
-
-    Uses largest-remainder so the per-scenario VUs sum to exactly the target, and a
-    scenario with any share always gets at least 1 (k6 rejects all-zero scenarios).
-    """
+def _scale_stages(model: LoadModel, frac: float) -> list[dict]:
     stages = []
     for stage in model.load_profile.stages:
-        if stage.target_users <= 0:
-            target = 0
-        else:
-            raw = stage.target_users * scenario_weight_fraction
-            target = max(1, round(raw))
+        target = 0 if stage.target_users <= 0 else max(1, round(stage.target_users * frac))
         stages.append({"duration": stage.duration_seconds, "target": target})
     return stages
 
@@ -86,49 +82,95 @@ def _thresholds(model: LoadModel) -> list[dict]:
     return out
 
 
-def _prepare_scenarios(model: LoadModel, data_on: bool) -> list[dict]:
-    fractions = model.normalised_weights()
-    scenarios = []
-    for i, (sc, frac) in enumerate(zip(model.scenarios, fractions, strict=False)):
-        steps = []
-        for st in sc.steps:
-            has_ph = "${" in st.path or (st.body and "${" in json.dumps(st.body))
-            if data_on:
-                path_expr = path_to_k6_template(st.path)
-                body_expr = body_to_k6_expr(st.body)
-            else:
-                path_expr = st.path
-                body_expr = None
-            steps.append(
-                {
-                    "name": st.name,
-                    "method": st.method.value,
-                    "method_lower": st.method.value.lower(),
-                    "path": st.path,
-                    "path_expr": path_expr,
-                    "body_literal": json.dumps(st.body or {}),
-                    "body_expr": body_expr,
-                    "parameterized": bool(has_ph),
-                }
-            )
-        scenarios.append(
-            {
-                "key": _identifier(sc.name, f"scenario_{i}").lower(),
-                "func_name": _func_name(sc.name, i),
-                "name": sc.name,
-                "steps": steps,
-                "min_think": sc.think_time.min_seconds,
-                "think_span": round(sc.think_time.max_seconds - sc.think_time.min_seconds, 3),
-                "stages": _scale_stages(model, frac),
-            }
-        )
-    return scenarios
+def _step_js(step, cap, dynamic, has_headers, static_headers_ref="HEADERS") -> str:
+    """Generate the k6 request block for one step (handles vars, row, extract, headers)."""
+    name = step.name
+    method = step.method.value
+    ml = method.lower()
+    p = path_expr(step.path, cap)
+    url = f"`${{BASE_URL}}{p}`"
+
+    # headers param
+    if has_headers and dynamic:
+        hdr = "DYN_HEADERS(vars, typeof row !== 'undefined' ? row : {})"
+    elif has_headers:
+        hdr = static_headers_ref
+    else:
+        hdr = None
+
+    tags = f"tags: {{ name: {json.dumps(name)} }}"
+    capture = extract_code(step, indent="      ")
+
+    lines = ["    {"]
+    if method in ("GET", "DELETE"):
+        params_obj = "{ " + (f"headers: {hdr}, " if hdr else "") + tags + " }"
+        if method == "GET":
+            lines.append(f"      const res = http.get({url}, {params_obj});")
+        else:
+            lines.append(f"      const res = http.del({url}, null, {params_obj});")
+    else:
+        be = body_expr(step.body, cap)
+        lines.append(f"      const payload = JSON.stringify({be});")
+        base_hdr = "{ 'Content-Type': 'application/json' }"
+        merged = base_hdr if not hdr else f"Object.assign({base_hdr}, {hdr})"
+        lines.append(f"      const params = {{ headers: {merged}, {tags} }};")
+        lines.append(f"      const res = http.{ml}({url}, payload, params);")
+
+    lines.append(f"      check(res, {{ {json.dumps(name + ' status ok')}: (r) => r.status >= 200 && r.status < 400 }});")
+    lines.append("      errorRate.add(res.status >= 400);")
+    if capture:
+        lines.append(capture)
+    lines.append("    }")
+    return "\n".join(lines)
+
+
+def _scenario_js(sc, si, cap, data_on, corr_on, has_headers, dynamic) -> str:
+    fn = _func_name(sc.name, si)
+    out = [f"export function {fn}() {{"]
+    if corr_on:
+        out.append("  let vars = {};")
+    if data_on:
+        out.append("  const row = DATA[Math.floor(Math.random() * DATA.length)];")
+    out.append(f"  group({json.dumps(sc.name)}, function () {{")
+    think = round(sc.think_time.max_seconds - sc.think_time.min_seconds, 3)
+    lo = sc.think_time.min_seconds
+    for step in sc.steps:
+        out.append(_step_js(step, cap, dynamic, has_headers))
+        out.append(f"    sleep(Math.random() * {think} + {lo});")
+    out.append("  });")
+    out.append("}")
+    return "\n".join(out)
 
 
 def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
-    """Render a LoadModel to k6 script source (returns the file content)."""
     data_on = uses_data(model)
+    corr_on = uses_correlation(model)
+    cap = captured_vars(model)
     headers = getattr(model, "headers", {}) or {}
+    has_headers = bool(headers)
+    dynamic = has_headers and headers_dynamic(headers)
+
+    fractions = model.normalised_weights()
+    scenarios_meta = []
+    scenario_funcs = []
+    for i, (sc, frac) in enumerate(zip(model.scenarios, fractions, strict=False)):
+        scenarios_meta.append({
+            "key": _identifier(sc.name, f"scenario_{i}").lower(),
+            "func_name": _func_name(sc.name, i),
+            "stages": _scale_stages(model, frac),
+        })
+        scenario_funcs.append(_scenario_js(sc, i, cap, data_on, corr_on, has_headers, dynamic))
+
+    # headers declarations
+    header_decls = ""
+    if has_headers and dynamic:
+        # DYN_HEADERS builds headers per request, substituting ${var}/${row} refs
+        header_decls = (
+            "function DYN_HEADERS(vars, row) {\n  return " + headers_expr(headers, cap) + ";\n}\n"
+        )
+    elif has_headers:
+        header_decls = "const HEADERS = " + json.dumps(headers) + ";\n"
+
     template = _env.get_template("k6.js.j2")
     return template.render(
         target_base_url=model.target_base_url,
@@ -136,11 +178,10 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
         profile_type=model.load_profile.type.value,
         peak_users=model.load_profile.peak_users,
         total_seconds=model.load_profile.total_seconds,
-        scenarios=_prepare_scenarios(model, data_on),
+        scenarios=scenarios_meta,
         thresholds=_thresholds(model),
         data_on=data_on,
         data_loader=k6_data_loader(model) if data_on else "",
-        row_pick=k6_row_pick() if data_on else "",
-        has_headers=bool(headers),
-        headers_json=json.dumps(headers),
+        header_decls=header_decls,
+        scenario_funcs="\n\n".join(scenario_funcs),
     )

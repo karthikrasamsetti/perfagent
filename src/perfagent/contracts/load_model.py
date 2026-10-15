@@ -1,8 +1,11 @@
 """The LoadModel — the tool-agnostic contract at the centre of the pipeline.
 
-Every stage reads or writes this. The Planner (later) drafts it; the Generator
-renders it to a runnable script for the chosen tool. It is deliberately a plain,
-validated data structure — no tool-specific details leak in here.
+Every stage reads or writes this. The Planner drafts it; the Generator renders it to
+a runnable script. Plain, validated data — no tool-specific details leak in here.
+
+Supports data-file parameterization (${field} from a CSV row), global headers, and
+correlation: a step can EXTRACT a value from its response into a variable that later
+steps reference as ${var} (e.g. capture a login token, reuse it on protected calls).
 """
 
 from __future__ import annotations
@@ -20,18 +23,47 @@ class HttpMethod(str, Enum):
     DELETE = "DELETE"
 
 
+class Extract(BaseModel):
+    """Capture a value from a step's response into a variable for later steps.
+
+    var  — the variable name; later steps reference it as ${var}
+    source — where to read from: 'json' (a field path in the JSON body)
+    path — for json: a dotted field path, e.g. 'token' or 'data.id'
+    """
+
+    var: str = Field(..., description="Variable name, usable later as ${var}.")
+    source: str = Field(default="json", description="json (JSON body field path).")
+    path: str = Field(..., description="For json: dotted path, e.g. 'token' or 'data.id'.")
+
+    @field_validator("var")
+    @classmethod
+    def var_is_identifier(cls, v: str) -> str:
+        if not v.isidentifier():
+            raise ValueError(f"extract var must be a simple identifier: {v!r}")
+        return v
+
+    @field_validator("source")
+    @classmethod
+    def known_source(cls, v: str) -> str:
+        if v not in {"json"}:
+            raise ValueError("only 'json' extraction is supported for now")
+        return v
+
+
 class Step(BaseModel):
     """A single request within a scenario (one call in a user journey).
 
-    Paths and bodies may contain ${field} placeholders that are filled per virtual
-    user from the LoadModel's data_file.
+    Paths, bodies and header values may contain ${name} placeholders filled from a
+    data-file row OR from a variable captured earlier via `extract`.
     """
 
     name: str = Field(..., description="Human-readable label, e.g. 'view products'.")
     method: HttpMethod = HttpMethod.GET
-    path: str = Field(..., description="Path relative to the target base URL, e.g. '/products'.")
-    body: dict | None = Field(
-        default=None, description="JSON body for POST/PUT/PATCH; None for GET/DELETE."
+    path: str = Field(..., description="Path relative to the target base URL.")
+    body: dict | None = Field(default=None, description="JSON body for POST/PUT/PATCH.")
+    extract: list[Extract] = Field(
+        default_factory=list,
+        description="Values to capture from this response for later steps.",
     )
 
     @field_validator("path")
@@ -43,8 +75,6 @@ class Step(BaseModel):
 
 
 class ThinkTime(BaseModel):
-    """Pause between steps, in seconds. A range renders as a random wait."""
-
     min_seconds: float = Field(1.0, ge=0)
     max_seconds: float = Field(3.0, ge=0)
 
@@ -56,12 +86,8 @@ class ThinkTime(BaseModel):
 
 
 class Scenario(BaseModel):
-    """A named user journey: an ordered list of steps, plus its share of traffic."""
-
     name: str
-    weight: float = Field(
-        1.0, gt=0, description="Relative share of virtual users. Weights are normalised."
-    )
+    weight: float = Field(1.0, gt=0)
     steps: list[Step] = Field(..., min_length=1)
     think_time: ThinkTime = Field(default_factory=ThinkTime)
 
@@ -74,15 +100,11 @@ class LoadProfileType(str, Enum):
 
 
 class Stage(BaseModel):
-    """One phase of the load over time: hold `target_users` for `duration_seconds`."""
-
     duration_seconds: int = Field(..., gt=0)
     target_users: int = Field(..., ge=0)
 
 
 class LoadProfile(BaseModel):
-    """How load changes over the run — a shape plus the stages that realise it."""
-
     type: LoadProfileType = LoadProfileType.RAMP
     stages: list[Stage] = Field(..., min_length=1)
 
@@ -96,8 +118,6 @@ class LoadProfile(BaseModel):
 
 
 class Threshold(BaseModel):
-    """A pass/fail bound. Owned by code later — declared here so it travels with the plan."""
-
     metric: str = Field(..., description="e.g. 'p95_ms', 'error_rate'.")
     op: str = Field(..., description="Comparison operator: '<', '<=', '>', '>='.")
     value: float
@@ -111,38 +131,19 @@ class Threshold(BaseModel):
 
 
 class DataFile(BaseModel):
-    """A test-data file the run parameterizes requests from.
-
-    Only the field names (schema) and metadata live here — never the actual values,
-    which stay with the deterministic runner and never reach the LLM. Steps reference
-    these fields as ${field} in their path or body.
-    """
-
     filename: str = Field(..., description="e.g. 'users.csv'.")
-    fields: list[str] = Field(
-        ..., min_length=1, description="Column/field names available as ${field}."
-    )
-    row_count: int = Field(default=0, ge=0, description="Number of data rows.")
-    source_format: str = Field(
-        default="csv", description="csv | tsv | txt | json | jsonl."
-    )
+    fields: list[str] = Field(..., min_length=1)
+    row_count: int = Field(default=0, ge=0)
+    source_format: str = Field(default="csv")
 
 
 class LoadModel(BaseModel):
-    """The whole plan: what to hit, which journeys, how hard, and the pass criteria."""
-
-    target_base_url: str = Field(..., description="Base URL of the system under test.")
+    target_base_url: str
     scenarios: list[Scenario] = Field(..., min_length=1)
     load_profile: LoadProfile
     thresholds: list[Threshold] = Field(default_factory=list)
-    data_file: DataFile | None = Field(
-        default=None,
-        description="Optional test data; steps may reference its fields as ${field}.",
-    )
-    headers: dict[str, str] = Field(
-        default_factory=dict,
-        description="Optional global headers applied to every request (e.g. Authorization).",
-    )
+    data_file: DataFile | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("target_base_url")
     @classmethod
@@ -152,6 +153,5 @@ class LoadModel(BaseModel):
         return v.rstrip("/")
 
     def normalised_weights(self) -> list[float]:
-        """Scenario weights as fractions summing to 1.0."""
         total = sum(s.weight for s in self.scenarios)
         return [s.weight / total for s in self.scenarios]

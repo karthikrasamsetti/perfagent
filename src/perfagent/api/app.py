@@ -32,6 +32,7 @@ from perfagent.contracts.artifacts import PlanArtifact
 from perfagent.contracts.load_model import DataFile, LoadModel
 from perfagent.data import DataValidationError, load_data
 from perfagent.preflight import preflight
+from perfagent.importers import ImportError_, import_endpoints
 from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
 from perfagent.evaluation import evaluate_plan, evaluate_report
 from perfagent.generator import generate_script, supported_tools
@@ -137,6 +138,22 @@ async def upload_data(file: UploadFile) -> dict:
         "source_format": dataset.source_format,
         "warnings": dataset.warnings,
     }
+
+
+
+@app.post("/api/import-endpoints")
+async def import_endpoints_api(file: UploadFile) -> dict:
+    """Import endpoints from an OpenAPI/Swagger JSON, Postman collection, or HAR file."""
+    raw = await file.read()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="file must be UTF-8 text") from None
+    try:
+        result = import_endpoints(file.filename or "import.json", content)
+    except ImportError_ as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return result.to_dict()
 
 
 @app.post("/api/plan")
