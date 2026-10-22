@@ -217,6 +217,8 @@
       <div class="note" id="guardrailBadge" style="display:none"></div>
       <div class="note" id="planEval" style="display:none"></div>
 
+      <div id="planSummary" style="display:none;background:#f1f8f5;border:1px solid #cbe8dc;border-radius:12px;padding:14px 16px;margin:10px 0 6px"></div>
+
       <label class="toggle" style="margin:14px 0 10px">
         <input type="checkbox" id="rawToggle" style="width:auto" onchange="toggleRaw()" /> Edit as raw JSON (advanced)
       </label>
@@ -406,7 +408,7 @@ async function doPlan(){
       duration_seconds:parseInt(document.getElementById('duration').value),endpoints:eps};
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
-    currentPlanId=j.plan_id; planModel=j.load_model;
+    currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
     renderPlanForm(); renderRawFromModel();
     showGuardrail(j.guardrail); showPlanEval(j.evaluation);
     document.getElementById('planMeta').style.display='inline-flex';
@@ -428,6 +430,45 @@ function showPlanEval(e){
          el.innerHTML=`⚠ Plan needs review — ${e.passed}/${e.total} checks passed. Issues: ${f||'see plan'}`; }
 }
 
+
+/* ---------- plain-English plan summary ---------- */
+let planRationale = "";   // the AI's "why", set when a plan is drafted
+function renderSummary(){
+  const el=document.getElementById('planSummary'); if(!el||!planModel) return;
+  el.style.display='block';
+  const scs=planModel.scenarios||[];
+  const total=scs.reduce((a,s)=>a+(s.weight||0),0)||1;
+  // peak users + duration from the load profile
+  const stages=(planModel.load_profile&&planModel.load_profile.stages)||[];
+  const peak=stages.reduce((m,s)=>Math.max(m,s.target_users||0),0);
+  const dur=stages.reduce((a,s)=>a+(s.duration_seconds||0),0);
+  // journeys
+  const journeys=scs.map(s=>{
+    const pct=Math.round((s.weight/total)*100);
+    const steps=(s.steps||[]).map(st=>st.path).join(' → ');
+    return `<li><b>${pct}%</b> will do <b>${esc(s.name)}</b> <span class="muted">(${esc(steps)})</span></li>`;
+  }).join('');
+  // thresholds in plain words
+  const thr=(planModel.thresholds||[]).map(t=>{
+    const m={p95_ms:'95% of responses',p99_ms:'99% of responses',p50_ms:'half of responses',
+             avg_ms:'average response',error_rate:'error rate'}[t.metric]||t.metric;
+    if(t.metric==='error_rate'){ const pct=(t.value*100).toFixed(t.value<0.01?1:0);
+      return `the ${m} stays ${t.op.includes('<')?'under':'over'} ${pct}%`; }
+    return `${m} ${t.op.includes('<')?'stay under':'exceed'} ${t.value} ms`;
+  });
+  const thrText = thr.length ? ('It <b>passes</b> if '+thr.join(' and ')+'.') :
+    'No pass/fail thresholds are set yet — add some below so the result can be judged.';
+  // auth note
+  const hasAuth = Object.keys(planModel.headers||{}).some(k=>k.toLowerCase()==='authorization');
+  const authNote = hasAuth ? ' It logs in first and carries the login token through the protected steps automatically.' : '';
+  el.innerHTML =
+    `<h4>📋 What this test will do</h4>`+
+    `<p>It simulates up to <b>${peak||'?'} users</b> over <b>${dur||'?'} seconds</b> doing ${scs.length} ${scs.length===1?'journey':'journeys'}:${authNote}</p>`+
+    `<ul>${journeys}</ul>`+
+    `<p>${thrText}</p>`+
+    (planRationale ? `<div class="why"><b>Why the AI planned it this way:</b> ${esc(planRationale)}</div>` : '');
+}
+
 /* ---------- editable plan form ---------- */
 const METHODS=["GET","POST","PUT","PATCH","DELETE"];
 function renderPlanForm(){
@@ -437,6 +478,7 @@ function renderPlanForm(){
   const th=document.getElementById('thresholds'); th.innerHTML='';
   (planModel.thresholds||[]).forEach((t,ti)=>th.appendChild(thresholdRow(t,ti)));
   updateWeightBadges();
+  renderSummary();
 }
 function scenarioCard(sc,si){
   const el=document.createElement('div'); el.className='scn'; el.dataset.si=si;
@@ -459,15 +501,45 @@ function scenarioCard(sc,si){
   return el;
 }
 function stepRow(si,sti,st){
-  const el=document.createElement('div'); el.className='stepline';
-  el.innerHTML=`
+  const el=document.createElement('div');
+  const ex=(st.extract&&st.extract[0])||null;
+  const row=document.createElement('div'); row.className='stepline';
+  row.innerHTML=`
     <select onchange="planModel.scenarios[${si}].steps[${sti}].method=this.value">
       ${METHODS.map(m=>`<option ${m===(st.method||'GET')?'selected':''}>${m}</option>`).join('')}</select>
     <input value="${esc(st.path||'')}" placeholder="/path" oninput="planModel.scenarios[${si}].steps[${sti}].path=this.value"/>
     <input value='${st.body?esc(JSON.stringify(st.body)):""}' placeholder='body JSON (optional)'
            oninput="setStepBody(${si},${sti},this.value)"/>
     <button class="iconbtn" onclick="delStep(${si},${sti})">×</button>`;
+  el.appendChild(row);
+  // extract line
+  const exline=document.createElement('div');
+  exline.style.cssText='display:flex;gap:7px;align-items:center;margin:0 0 8px 2px;font-size:12px;color:var(--muted)';
+  if(ex){
+    exline.innerHTML=`🔗 capture <input style="width:120px;padding:5px 8px" value="${esc(ex.var)}" placeholder="var"
+        oninput="setExtract(${si},${sti},'var',this.value)"/> from response field
+      <input style="width:140px;padding:5px 8px" value="${esc(ex.path)}" placeholder="json path e.g. token"
+        oninput="setExtract(${si},${sti},'path',this.value)"/>
+      then use as <code class="k">\${${esc(ex.var||'var')}}</code>
+      <button class="iconbtn" onclick="removeExtract(${si},${sti})" style="padding:2px 7px">×</button>`;
+  } else {
+    exline.innerHTML=`<button class="btn ghost sm" style="padding:4px 10px" onclick="addExtract(${si},${sti})">🔗 Capture a value from this response (for correlation)</button>`;
+  }
+  el.appendChild(exline);
   return el;
+}
+function setExtract(si,sti,key,val){
+  const st=planModel.scenarios[si].steps[sti];
+  if(!st.extract||!st.extract.length) st.extract=[{var:'',source:'json',path:''}];
+  st.extract[0][key]=val;
+}
+function addExtract(si,sti){
+  planModel.scenarios[si].steps[sti].extract=[{var:'token',source:'json',path:'token'}];
+  renderPlanForm();
+}
+function removeExtract(si,sti){
+  planModel.scenarios[si].steps[sti].extract=[];
+  renderPlanForm();
 }
 function thresholdRow(t,ti){
   const el=document.createElement('div'); el.className='thr';
@@ -482,7 +554,7 @@ function thresholdRow(t,ti){
     <button class="iconbtn" onclick="delThreshold(${ti})">×</button>`;
   return el;
 }
-function setWeight(si,v){ planModel.scenarios[si].weight=(+v)/10; updateWeightBadges(); }
+function setWeight(si,v){ planModel.scenarios[si].weight=(+v)/10; updateWeightBadges(); renderSummary(); }
 function updateWeightBadges(){
   const total=(planModel.scenarios||[]).reduce((a,s)=>a+(s.weight||0),0)||1;
   (planModel.scenarios||[]).forEach((s,i)=>{
@@ -622,7 +694,7 @@ async function loadPlans(){
 }
 async function openPlan(id){
   const j=await (await fetch(`/api/plans/${id}`)).json();
-  currentPlanId=id; planModel=j.load_model; renderPlanForm(); renderRawFromModel();
+  currentPlanId=id; planModel=j.load_model; planRationale=''; renderPlanForm(); renderRawFromModel();
   document.getElementById('guardrailBadge').style.display='none';
   document.getElementById('planEval').style.display='none';
   document.getElementById('planMeta').style.display='inline-flex';

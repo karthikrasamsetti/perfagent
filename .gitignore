@@ -22,3 +22,4 @@ examples/locustfile.py
 .DS_Store
 Thumbs.db
 users.csv
+auth_mock.py

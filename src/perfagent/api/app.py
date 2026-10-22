@@ -156,6 +156,33 @@ async def import_endpoints_api(file: UploadFile) -> dict:
     return result.to_dict()
 
 
+
+def _plan_rationale(model) -> str:
+    """A short, always-accurate explanation of the plan's main choices."""
+    scs = model.scenarios or []
+    if not scs:
+        return ""
+    weights = model.normalised_weights()
+    # the heaviest journey
+    top_i = max(range(len(scs)), key=lambda i: weights[i])
+    top = scs[top_i]
+    bits = []
+    bits.append(
+        f"'{top.name}' is weighted highest ({round(weights[top_i]*100)}%) because it's "
+        f"treated as the most common user action"
+    )
+    # correlation note
+    has_auth = any(k.lower() == "authorization" for k in (model.headers or {}))
+    if has_auth:
+        bits.append("the journey logs in first and reuses the token on protected steps")
+    # profile note
+    bits.append(
+        f"load ramps up, holds, then ramps down over {model.load_profile.total_seconds}s "
+        "so the system is tested gradually rather than all at once"
+    )
+    return "; ".join(bits) + "."
+
+
 @app.post("/api/plan")
 def create_plan(request: PlanRequest) -> dict:
     """AI drafts a LoadModel from the endpoints, saved; returns it for review."""
@@ -186,6 +213,7 @@ def create_plan(request: PlanRequest) -> dict:
         "load_model": plan.load_model.model_dump(),
         "guardrail": _summarize_redactions(redaction_counts),
         "evaluation": plan_eval,
+        "rationale": _plan_rationale(plan.load_model),
     }
 
 
