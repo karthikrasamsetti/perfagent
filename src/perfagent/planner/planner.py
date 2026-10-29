@@ -115,11 +115,14 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
     # 4. Make thresholds meaningful.
     model = _sanitize_thresholds(model)
 
-    # 5. Auto-add the Authorization header when a token is captured (correlation).
-    if "token" in _captured_vars(model):
+    # 5. Auto-add the Authorization header when an auth token is captured.
+    caps = _captured_vars(model)
+    auth_var = next((v for v in ("token", "access_token", "jwt", "auth_token", "accessToken")
+                     if v in caps), None)
+    if auth_var:
         headers = dict(model.headers or {})
         if not any(k.lower() == "authorization" for k in headers):
-            headers["Authorization"] = "Bearer ${token}"
+            headers["Authorization"] = "Bearer ${" + auth_var + "}"
             model.headers = headers
 
     return model

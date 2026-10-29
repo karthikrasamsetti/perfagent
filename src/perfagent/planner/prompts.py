@@ -36,8 +36,10 @@ CORRELATION — set up authentication automatically:
 'signin', 'token', or 'session') that is a POST, assume it returns an auth token in \
 its JSON response. On that step, add an "extract" that captures the token:
     "extract": [{"var": "token", "source": "json", "path": "token"}]
-  (use the field name the API most likely returns: 'token', 'access_token', or 'jwt' \
-— default to 'token').
+  Use the field name the API most likely returns — common ones are 'token', \
+'access_token', or 'jwt'. Name the captured variable to MATCH that field (so for an \
+'access_token' response field, use "var": "access_token", "path": "access_token"). \
+Default to 'token' if unsure.
 - Put the login step FIRST in any scenario that also calls endpoints which likely \
 need authentication (anything that isn't clearly public, e.g. /me, /account, /orders, \
 /cart, /profile, /checkout, user- or order-specific paths).

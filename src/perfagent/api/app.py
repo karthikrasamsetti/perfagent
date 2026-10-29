@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from perfagent.contracts.artifacts import PlanArtifact
 from perfagent.contracts.load_model import DataFile, LoadModel
 from perfagent.data import DataValidationError, load_data
+from perfagent.analyzer.diagnostics import diagnose
 from perfagent.preflight import preflight
 from perfagent.importers import ImportError_, import_endpoints
 from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
@@ -512,12 +513,22 @@ def run_report(run_id: str) -> dict:
     ])
     report_eval = evaluate_report(narrative_text, run.snapshot, verdict).summary()
 
+    # Deterministic diagnostics — bottlenecks, tails, concurrency impact.
+    peak = None
+    if model is not None:
+        try:
+            peak = model.load_profile.peak_users
+        except Exception:  # noqa: BLE001
+            peak = None
+    diag = diagnose(run.snapshot, peak_users=peak)
+
     return {
         "run_id": run.run_id,
         "target": run.target,
         "verdict": verdict,
         "narrative": narrative.model_dump(),
         "evaluation": report_eval,
+        "diagnostics": diag.to_dict(),
     }
 
 

@@ -110,11 +110,32 @@ def _sample_from_schema(schema: dict, depth: int = 0) -> object:
     return None
 
 
-def parse_openapi(content: str) -> ImportResult:
+def _load_spec(content: str) -> dict:
+    """Parse an OpenAPI spec that may be JSON or YAML."""
+    stripped = content.lstrip()
+    if stripped.startswith(("{", "[")):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            raise ImportError_(f"OpenAPI JSON is invalid: {e}") from e
+    # try YAML
     try:
-        spec = json.loads(content)
-    except json.JSONDecodeError as e:
-        raise ImportError_(f"OpenAPI must be JSON: {e}") from e
+        import yaml
+    except ImportError as e:
+        raise ImportError_(
+            "this looks like YAML — install pyyaml (uv add pyyaml) or convert the spec to JSON"
+        ) from e
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        raise ImportError_(f"OpenAPI YAML is invalid: {e}") from e
+    if not isinstance(data, dict):
+        raise ImportError_("OpenAPI spec must be a mapping")
+    return data
+
+
+def parse_openapi(content: str) -> ImportResult:
+    spec = _load_spec(content)
     res = ImportResult(source="openapi")
 
     # base url from servers (OAS3) or host+basePath (Swagger2)
@@ -282,7 +303,7 @@ def import_endpoints(filename: str, content: str, fmt: str | None = None) -> Imp
     if fmt == "openapi":
         return parse_openapi(content)
     if fmt == "openapi_yaml":
-        raise ImportError_("YAML OpenAPI isn't supported yet — export/convert to JSON")
+        return parse_openapi(content)
     if fmt == "postman":
         return parse_postman(content)
     if fmt == "har":

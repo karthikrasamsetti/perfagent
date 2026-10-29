@@ -307,6 +307,7 @@
              <div class="hint" id="verdictSub" style="margin:0"></div></div>
       </div>
       <div class="note" id="reportEval" style="display:none"></div>
+      <div id="diagnostics" style="display:none;margin:4px 0 14px"></div>
       <p id="reportSummary"></p>
       <div id="reportObs"></div>
       <div id="reportRecs"></div>
@@ -674,6 +675,18 @@ async function loadReport(){
     document.getElementById('reportSummary').textContent=n.summary||'';
     document.getElementById('reportObs').innerHTML=(n.observations&&n.observations.length)?'<div class="mini">Observations</div><ul>'+n.observations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
     document.getElementById('reportRecs').innerHTML=(n.recommendations&&n.recommendations.length)?'<div class="mini">Recommendations</div><ul>'+n.recommendations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
+    // diagnostics
+    const dg=j.diagnostics; const dgEl=document.getElementById('diagnostics');
+    if(dg && dg.findings && dg.findings.length){
+      dgEl.style.display='block';
+      dgEl.innerHTML='<div class="mini">🔍 Diagnosis</div>'+
+        dg.findings.map(f=>{
+          const emoji={high:'🔴',medium:'🟠',low:'🔵',info:'🟢'}[f.severity]||'•';
+          return `<div class="finding ${f.severity}"><div class="ttl">${emoji} ${esc(f.title)} <span class="sevdot ${f.severity}">${f.severity}</span></div>`+
+                 `<div>${esc(f.detail)}</div>`+
+                 (f.recommendation?`<div class="rec"><b>→</b> ${esc(f.recommendation)}</div>`:'')+`</div>`;
+        }).join('');
+    } else { dgEl.style.display='none'; }
     const ev=j.evaluation; const el=document.getElementById('reportEval');
     if(ev){ el.style.display='flex';
       if(ev.grounded){ el.className='note ok'; el.innerHTML=`✅ Report verified — all ${ev.numbers_in_text??0} figures trace to real metrics`; }
