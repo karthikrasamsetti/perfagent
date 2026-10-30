@@ -333,6 +333,7 @@
              <div class="hint" id="verdictSub" style="margin:0"></div></div>
       </div>
       <div class="note" id="reportEval" style="display:none"></div>
+      <div id="baseline" style="display:none;margin:4px 0 14px"></div>
       <div id="diagnostics" style="display:none;margin:4px 0 14px"></div>
       <p id="reportSummary"></p>
       <div id="reportObs"></div>
@@ -708,6 +709,30 @@ async function loadReport(){
     document.getElementById('reportSummary').textContent=n.summary||'';
     document.getElementById('reportObs').innerHTML=(n.observations&&n.observations.length)?'<div class="mini">Observations</div><ul>'+n.observations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
     document.getElementById('reportRecs').innerHTML=(n.recommendations&&n.recommendations.length)?'<div class="mini">Recommendations</div><ul>'+n.recommendations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
+    // baseline / regression
+    const bl=j.baseline; const blEl=document.getElementById('baseline');
+    if(bl){
+      blEl.style.display='block';
+      if(!bl.has_previous){
+        blEl.innerHTML='<div class="mini">📈 vs. previous run</div><div class="note info" style="margin:0">'+esc(bl.headline)+'</div>';
+      } else {
+        const rows=bl.deltas.map(d=>{
+          const up = d.pct_change>0;
+          const word={better:'better',worse:'worse',same:'same','n/a':''}[d.direction]||'';
+          const glyph = d.direction==='same'||d.direction==='n/a' ? '=' : (up?'↑':'↓');
+          const arrow = word ? (glyph+' '+word) : '';
+          const col={better:'#085041',worse:'#b4342b',same:'#6b7280','n/a':'#6b7280'}[d.direction];
+          const pct=(d.pct_change>0?'+':'')+(d.pct_change*100).toFixed(0)+'%';
+          return `<tr><td>${esc(d.label)}</td><td>${esc(d.previous_fmt)}</td><td>${esc(d.current_fmt)}</td>`+
+                 `<td style="color:${col};font-weight:600">${d.direction==='n/a'?'':pct+' '+arrow}</td></tr>`;
+        }).join('');
+        const banner = bl.regressed
+          ? '<div class="note warn" style="margin:0 0 8px">⚠ '+esc(bl.headline)+'</div>'
+          : '<div class="note ok" style="margin:0 0 8px">✅ '+esc(bl.headline)+'</div>';
+        blEl.innerHTML='<div class="mini">📈 vs. previous run</div>'+banner+
+          '<table><thead><tr><th>Metric</th><th>Previous</th><th>Current</th><th>Change</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      }
+    } else { blEl.style.display='none'; }
     // diagnostics
     const dg=j.diagnostics; const dgEl=document.getElementById('diagnostics');
     if(dg && dg.findings && dg.findings.length){
@@ -745,7 +770,27 @@ async function openPlan(id){
   document.getElementById('planEval').style.display='none';
   document.getElementById('planMeta').style.display='inline-flex';
   document.getElementById('planMeta').textContent='loaded · '+j.scripts.length+' script(s)';
-  goStep(2);
+
+  // If this plan already has a generated script, load the latest one so the user can
+  // go straight to the Script / Run steps without regenerating.
+  currentScriptId=null;
+  const scripts=j.scripts||[];
+  if(scripts.length){
+    const latest=scripts[scripts.length-1];   // most recent
+    try{
+      const content=await (await fetch(`/api/scripts/${latest.script_id}/download`)).text();
+      currentScriptId=latest.script_id; currentDataFileId=null;
+      document.getElementById('scriptOut').textContent=content;
+      document.getElementById('dlBtn').disabled=false;
+      document.getElementById('runBtn').disabled=(latest.tool!=='k6');
+      document.getElementById('validateBtn').disabled=false;
+      document.getElementById('preflightBtn').disabled=false;
+      document.getElementById('scriptMeta').textContent=`${latest.filename} (${latest.tool}) — from saved plan ${id.slice(0,8)}`;
+      const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=latest.tool;
+    }catch(e){ /* fall back to review step */ }
+  }
+  // land on the Script step if a script is ready, else the Review step
+  goStep(currentScriptId ? 3 : 2);
 }
 
 

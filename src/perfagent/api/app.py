@@ -31,11 +31,12 @@ from pydantic import BaseModel
 from perfagent.contracts.artifacts import PlanArtifact
 from perfagent.contracts.load_model import DataFile, LoadModel
 from perfagent.data import DataValidationError, load_data
+from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline
 from perfagent.analyzer.diagnostics import diagnose
 from perfagent.preflight import preflight
 from perfagent.runner.validator import validate_script
 from perfagent.importers import ImportError_, import_endpoints
-from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
+from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, get_session
 from perfagent.evaluation import evaluate_plan, evaluate_report
 from perfagent.generator import generate_script, supported_tools
 from perfagent.planner import PlanRequest, draft_plan
@@ -595,6 +596,38 @@ def run_report(run_id: str) -> dict:
             peak = None
     diag = diagnose(run.snapshot, peak_users=peak)
 
+    # ----- baseline / regression: compare to the previous run of this plan -----
+    cur_metrics = metrics_from_snapshot(run.snapshot)
+    plan_id = ""
+    with get_session() as s:
+        sc = s.get(ScriptRow, run.script_id)
+        if sc is not None:
+            plan_id = sc.plan_id
+        baseline_summary = no_baseline()
+        if plan_id:
+            prev = (
+                s.query(RunResultRow)
+                .filter(RunResultRow.plan_id == plan_id)
+                .order_by(RunResultRow.created_at.desc())
+                .first()
+            )
+            if prev is not None:
+                baseline_summary = compare(cur_metrics, {
+                    "error_rate": prev.error_rate, "p95_ms": prev.p95_ms,
+                    "p99_ms": prev.p99_ms, "avg_ms": prev.avg_ms, "rps": prev.rps,
+                })
+            # store THIS run as the new latest result for the plan
+            vtxt = ("pass" if verdict.get("overall_passed") is True
+                    else "fail" if verdict.get("overall_passed") is False
+                    else "inconclusive")
+            s.add(RunResultRow(
+                plan_id=plan_id, target_base_url=run.target, verdict=vtxt,
+                requests=cur_metrics["requests"], error_rate=cur_metrics["error_rate"],
+                rps=cur_metrics["rps"], p95_ms=cur_metrics["p95_ms"],
+                p99_ms=cur_metrics["p99_ms"], avg_ms=cur_metrics["avg_ms"],
+            ))
+            s.commit()
+
     return {
         "run_id": run.run_id,
         "target": run.target,
@@ -602,6 +635,7 @@ def run_report(run_id: str) -> dict:
         "narrative": narrative.model_dump(),
         "evaluation": report_eval,
         "diagnostics": diag.to_dict(),
+        "baseline": baseline_summary,
     }
 
 

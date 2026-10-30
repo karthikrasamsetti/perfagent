@@ -74,6 +74,26 @@ class DataFileRow(Base):
         return [c for c in self.columns_csv.split(",") if c]
 
 
+
+class RunResultRow(Base):
+    """A finished run's key metrics — stored so later runs can compare against it
+    (baseline / regression). One row per completed run of a plan."""
+
+    __tablename__ = "run_results"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    plan_id: Mapped[str] = mapped_column(String(32), index=True)
+    target_base_url: Mapped[str] = mapped_column(String(500), default="")
+    verdict: Mapped[str] = mapped_column(String(20), default="")   # pass/fail/inconclusive/none
+    requests: Mapped[int] = mapped_column(default=0)
+    error_rate: Mapped[float] = mapped_column(default=0.0)
+    rps: Mapped[float] = mapped_column(default=0.0)
+    p95_ms: Mapped[float] = mapped_column(default=0.0)
+    p99_ms: Mapped[float] = mapped_column(default=0.0)
+    avg_ms: Mapped[float] = mapped_column(default=0.0)
+
+
 _engine = None
 
 

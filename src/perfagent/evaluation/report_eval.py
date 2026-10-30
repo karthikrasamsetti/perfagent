@@ -20,6 +20,20 @@ _ALWAYS_OK = {"50", "90", "95", "99", "100", "0", "1", "2", "3", "5", "10"}
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
+# Patterns whose embedded digits must NOT be treated as performance figures.
+_URLS = re.compile(r"https?://[^\s]+")
+_HOSTS = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){1,3}(?::\d+)?\b")   # IPs / ip:port
+_ISO = re.compile(r"\d{4}-\d{2}-\d{2}[T ][\d:.+-]+")               # timestamps
+
+
+def _strip_non_metrics(text: str) -> str:
+    text = _URLS.sub(" ", text)
+    text = _ISO.sub(" ", text)
+    text = _HOSTS.sub(" ", text)
+    return text
+
+
+
 
 @dataclass
 class ReportEvaluation:
@@ -79,7 +93,10 @@ def _allowed_numbers(snapshot: dict, verdict: dict) -> set[str]:
 def evaluate_report(narrative_text: str, snapshot: dict, verdict: dict) -> ReportEvaluation:
     """Check that every number in the narrative traces to a computed metric."""
     allowed = _allowed_numbers(snapshot, verdict)
-    found = _NUMBER.findall(narrative_text)
+    # Strip things whose digits are not performance figures: URLs/hosts, IP:port,
+    # and ISO timestamps. Otherwise '127.0.0.1:8000' looks like fabricated numbers.
+    cleaned = _strip_non_metrics(narrative_text)
+    found = _NUMBER.findall(cleaned)
     unsupported = []
     for token in found:
         # normalise: strip trailing .0 for comparison convenience
