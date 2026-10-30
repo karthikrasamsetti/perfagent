@@ -66,12 +66,28 @@ def headers_expr(headers: dict, cap: set[str]) -> str:
 
 
 def extract_code(step, indent: str = "      ") -> str:
-    """Emit k6 capture lines for a step's extracts (reads from `res`)."""
+    """Emit k6 capture lines for a step's extracts (reads from `res`).
+
+    Supports three sources:
+      - json   -> res.json('path')
+      - header -> res.headers['Header-Name']
+      - cookie -> res.cookies['name'][0].value
+    """
     lines = []
     for ex in getattr(step, "extract", []) or []:
-        # json field path: token  -> res.json('token'); data.id -> res.json('data.id')
+        source = getattr(ex, "source", "json")
+        if source == "header":
+            expr = f"res.headers[{json.dumps(ex.path)}]"
+        elif source == "cookie":
+            # k6 exposes cookies as res.cookies[name] -> array of {value,...}
+            expr = (
+                f"(res.cookies[{json.dumps(ex.path)}] && res.cookies[{json.dumps(ex.path)}][0] "
+                f"? res.cookies[{json.dumps(ex.path)}][0].value : '')"
+            )
+        else:  # json
+            expr = f"res.json({json.dumps(ex.path)})"
         lines.append(
-            f"{indent}try {{ vars.{ex.var} = res.json({json.dumps(ex.path)}); }} "
+            f"{indent}try {{ vars.{ex.var} = {expr}; }} "
             f"catch (e) {{ vars.{ex.var} = ''; }}"
         )
     return "\n".join(lines)

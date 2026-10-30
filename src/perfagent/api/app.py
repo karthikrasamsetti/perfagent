@@ -33,6 +33,7 @@ from perfagent.contracts.load_model import DataFile, LoadModel
 from perfagent.data import DataValidationError, load_data
 from perfagent.analyzer.diagnostics import diagnose
 from perfagent.preflight import preflight
+from perfagent.runner.validator import validate_script
 from perfagent.importers import ImportError_, import_endpoints
 from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
 from perfagent.evaluation import evaluate_plan, evaluate_report
@@ -363,6 +364,78 @@ def api_preflight(body: PreflightBody) -> dict:
         return preflight(model, sample_row=sample_row)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"preflight failed: {e}") from e
+
+
+
+@app.post("/api/scripts/{script_id}/validate")
+def api_validate_script(script_id: str) -> dict:
+    """Smoke-test a generated script with 1 VU / 1 iteration before a full run."""
+    with get_session() as s:
+        row = s.get(ScriptRow, script_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="script not found")
+        data_filename, data_content = "", ""
+        plan = s.get(PlanRow, row.plan_id)
+        if plan is not None:
+            data_filename, data_content = _data_for_plan(s, plan)
+        return validate_script(row.content, data_filename=data_filename,
+                               data_content=data_content)
+
+
+
+class UploadScriptBody(BaseModel):
+    filename: str = "loadtest.js"
+    content: str
+    target_base_url: str = ""
+    tool: str = "k6"
+
+
+@app.post("/api/scripts/upload")
+def upload_script(body: UploadScriptBody) -> dict:
+    """Store a hand-written / existing script and make it runnable, skipping planning.
+
+    A minimal plan is saved alongside it (just the target URL) so the run, monitor and
+    report path works exactly as for a generated script.
+    """
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="script content is empty")
+    tool = body.tool or "k6"
+    if tool not in supported_tools():
+        raise HTTPException(status_code=400, detail=f"unsupported tool {tool!r}")
+
+    target = body.target_base_url.strip() or "http://127.0.0.1:8000"
+    # a minimal LoadModel so the report/verdict path has something to read
+    minimal = (
+        '{"target_base_url":"' + target + '",'
+        '"scenarios":[{"name":"uploaded","steps":[{"name":"request","path":"/"}]}],'
+        '"load_profile":{"stages":[{"duration_seconds":1,"target_users":1}]},'
+        '"thresholds":[{"metric":"error_rate","op":"<","value":0.05}]}'
+    )
+    with get_session() as s:
+        plan_row = PlanRow(
+            target_base_url=target,
+            goal="Uploaded script (no AI plan)",
+            load_model_json=minimal,
+        )
+        s.add(plan_row)
+        s.commit()
+        plan_id = plan_row.id
+
+        script_row = ScriptRow(
+            plan_id=plan_id,
+            tool=tool,
+            filename=body.filename or "loadtest.js",
+            content=body.content,
+        )
+        s.add(script_row)
+        s.commit()
+        return {
+            "script_id": script_row.id,
+            "plan_id": plan_id,
+            "tool": tool,
+            "filename": script_row.filename,
+            "content": body.content,
+        }
 
 
 # ---------- run + live monitor ----------

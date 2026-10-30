@@ -32,8 +32,16 @@ class Extract(BaseModel):
     """
 
     var: str = Field(..., description="Variable name, usable later as ${var}.")
-    source: str = Field(default="json", description="json (JSON body field path).")
-    path: str = Field(..., description="For json: dotted path, e.g. 'token' or 'data.id'.")
+    source: str = Field(
+        default="json",
+        description="Where to read from: 'json' (body field), 'header', or 'cookie'.",
+    )
+    path: str = Field(
+        ...,
+        description="json: dotted path e.g. 'token' or 'data.id'; "
+                    "header: the header name e.g. 'X-Auth-Token'; "
+                    "cookie: the cookie name e.g. 'session'.",
+    )
 
     @field_validator("var")
     @classmethod
@@ -45,8 +53,8 @@ class Extract(BaseModel):
     @field_validator("source")
     @classmethod
     def known_source(cls, v: str) -> str:
-        if v not in {"json"}:
-            raise ValueError("only 'json' extraction is supported for now")
+        if v not in {"json", "header", "cookie"}:
+            raise ValueError("source must be 'json', 'header', or 'cookie'")
         return v
 
 

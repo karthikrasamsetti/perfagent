@@ -167,6 +167,15 @@
         <div class="field"><label>Duration (seconds)</label><input id="duration" type="number" value="60" /></div>
         <div class="field"><label>Load tool</label><select id="tool"></select></div>
       </div>
+      <div class="field">
+        <label>Test type <span class="muted" style="font-weight:400">— shapes how load is applied</span></label>
+        <select id="profileType">
+          <option value="ramp">Ramp — up, steady, down (balanced, default)</option>
+          <option value="spike">Spike — sudden sharp burst to peak</option>
+          <option value="soak">Soak — long steady hold (endurance)</option>
+          <option value="stress">Stress — step up past the target to find limits</option>
+        </select>
+      </div>
 
       <div class="field" style="margin-top:4px">
         <label>Import endpoints (optional) — OpenAPI / Swagger JSON, Postman collection, or HAR</label>
@@ -202,6 +211,21 @@
         <span class="hint" style="margin:0">Calls your configured LLM (key in .env)</span>
       </div>
       <div class="statusline" id="planStatus"></div>
+
+      <details style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--teal-d)">⚡ Or: run an existing k6 script (skip planning)</summary>
+        <div style="margin-top:10px">
+          <label>Target base URL (for the report)</label>
+          <input id="exTarget" value="http://127.0.0.1:8000" />
+          <label style="margin-top:8px">Paste your k6 script, or choose a file</label>
+          <input type="file" id="exFile" accept=".js" onchange="loadExistingFile()" style="margin-bottom:6px"/>
+          <textarea id="exContent" style="min-height:140px;font-family:ui-monospace,Menlo,monospace;font-size:12px" placeholder="// paste an existing k6 script here"></textarea>
+          <div class="btnrow">
+            <button class="btn ghost" onclick="uploadExisting()">Use this script →</button>
+          </div>
+          <div class="statusline" id="exStatus"></div>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -262,10 +286,12 @@
         <button class="btn ghost sm" onclick="goStep(2)">← Back to plan</button>
         <button class="btn ghost sm" id="dlBtn" onclick="download()" disabled>⬇ Download</button>
         <div class="spacer"></div>
+        <button class="btn ghost" id="validateBtn" onclick="doValidate()" disabled>✓ Validate script</button>
         <button class="btn ghost" id="preflightBtn" onclick="doPreflight()" disabled>✈ Pre-flight check</button>
         <button class="btn" id="runBtn" onclick="runScript()" disabled>▶ Run &amp; monitor live</button>
       </div>
       <div class="note warn" style="margin-top:10px" id="runHint" style="display:none"></div>
+      <div class="note" id="validateResult" style="display:none"></div>
       <div class="note" id="preflightResult" style="display:none"></div>
     </div>
   </div>
@@ -406,7 +432,9 @@ async function doPlan(){
     const body={target_base_url:document.getElementById('target').value.trim(),
       goal:document.getElementById('goal').value.trim(),
       max_users:parseInt(document.getElementById('maxUsers').value),
-      duration_seconds:parseInt(document.getElementById('duration').value),endpoints:eps};
+      duration_seconds:parseInt(document.getElementById('duration').value),
+      profile_type:document.getElementById('profileType').value,
+      endpoints:eps};
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
@@ -517,9 +545,13 @@ function stepRow(si,sti,st){
   const exline=document.createElement('div');
   exline.style.cssText='display:flex;gap:7px;align-items:center;margin:0 0 8px 2px;font-size:12px;color:var(--muted)';
   if(ex){
-    exline.innerHTML=`🔗 capture <input style="width:120px;padding:5px 8px" value="${esc(ex.var)}" placeholder="var"
-        oninput="setExtract(${si},${sti},'var',this.value)"/> from response field
-      <input style="width:140px;padding:5px 8px" value="${esc(ex.path)}" placeholder="json path e.g. token"
+    const src=ex.source||'json';
+    const srcOpts=['json','header','cookie'].map(o=>`<option ${o===src?'selected':''}>${o}</option>`).join('');
+    const ph=src==='header'?'header name e.g. X-Auth-Token':src==='cookie'?'cookie name e.g. session':'json path e.g. token';
+    exline.innerHTML=`🔗 capture <input style="width:110px;padding:5px 8px" value="${esc(ex.var)}" placeholder="var"
+        oninput="setExtract(${si},${sti},'var',this.value)"/> from
+      <select style="width:auto;padding:5px 8px" onchange="setExtract(${si},${sti},'source',this.value);renderPlanForm()">${srcOpts}</select>
+      <input style="width:150px;padding:5px 8px" value="${esc(ex.path)}" placeholder="${ph}"
         oninput="setExtract(${si},${sti},'path',this.value)"/>
       then use as <code class="k">\${${esc(ex.var||'var')}}</code>
       <button class="iconbtn" onclick="removeExtract(${si},${sti})" style="padding:2px 7px">×</button>`;
@@ -610,6 +642,7 @@ async function doGenerate(){
     document.getElementById('dlBtn').disabled=false;
     document.getElementById('runBtn').disabled=(j.tool!=='k6');
     document.getElementById('preflightBtn').disabled=false;
+    document.getElementById('validateBtn').disabled=false;
     document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — from plan ${j.plan_id.slice(0,8)}`;
     const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
     if(j.tool!=='k6'){ const h=document.getElementById('runHint'); h.style.display='flex'; h.textContent='Live run is implemented for k6; download and run this '+j.tool+' script yourself.'; }
@@ -755,6 +788,57 @@ function readHeaders(){
     if(k) out[k]=v;
   });
   return out;
+}
+
+
+
+/* ---------- run an existing script ---------- */
+function loadExistingFile(){
+  const f=document.getElementById('exFile').files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ document.getElementById('exContent').value=r.result; };
+  r.readAsText(f);
+}
+async function uploadExisting(){
+  const st=document.getElementById('exStatus');
+  const content=document.getElementById('exContent').value.trim();
+  if(!content){ st.className='statusline err'; st.textContent='Paste or choose a script first.'; return; }
+  st.className='statusline'; st.textContent='Uploading…';
+  try{
+    const body={filename:(document.getElementById('exFile').files[0]||{}).name||'loadtest.js',
+                content, target_base_url:document.getElementById('exTarget').value.trim(), tool:'k6'};
+    const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'upload failed');
+    currentScriptId=j.script_id; currentPlanId=j.plan_id; currentDataFileId=null;
+    document.getElementById('scriptOut').textContent=j.content;
+    document.getElementById('dlBtn').disabled=false;
+    document.getElementById('runBtn').disabled=(j.tool!=='k6');
+    document.getElementById('preflightBtn').disabled=true;   // no plan endpoints to pre-flight
+    document.getElementById('validateBtn').disabled=false;
+    document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — uploaded`;
+    const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
+    st.className='statusline ok'; st.textContent='Uploaded. Go to the Script step to validate & run.';
+    goStep(3);
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+
+/* ---------- validate script (1 VU / 1 iteration) ---------- */
+async function doValidate(){
+  const el=document.getElementById('validateResult'); el.style.display='flex'; el.className='note info';
+  el.textContent='Validating: running the script once (1 user, 1 iteration)…';
+  try{
+    const r=await fetch(`/api/scripts/${currentScriptId}/validate`,{method:'POST'});
+    const j=await r.json();
+    if(j.ok){
+      el.className='note ok';
+      el.innerHTML='✅ <b>Script is valid</b> — it compiled and ran one request successfully. Safe to run.';
+    } else if(j.status==='k6_missing'){
+      el.className='note warn'; el.textContent='⚠ '+j.message;
+    } else {
+      el.className='note err';
+      el.innerHTML='🔴 <b>Script failed validation</b> — fix this before a full run:<br><pre style="margin:6px 0 0;max-height:160px;font-size:11px">'+esc(j.detail||j.message)+'</pre>';
+    }
+  }catch(e){ el.className='note err'; el.textContent='Validation error: '+e.message; }
 }
 
 /* ---------- pre-flight check ---------- */

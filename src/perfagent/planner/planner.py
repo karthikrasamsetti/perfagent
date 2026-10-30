@@ -104,7 +104,7 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
 
     # 2. Deterministic ramp shape sized to the guard rails.
     model.load_profile = build_profile(
-        profile_type=model.load_profile.type,
+        profile_type=request.profile_type,   # the user's chosen test type wins
         peak_users=request.max_users,
         total_seconds=request.duration_seconds,
     )
