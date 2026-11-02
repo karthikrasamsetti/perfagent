@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     # Max tokens for the planning response.
     max_tokens: int = Field(default=4096)
 
+    # Logging level for the structured logs (DEBUG | INFO | WARNING | ERROR).
+    log_level: str = Field(default="INFO")
+
+    # Guardrail debug: when true, logs the REDACTED prompt actually sent to the LLM
+    # (and output-scrub results) so you can confirm no sensitive data survives.
+    # Logs only the redacted text, never raw secrets. Keep false for normal use.
+    guardrail_debug: bool = Field(default=False)
+
 
 @lru_cache
 def get_settings() -> Settings:
