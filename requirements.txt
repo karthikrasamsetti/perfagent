@@ -117,6 +117,8 @@ python-dotenv==1.2.3
     # via
     #   pydantic-settings
     #   uvicorn
+python-multipart==0.0.33
+    # via perfagent (pyproject.toml)
 pyyaml==6.0.3
     # via uvicorn
 regex==2026.9.10
@@ -137,6 +139,8 @@ sqlalchemy==2.0.54
     # via perfagent (pyproject.toml)
 starlette==1.6.0
     # via fastapi
+structlog==26.1.0
+    # via perfagent (pyproject.toml)
 tenacity==9.1.4
     # via instructor
 truststore==0.10.4

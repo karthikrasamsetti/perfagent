@@ -94,6 +94,27 @@ class RunResultRow(Base):
     avg_ms: Mapped[float] = mapped_column(default=0.0)
 
 
+
+class AuditRow(Base):
+    """A durable record of a consequential action — who/what/when, for the activity log.
+
+    This is the audit trail: plan created/approved, script generated, run started (with
+    target + user count — the action with real consequences), run finished, downloads.
+    Never stores secrets or raw bodies — ids, targets, counts and a short summary only.
+    """
+
+    __tablename__ = "audit"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    created_at: Mapped[datetime] = mapped_column(default=_now, index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)   # e.g. run.started
+    entity: Mapped[str] = mapped_column(String(20), default="")   # plan|script|run|data
+    entity_id: Mapped[str] = mapped_column(String(32), default="")
+    target: Mapped[str] = mapped_column(String(500), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    actor: Mapped[str] = mapped_column(String(80), default="local")  # future: real user
+
+
 _engine = None
 
 

@@ -1,0 +1,103 @@
+{"action": "plan.created", "entity": "plan", "entity_id": "p1", "target": "http://x", "summary": "drafted", "event": "audit", "level": "info", "timestamp": "2026-11-02T04:57:59.681621Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r1", "target": "http://x", "summary": "peak 50 VUs", "event": "audit", "level": "info", "timestamp": "2026-11-02T04:57:59.690620Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r0", "target": "", "summary": "0", "event": "audit", "level": "info", "timestamp": "2026-11-02T04:57:59.797140Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r1", "target": "", "summary": "1", "event": "audit", "level": "info", "timestamp": "2026-11-02T04:57:59.812153Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r2", "target": "", "summary": "2", "event": "audit", "level": "info", "timestamp": "2026-11-02T04:57:59.820153Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r3", "target": "", "summary": "3", "event": "audit", "level": "info", "timestamp": "2026-11-02T04:57:59.833658Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r4", "target": "", "summary": "4", "event": "audit", "level": "info", "timestamp": "2026-11-02T04:57:59.848658Z"}
+{"action": "run.started", "error": "boom", "event": "audit.write_failed", "level": "warning", "timestamp": "2026-11-02T04:57:59.964599Z"}
+{"action": "run.started", "entity": "run", "entity_id": "x", "target": "", "summary": "", "event": "audit", "level": "info", "timestamp": "2026-11-02T04:57:59.964599Z"}
+{"event": "HTTP Request: GET http://testserver/api/tools \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:10.257396Z"}
+{"event": "HTTP Request: GET http://testserver/ \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:10.338493Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "173302f0c824408b96c774178eae83bd", "target": "http://127.0.0.1:8000", "summary": "AI drafted a plan with 2 scenario(s)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:12.018033Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:12.020265Z"}
+{"action": "plan.approved", "entity": "plan", "entity_id": "173302f0c824408b96c774178eae83bd", "target": "http://127.0.0.1:8000", "summary": "Plan approved by user", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:12.283163Z"}
+{"action": "script.generated", "entity": "script", "entity_id": "a9bf426cb85b4f6eb8c4417b6bd1433b", "target": "http://127.0.0.1:8000", "summary": "Generated k6 script loadtest.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:12.485714Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan/173302f0c824408b96c774178eae83bd/generate \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:12.667945Z"}
+{"event": "HTTP Request: GET http://testserver/api/plans/173302f0c824408b96c774178eae83bd \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:12.684436Z"}
+{"action": "script.downloaded", "entity": "script", "entity_id": "a9bf426cb85b4f6eb8c4417b6bd1433b", "target": "", "summary": "Downloaded loadtest.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:12.889645Z"}
+{"event": "HTTP Request: GET http://testserver/api/scripts/a9bf426cb85b4f6eb8c4417b6bd1433b/download \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:12.891644Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "784aaec453c244559a256122842b2440", "target": "http://127.0.0.1:8000", "summary": "AI drafted a plan with 2 scenario(s)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:13.644856Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:13.647857Z"}
+{"action": "plan.approved", "entity": "plan", "entity_id": "784aaec453c244559a256122842b2440", "target": "http://127.0.0.1:8000", "summary": "Plan approved by user", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:13.890914Z"}
+{"action": "script.generated", "entity": "script", "entity_id": "15ddf8591083445aad3c68a8de9ee5d4", "target": "http://127.0.0.1:8000", "summary": "Generated k6 script loadtest.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:14.303106Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan/784aaec453c244559a256122842b2440/generate \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:14.306621Z"}
+{"event": "HTTP Request: GET http://testserver/api/plans/784aaec453c244559a256122842b2440 \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:14.320685Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "c0989226f1174bb4a494d84b6688b124", "target": "http://127.0.0.1:8000", "summary": "AI drafted a plan with 2 scenario(s)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:14.653441Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:14.655446Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan/c0989226f1174bb4a494d84b6688b124/generate \"HTTP/1.1 400 Bad Request\"", "level": "info", "timestamp": "2026-11-02T05:00:14.671441Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "p1", "target": "http://x", "summary": "drafted", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:14.838349Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r1", "target": "http://x", "summary": "peak 50 VUs", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:14.851465Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r0", "target": "", "summary": "0", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:15.014466Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r1", "target": "", "summary": "1", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:15.027473Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r2", "target": "", "summary": "2", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:15.047699Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r3", "target": "", "summary": "3", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:15.061465Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r4", "target": "", "summary": "4", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:15.076518Z"}
+{"action": "run.started", "error": "boom", "event": "audit.write_failed", "level": "warning", "timestamp": "2026-11-02T05:00:15.213352Z"}
+{"action": "run.started", "entity": "run", "entity_id": "x", "target": "", "summary": "", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:15.214352Z"}
+{"event": "HTTP Request: GET http://127.0.0.1:8799/products \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:18.332406Z"}
+{"event": "HTTP Request: POST http://127.0.0.1:8799/login \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:18.339211Z"}
+{"event": "HTTP Request: GET http://127.0.0.1:8799/products \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:19.076972Z"}
+{"event": "HTTP Request: POST http://127.0.0.1:8799/login \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:19.078970Z"}
+{"event": "HTTP Request: GET http://127.0.0.1:8799/nope \"HTTP/1.0 404 Not Found\"", "level": "info", "timestamp": "2026-11-02T05:00:19.080966Z"}
+{"event": "HTTP Request: POST http://testserver/api/scripts/upload \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:20.255441Z"}
+{"action": "script.downloaded", "entity": "script", "entity_id": "ccd28fb9d5ff4c96a32ba57b587ef69f", "target": "", "summary": "Downloaded my.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:00:20.298516Z"}
+{"event": "HTTP Request: GET http://testserver/api/scripts/ccd28fb9d5ff4c96a32ba57b587ef69f/download \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:00:20.302015Z"}
+{"event": "HTTP Request: POST http://testserver/api/scripts/upload \"HTTP/1.1 400 Bad Request\"", "level": "info", "timestamp": "2026-11-02T05:00:20.647782Z"}
+{"event": "HTTP Request: POST http://testserver/api/scripts/upload \"HTTP/1.1 400 Bad Request\"", "level": "info", "timestamp": "2026-11-02T05:00:20.828734Z"}
+{"event": "HTTP Request: POST https://api.openai.com/v1/chat/completions \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:31:53.931152Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "a50977e558104639ac8bacd2c4d170ad", "target": "http://127.0.0.1:8000", "summary": "AI drafted a plan with 1 scenario(s)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:31:53.974219Z"}
+{"action": "plan.approved", "entity": "plan", "entity_id": "a50977e558104639ac8bacd2c4d170ad", "target": "http://127.0.0.1:8000", "summary": "Plan approved by user", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:32:36.384576Z"}
+{"action": "script.generated", "entity": "script", "entity_id": "88762db90d3643b9abc55e533722cbc3", "target": "http://127.0.0.1:8000", "summary": "Generated k6 script loadtest.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:32:36.400150Z"}
+{"event": "HTTP Request: POST http://127.0.0.1:8000/login \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:32:49.923179Z"}
+{"event": "HTTP Request: GET http://127.0.0.1:8000/products \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:32:49.927181Z"}
+{"action": "run.started", "entity": "run", "entity_id": "4360b5fc54f944538741b6c84c35a079", "target": "http://127.0.0.1:8000", "summary": "Load run started against http://127.0.0.1:8000 (peak 5 VUs)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:32:52.789189Z"}
+{"event": "HTTP Request: POST https://api.openai.com/v1/chat/completions \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:33:17.493804Z"}
+{"action": "run.finished", "entity": "run", "entity_id": "4360b5fc54f944538741b6c84c35a079", "target": "http://127.0.0.1:8000", "summary": "Run PASS \u2014 42 requests, 0.00% errors", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:33:17.535573Z"}
+{"event": "HTTP Request: POST https://api.openai.com/v1/chat/completions \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:37:58.108535Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "606241a21bb5464baa39ac2eef6786f1", "target": "http://127.0.0.1:8000", "summary": "AI drafted a plan with 1 scenario(s)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:37:58.153336Z"}
+{"action": "plan.approved", "entity": "plan", "entity_id": "606241a21bb5464baa39ac2eef6786f1", "target": "http://127.0.0.1:8000", "summary": "Plan approved by user", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:49:10.283893Z"}
+{"action": "script.generated", "entity": "script", "entity_id": "cf9ec15ac7f948b9973639f235ff12a5", "target": "http://127.0.0.1:8000", "summary": "Generated k6 script loadtest.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:49:10.298997Z"}
+{"event": "HTTP Request: POST http://127.0.0.1:8000/login \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:49:22.869518Z"}
+{"event": "HTTP Request: GET http://127.0.0.1:8000/products \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:49:22.881525Z"}
+{"action": "run.started", "entity": "run", "entity_id": "3d5a4e3d546d441a8107ef00cc2ea20c", "target": "http://127.0.0.1:8000", "summary": "Load run started against http://127.0.0.1:8000 (peak 5 VUs)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:50:04.703939Z"}
+{"event": "HTTP Request: POST https://api.openai.com/v1/chat/completions \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:50:30.906271Z"}
+{"action": "run.finished", "entity": "run", "entity_id": "3d5a4e3d546d441a8107ef00cc2ea20c", "target": "http://127.0.0.1:8000", "summary": "Run PASS \u2014 24 requests, 0.00% errors", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:50:30.941443Z"}
+{"event": "HTTP Request: GET http://testserver/api/tools \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:36.139669Z"}
+{"event": "HTTP Request: GET http://testserver/ \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:36.165450Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "e571019af59f4018b7f6b1cf120ad05a", "target": "http://127.0.0.1:8000", "summary": "AI drafted a plan with 2 scenario(s)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:36.495506Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:36.497550Z"}
+{"action": "plan.approved", "entity": "plan", "entity_id": "e571019af59f4018b7f6b1cf120ad05a", "target": "http://127.0.0.1:8000", "summary": "Plan approved by user", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:36.567898Z"}
+{"action": "script.generated", "entity": "script", "entity_id": "3bb793a43fd546da887bd5c56c288ce7", "target": "http://127.0.0.1:8000", "summary": "Generated k6 script loadtest.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:36.583906Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan/e571019af59f4018b7f6b1cf120ad05a/generate \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:36.586906Z"}
+{"event": "HTTP Request: GET http://testserver/api/plans/e571019af59f4018b7f6b1cf120ad05a \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:36.600435Z"}
+{"action": "script.downloaded", "entity": "script", "entity_id": "3bb793a43fd546da887bd5c56c288ce7", "target": "", "summary": "Downloaded loadtest.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:36.684472Z"}
+{"event": "HTTP Request: GET http://testserver/api/scripts/3bb793a43fd546da887bd5c56c288ce7/download \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:36.685470Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "741644a68d8b493da6d2ae43a2dca52d", "target": "http://127.0.0.1:8000", "summary": "AI drafted a plan with 2 scenario(s)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:36.961375Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:36.963375Z"}
+{"action": "plan.approved", "entity": "plan", "entity_id": "741644a68d8b493da6d2ae43a2dca52d", "target": "http://127.0.0.1:8000", "summary": "Plan approved by user", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:36.996865Z"}
+{"action": "script.generated", "entity": "script", "entity_id": "4c85693aada44088a734b392d112c71c", "target": "http://127.0.0.1:8000", "summary": "Generated k6 script loadtest.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.013115Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan/741644a68d8b493da6d2ae43a2dca52d/generate \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:37.015117Z"}
+{"event": "HTTP Request: GET http://testserver/api/plans/741644a68d8b493da6d2ae43a2dca52d \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:37.025115Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "3185f6bfb6864aa7b5cc1bb9d75859df", "target": "http://127.0.0.1:8000", "summary": "AI drafted a plan with 2 scenario(s)", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.234214Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:37.235223Z"}
+{"event": "HTTP Request: POST http://testserver/api/plan/3185f6bfb6864aa7b5cc1bb9d75859df/generate \"HTTP/1.1 400 Bad Request\"", "level": "info", "timestamp": "2026-11-02T05:55:37.245221Z"}
+{"action": "plan.created", "entity": "plan", "entity_id": "p1", "target": "http://x", "summary": "drafted", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.354610Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r1", "target": "http://x", "summary": "peak 50 VUs", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.365610Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r0", "target": "", "summary": "0", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.481920Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r1", "target": "", "summary": "1", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.492929Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r2", "target": "", "summary": "2", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.502926Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r3", "target": "", "summary": "3", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.515443Z"}
+{"action": "run.started", "entity": "run", "entity_id": "r4", "target": "", "summary": "4", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.527883Z"}
+{"action": "run.started", "error": "boom", "event": "audit.write_failed", "level": "warning", "timestamp": "2026-11-02T05:55:37.624012Z"}
+{"action": "run.started", "entity": "run", "entity_id": "x", "target": "", "summary": "", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:37.625012Z"}
+{"event": "HTTP Request: GET http://127.0.0.1:8799/products \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:38.161023Z"}
+{"event": "HTTP Request: POST http://127.0.0.1:8799/login \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:38.163027Z"}
+{"event": "HTTP Request: GET http://127.0.0.1:8799/products \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:38.913804Z"}
+{"event": "HTTP Request: POST http://127.0.0.1:8799/login \"HTTP/1.0 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:38.929328Z"}
+{"event": "HTTP Request: GET http://127.0.0.1:8799/nope \"HTTP/1.0 404 Not Found\"", "level": "info", "timestamp": "2026-11-02T05:55:38.931338Z"}
+{"event": "HTTP Request: POST http://testserver/api/scripts/upload \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:39.709274Z"}
+{"action": "script.downloaded", "entity": "script", "entity_id": "9b25d7ffc8e4453083b21fd03be8a1a5", "target": "", "summary": "Downloaded my.js", "event": "audit", "level": "info", "timestamp": "2026-11-02T05:55:39.728784Z"}
+{"event": "HTTP Request: GET http://testserver/api/scripts/9b25d7ffc8e4453083b21fd03be8a1a5/download \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-11-02T05:55:39.729786Z"}
+{"event": "HTTP Request: POST http://testserver/api/scripts/upload \"HTTP/1.1 400 Bad Request\"", "level": "info", "timestamp": "2026-11-02T05:55:39.825159Z"}
+{"event": "HTTP Request: POST http://testserver/api/scripts/upload \"HTTP/1.1 400 Bad Request\"", "level": "info", "timestamp": "2026-11-02T05:55:39.919936Z"}

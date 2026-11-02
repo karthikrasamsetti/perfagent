@@ -350,6 +350,16 @@
     <table id="plansTable" style="margin-top:10px"><thead><tr><th>Created</th><th>Target</th><th>Goal</th><th>Scripts</th><th></th></tr></thead><tbody></tbody></table>
   </div>
 
+  <!-- ACTIVITY LOG -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:14px">Activity log</h2>
+      <button class="btn ghost sm" onclick="loadAudit()">↻ Refresh</button>
+      <span class="muted">who did what, when — for debugging &amp; audit</span>
+    </div>
+    <table id="auditTable" style="margin-top:10px"><thead><tr><th>When</th><th>Action</th><th>Target</th><th>Details</th></tr></thead><tbody></tbody></table>
+  </div>
+
 </div>
 
 <script>
@@ -755,6 +765,22 @@ async function loadReport(){
 }
 function downloadReport(){ if(currentRunId) location=`/api/runs/${currentRunId}/report/download`; }
 
+
+/* ---------- activity log ---------- */
+async function loadAudit(){
+  try{
+    const j=await (await fetch('/api/audit?limit=100')).json();
+    const colors={'plan.created':'#2563a8','plan.approved':'#9a6412','script.generated':'#0f6e56',
+      'script.downloaded':'#6b7280','run.started':'#9a6412','run.finished':'#0f6e56'};
+    document.querySelector('#auditTable tbody').innerHTML=(j.events||[]).map(e=>{
+      const c=colors[e.action]||'#6b7280';
+      return `<tr><td>${new Date(e.created_at).toLocaleString()}</td>`+
+             `<td><b style="color:${c}">${esc(e.action)}</b></td>`+
+             `<td>${esc(e.target||'')}</td><td>${esc(e.summary||'')}</td></tr>`;
+    }).join('')||'<tr><td colspan="4" class="muted">No activity yet.</td></tr>';
+  }catch(e){}
+}
+
 /* ---------- history ---------- */
 async function loadPlans(){
   const j=await (await fetch('/api/plans')).json();
@@ -940,6 +966,7 @@ addEndpoint("POST","/login",'{"user":"demo","password":"x"}');
 addEndpoint("POST","/cart",'{"product_id":1}');
 addEndpoint("POST","/checkout",'{"pay":"card"}');
 loadPlans();
+loadAudit();
 goStep(1);
 </script>
 </body>

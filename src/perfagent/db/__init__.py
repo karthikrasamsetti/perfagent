@@ -1,4 +1,5 @@
 from perfagent.db.models import (
+    AuditRow,
     Base,
     DataFileRow,
     PlanRow,
@@ -8,5 +9,5 @@ from perfagent.db.models import (
     get_session,
 )
 
-__all__ = ["Base", "PlanRow", "ScriptRow", "DataFileRow", "RunResultRow",
+__all__ = ["Base", "PlanRow", "ScriptRow", "DataFileRow", "RunResultRow", "AuditRow",
            "get_engine", "get_session"]

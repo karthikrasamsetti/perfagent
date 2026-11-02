@@ -32,6 +32,8 @@ from perfagent.contracts.artifacts import PlanArtifact
 from perfagent.contracts.load_model import DataFile, LoadModel
 from perfagent.data import DataValidationError, load_data
 from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline
+from perfagent import audit
+from perfagent.logging_config import configure as _configure_logging, get_logger
 from perfagent.analyzer.diagnostics import diagnose
 from perfagent.preflight import preflight
 from perfagent.runner.validator import validate_script
@@ -44,6 +46,8 @@ from perfagent.providers import build_provider
 from perfagent.runner import get_run, k6_available, start_run, stop_run
 
 app = FastAPI(title="AI Performance Testing Agent")
+_configure_logging()
+_log = get_logger("perfagent.api")
 
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -99,6 +103,13 @@ def index() -> str:
 @app.get("/api/tools")
 def tools() -> dict:
     return {"tools": supported_tools()}
+
+
+
+@app.get("/api/audit")
+def get_audit(limit: int = 100) -> dict:
+    """Return recent audit events for the activity log."""
+    return {"events": audit.recent(limit=limit)}
 
 
 @app.post("/api/data")
@@ -207,6 +218,10 @@ def create_plan(request: PlanRequest) -> dict:
         s.add(row)
         s.commit()
 
+    audit.record("plan.created", entity="plan", entity_id=plan.id,
+                 target=plan.load_model.target_base_url,
+                 summary=f"AI drafted a plan with {len(plan.load_model.scenarios)} scenario(s)")
+
     # Grade the drafted plan against the endpoints that were actually supplied.
     plan_eval = evaluate_plan(plan.load_model, request).summary()
 
@@ -270,6 +285,12 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
         s.add(script_row)
         s.commit()
 
+        audit.record("plan.approved", entity="plan", entity_id=plan_id,
+                     target=model.target_base_url, summary="Plan approved by user")
+        audit.record("script.generated", entity="script", entity_id=script.id,
+                     target=model.target_base_url,
+                     summary=f"Generated {script.tool} script {script.filename}")
+
         return {
             "script_id": script.id,
             "plan_id": plan_id,
@@ -326,6 +347,8 @@ def download_script(script_id: str) -> PlainTextResponse:
         row = s.get(ScriptRow, script_id)
         if row is None:
             raise HTTPException(status_code=404, detail="script not found")
+        audit.record("script.downloaded", entity="script", entity_id=script_id,
+                     summary=f"Downloaded {row.filename}")
         return PlainTextResponse(
             row.content,
             headers={"Content-Disposition": f'attachment; filename="{row.filename}"'},
@@ -492,6 +515,16 @@ def run_script(script_id: str) -> dict:
             data_filename=data_filename,
             data_content=data_content,
         )
+    peak = ""
+    try:
+        if plan is not None:
+            from perfagent.contracts.load_model import LoadModel as _LM
+            peak = _LM.model_validate_json(plan.load_model_json).load_profile.peak_users
+    except Exception:  # noqa: BLE001
+        peak = ""
+    audit.record("run.started", entity="run", entity_id=run.run_id, target=target,
+                 summary=f"Load run started against {target}"
+                         + (f" (peak {peak} VUs)" if peak != "" else ""))
     return {"run_id": run.run_id, "status": run.status, "message": run.message}
 
 
@@ -620,6 +653,10 @@ def run_report(run_id: str) -> dict:
             vtxt = ("pass" if verdict.get("overall_passed") is True
                     else "fail" if verdict.get("overall_passed") is False
                     else "inconclusive")
+            audit.record("run.finished", entity="run", entity_id=run.run_id,
+                         target=run.target,
+                         summary=f"Run {vtxt.upper()} — {cur_metrics['requests']} requests, "
+                                 f"{cur_metrics['error_rate']*100:.2f}% errors")
             s.add(RunResultRow(
                 plan_id=plan_id, target_base_url=run.target, verdict=vtxt,
                 requests=cur_metrics["requests"], error_rate=cur_metrics["error_rate"],

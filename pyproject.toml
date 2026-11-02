@@ -16,6 +16,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "numpy>=1.26",
     "python-multipart>=0.0.32",
+    "structlog>=26.1.0",
 ]
 
 [dependency-groups]
