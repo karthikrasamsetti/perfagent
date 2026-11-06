@@ -98,9 +98,34 @@ def _sanitize_thresholds(model: LoadModel) -> LoadModel:
     return model
 
 
+def _restore_real_bodies(model: LoadModel, request: PlanRequest) -> LoadModel:
+    """Put the user's real request bodies back into the plan.
+
+    The LLM only ever saw REDACTED prompts (passwords/tokens masked by the guardrail),
+    so any body it produced may contain <FIELD_REDACTED> instead of the real value.
+    The real bodies live in the request's endpoints — the source of truth. We match
+    each plan step to the supplied endpoint by (method, path) and restore that body,
+    so secrets the user typed are preserved in the script (and never went to the LLM).
+    """
+    # map (METHOD, path) -> the user's example_body
+    by_key: dict[tuple, dict | None] = {}
+    for ep in request.endpoints:
+        by_key[(ep.method.value, ep.path)] = ep.example_body
+
+    for sc in model.scenarios:
+        for st in sc.steps:
+            key = (st.method.value, st.path)
+            if key in by_key and by_key[key] is not None:
+                st.body = by_key[key]
+    return model
+
+
 def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> LoadModel:
     # 1. Target is exactly what was requested.
     model.target_base_url = request.target_base_url
+
+    # 1b. Restore the user's real bodies (the LLM only saw redacted ones).
+    model = _restore_real_bodies(model, request)
 
     # 2. Deterministic ramp shape sized to the guard rails.
     model.load_profile = build_profile(

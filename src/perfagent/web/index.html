@@ -129,6 +129,20 @@
   details summary{cursor:pointer;font-size:12.5px;color:var(--teal-d);font-weight:600}
   @media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr}.tiles{grid-template-columns:repeat(3,1fr)}
     .stepper{flex-direction:column}}
+  .modeswitch{display:inline-flex;gap:4px;background:#eef0ee;border-radius:10px;padding:4px;margin-bottom:16px}
+  .modebtn{border:none;background:transparent;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;
+           color:#6b7280;cursor:pointer;transition:.12s;font-family:inherit}
+  .modebtn.active{background:#fff;color:#0a5343;box-shadow:0 1px 2px rgba(20,30,26,.08)}
+  .endpoint{grid-template-columns:86px 1fr 1.3fr 32px 32px !important}
+  .gbtn{background:#eef4f1;color:#0a5343;font-size:14px}
+  .gbtn:hover{background:#dcefe8}
+  .genmenu{position:absolute;z-index:1000;background:#fff;border:1px solid #d7dbd8;border-radius:10px;
+           box-shadow:0 6px 24px rgba(20,30,26,.14);width:290px;max-height:340px;overflow-y:auto;font-size:12.5px}
+  .genmenu-h{padding:8px 12px;background:#f1f8f5;color:#0a5343;font-weight:600;font-size:11.5px;border-bottom:1px solid #e2e0d8}
+  .genmenu-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;cursor:pointer}
+  .genmenu-item:hover{background:#f1f8f5}
+  .genmenu-item code{background:#eef1ee;padding:1px 6px;border-radius:5px;font-size:11px;color:#0a5343;white-space:nowrap}
+  .genmenu-item span{color:#6b7280;font-size:11.5px;text-align:right}
 </style>
 </head>
 <body>
@@ -156,6 +170,32 @@
   <div class="panel show" id="panel1">
     <div class="card">
       <h2>Describe the test</h2>
+
+      <!-- MODE TOGGLE -->
+      <div class="modeswitch">
+        <button class="modebtn active" id="modeChatBtn" onclick="setMode('chat')">💬 Chat — describe it</button>
+        <button class="modebtn" id="modeManualBtn" onclick="setMode('manual')">⚙️ Manual — fill a form</button>
+      </div>
+
+      <!-- ===== CHAT MODE ===== -->
+      <div id="modeChat">
+        <div style="background:#f1f8f5;border:1px solid #cbe8dc;border-radius:12px;padding:16px">
+          <div style="font-weight:650;color:var(--teal-d);font-size:14px;margin-bottom:4px">✨ Describe your test in plain English</div>
+          <div class="muted" style="margin-bottom:8px">e.g. "Load test login and products at http://127.0.0.1:8000 with 10 users for 20 seconds, make each login use a unique email." The AI drafts a plan you then review &amp; approve.</div>
+          <textarea id="chatMsg" style="min-height:80px" placeholder="Describe what you want to load test..."></textarea>
+          <details style="margin-top:8px">
+            <summary style="cursor:pointer;font-size:12.5px;color:var(--teal-d)">+ paste a Postman / OpenAPI / HAR collection (optional)</summary>
+            <textarea id="chatCollection" style="min-height:90px;margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px" placeholder="Paste collection JSON here (optional)"></textarea>
+          </details>
+          <div class="btnrow">
+            <button class="btn" id="chatBtn" onclick="doChatPlan()">✨ Draft plan from description</button>
+          </div>
+          <div class="note" id="chatResult" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- ===== MANUAL MODE ===== -->
+      <div id="modeManual" style="display:none">
       <p class="hint">Tell the agent what to test. It will draft a plan you can edit and approve.</p>
 
       <div class="grid2">
@@ -226,6 +266,7 @@
           <div class="statusline" id="exStatus"></div>
         </div>
       </details>
+      </div><!-- /modeManual -->
     </div>
   </div>
 
@@ -389,14 +430,169 @@ document.querySelectorAll('.step').forEach(s=>s.addEventListener('click',()=>{
   else if(n===5 && currentRunId) goStep(5);
 }));
 
+
+
+/* ---------- step 1 mode toggle (chat / manual) ---------- */
+function setMode(m){
+  const chat=m==='chat';
+  document.getElementById('modeChat').style.display = chat?'block':'none';
+  document.getElementById('modeManual').style.display = chat?'none':'block';
+  document.getElementById('modeChatBtn').classList.toggle('active', chat);
+  document.getElementById('modeManualBtn').classList.toggle('active', !chat);
+}
+
+/* ---------- chat-to-plan ---------- */
+async function doChatPlan(){
+  const msg=document.getElementById('chatMsg').value.trim();
+  const coll=document.getElementById('chatCollection').value.trim();
+  const res=document.getElementById('chatResult');
+  if(!msg){ res.style.display='flex'; res.className='note err'; res.textContent='Describe what you want to test first.'; return; }
+  res.style.display='flex'; res.className='note info'; res.textContent='Asking the AI to draft a plan from your description...';
+  document.getElementById('chatBtn').disabled=true;
+  try{
+    const r=await fetch('/api/chat-plan',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg, collection_text:coll})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'chat plan failed');
+    if(j.status==='clarify'){
+      res.className='note warn';
+      res.innerHTML='<div><b>A few quick questions so I can build a good test:</b><ul>'+
+        j.questions.map(q=>'<li>'+esc(q)+'</li>').join('')+'</ul>'+
+        '<span class="muted">Add the answers to your description above and draft again.</span></div>';
+      return;
+    }
+    // got a plan -> load it into the review step, exactly like doPlan()
+    currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
+    renderPlanForm(); renderRawFromModel();
+    showGuardrail(j.guardrail); showPlanEval(j.evaluation);
+    document.getElementById('planMeta').style.display='inline-flex';
+    document.getElementById('planMeta').textContent='drafted by '+j.provider+' (from chat)';
+    res.className='note ok';
+    res.innerHTML='✅ Plan drafted'+(j.notes?(' — '+esc(j.notes)):'')+'. Review it on the next step.';
+    loadPlans();
+    goStep(2);
+  }catch(e){ res.className='note err'; res.textContent='Error: '+e.message; }
+  finally{ document.getElementById('chatBtn').disabled=false; }
+}
+
 /* ---------- endpoints (step 1) ---------- */
 function addEndpoint(method="GET",path="",body=""){
   const d=document.createElement('div');d.className='endpoint';
   d.innerHTML=`<select>${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${m===method?'selected':''}>${m}</option>`).join('')}</select>
     <input placeholder="/path" value="${path}" />
-    <input placeholder='body JSON e.g. {"user":"demo"}' value='${body}' />
+    <input class="bodyInput" placeholder='body JSON e.g. {"user":"demo"}' value='${body}' />
+    <button class="iconbtn gbtn" title="Edit body + add dynamic data" onclick="openBodyEditor(this)">✏️</button>
     <button class="iconbtn" onclick="this.parentElement.remove()">×</button>`;
   document.getElementById('endpoints').appendChild(d);
+}
+
+
+/* ---------- body editor modal + AI dynamize ---------- */
+let _bodyTargetInput = null;
+function openBodyEditor(btn){
+  const row = btn.parentElement;
+  _bodyTargetInput = row.querySelector('.bodyInput');
+  const path = row.querySelectorAll('input')[0].value || '(no path)';
+  document.getElementById('bodyModalPath').textContent = path;
+  // pretty-print existing JSON if possible
+  let v = _bodyTargetInput.value.trim();
+  try { v = JSON.stringify(JSON.parse(v), null, 2); } catch(e) {}
+  document.getElementById('bodyModalText').value = v;
+  const hint=document.getElementById('bodyModalNote');
+  if(currentDataFileId && dataColumns && dataColumns.length){
+    hint.style.display='flex'; hint.className='note info';
+    hint.innerHTML='📁 Data file columns available — the AI can pull real values from: '+
+      dataColumns.map(c=>'<code class="k">${'+esc(c)+'}</code>').join(' ');
+  } else { hint.style.display='none'; }
+  document.getElementById('bodyModal').style.display='flex';
+}
+function closeBodyEditor(){ document.getElementById('bodyModal').style.display='none'; _bodyTargetInput=null; }
+function saveBodyEditor(){
+  const txt = document.getElementById('bodyModalText').value.trim();
+  if(txt){
+    try { JSON.parse(txt); } catch(e){
+      const n=document.getElementById('bodyModalNote'); n.style.display='flex'; n.className='note err';
+      n.textContent='Body is not valid JSON: '+e.message; return;
+    }
+  }
+  if(_bodyTargetInput){ _bodyTargetInput.value = txt ? JSON.stringify(JSON.parse(txt)) : ''; }
+  closeBodyEditor();
+}
+async function dynamizeBody(){
+  const n=document.getElementById('bodyModalNote');
+  const txt=document.getElementById('bodyModalText').value.trim();
+  let parsed;
+  try { parsed = JSON.parse(txt); } catch(e){
+    n.style.display='flex'; n.className='note err'; n.textContent='Enter a valid JSON body first: '+e.message; return;
+  }
+  n.style.display='flex'; n.className='note info'; n.textContent='AI is adding dynamic data to the fields that should vary...';
+  document.getElementById('dynBtn').disabled=true;
+  try{
+    const payload={body:parsed}; if(currentDataFileId) payload.data_file_id=currentDataFileId;
+    const r=await fetch('/api/dynamize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'failed');
+    document.getElementById('bodyModalText').value = JSON.stringify(j.body, null, 2);
+    n.className='note ok';
+    n.innerHTML = '✅ '+esc(j.notes||'Dynamic data added')+
+      (j.changed_fields&&j.changed_fields.length ? '<br><span class="muted">Changed: '+j.changed_fields.map(esc).join(', ')+'</span>' : '');
+  }catch(e){ n.className='note err'; n.textContent='Error: '+e.message; }
+  finally{ document.getElementById('dynBtn').disabled=false; }
+}
+
+/* ---------- generator helper (insert dynamic data tokens) ---------- */
+const GENERATORS = [
+  ["${uuid}",                 "Unique ID (uuid)"],
+  ["${randomEmail}",          "Unique email"],
+  ["${randomFullName}",       "Random full name"],
+  ["${randomCompanyName}",    "Random company"],
+  ["${randomStreetAddress}",  "Random street address"],
+  ["${randomCity}",           "Random city"],
+  ["${randomState}",          "Random state"],
+  ["${randomZipCode}",        "Random zip code"],
+  ["${randomPhone}",          "Random phone"],
+  ["${randomCatchPhrase}",    "Random phrase / note"],
+  ["${randomBic}",            "Random code (BIC-like)"],
+  ["${randomInt(1,100)}",     "Random number 1–100"],
+  ["${randomString(8)}",      "Random text (8 chars)"],
+  ["${dateOffset(3,'days')}", "Date N days from now"],
+  ["${timestamp}",            "Current timestamp"],
+  ["${randomFrom(a,b,c)}",    "Random choice from a list"],
+  ["${sequential}",           "Unique per user+iteration"],
+];
+function toggleGenMenu(btn){
+  // close any open menu first
+  document.querySelectorAll('.genmenu').forEach(m=>m.remove());
+  const existing = btn._menuOpen;
+  if(existing){ btn._menuOpen=false; return; }
+  const bodyInput = btn.parentElement.querySelector('.bodyInput');
+  const menu=document.createElement('div'); menu.className='genmenu';
+  menu.innerHTML = '<div class="genmenu-h">Insert dynamic value — each request gets a fresh one</div>' +
+    GENERATORS.map(([tok,label])=>
+      `<div class="genmenu-item" onmousedown="insertGen(event,this,'${tok.replace(/'/g,"\\'")}')">`+
+      `<code>${tok}</code><span>${label}</span></div>`).join('');
+  document.body.appendChild(menu);
+  const r=btn.getBoundingClientRect();
+  menu.style.left=(r.left-240+window.scrollX)+'px';
+  menu.style.top=(r.bottom+4+window.scrollY)+'px';
+  menu._bodyInput=bodyInput; btn._menuOpen=true;
+  // close on outside click
+  setTimeout(()=>{document.addEventListener('mousedown',closeGenMenus,{once:true});},0);
+}
+function closeGenMenus(){ document.querySelectorAll('.genmenu').forEach(m=>m.remove());
+  document.querySelectorAll('.gbtn').forEach(b=>b._menuOpen=false); }
+function insertGen(ev, item, token){
+  ev.preventDefault();
+  const menu=item.closest('.genmenu'); const inp=menu._bodyInput;
+  // if the body is empty, start a JSON object with a field; else insert at cursor
+  let v=inp.value;
+  if(!v.trim()){
+    const field = token.includes('Email')?'email':token.includes('uuid')?'id':'value';
+    inp.value = `{"${field}": "${token}"}`;
+  } else {
+    const start=inp.selectionStart ?? v.length;
+    inp.value = v.slice(0,start) + token + v.slice(inp.selectionEnd ?? start);
+  }
+  inp.focus();
+  closeGenMenus();
 }
 function readEndpoints(){
   return [...document.querySelectorAll('#endpoints .endpoint')].map(d=>{
@@ -969,5 +1165,30 @@ loadPlans();
 loadAudit();
 goStep(1);
 </script>
+
+<!-- BODY EDITOR MODAL -->
+<div id="bodyModal" style="display:none;position:fixed;inset:0;background:rgba(20,30,26,.45);z-index:2000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;width:min(680px,92vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.25)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+      <b style="font-size:15px;color:var(--teal-d)">Request body</b>
+      <span class="muted" id="bodyModalPath"></span>
+      <div style="flex:1"></div>
+      <button class="iconbtn" onclick="closeBodyEditor()" style="font-size:18px">×</button>
+    </div>
+    <div style="padding:16px 20px;overflow:auto">
+      <textarea id="bodyModalText" style="min-height:280px;width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12.5px" placeholder='{"field":"value"}'></textarea>
+      <div class="note" id="bodyModalNote" style="display:none"></div>
+      <div class="btnrow" style="margin-top:12px">
+        <button class="btn" onclick="dynamizeBody()" id="dynBtn">✨ Add dynamic data (AI)</button>
+        <span class="muted" style="margin:0">AI assigns unique/random generators to the fields that should vary</span>
+      </div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn ghost" onclick="closeBodyEditor()">Cancel</button>
+      <button class="btn" onclick="saveBodyEditor()">Save body</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

@@ -27,6 +27,7 @@ from perfagent.generator.k6_corr import (
     path_expr,
     uses_correlation,
 )
+from perfagent.generator.generators import FAKER_HELPERS, UUID_IMPORT, needs_faker, needs_uuid_import
 from perfagent.generator.k6_data import k6_data_loader, uses_data
 
 _env = Environment(
@@ -82,12 +83,12 @@ def _thresholds(model: LoadModel) -> list[dict]:
     return out
 
 
-def _step_js(step, cap, dynamic, has_headers, static_headers_ref="HEADERS") -> str:
+def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEADERS") -> str:
     """Generate the k6 request block for one step (handles vars, row, extract, headers)."""
     name = step.name
     method = step.method.value
     ml = method.lower()
-    p = path_expr(step.path, cap)
+    p = path_expr(step.path, cap, has_data)
     url = f"`${{BASE_URL}}{p}`"
 
     # headers param
@@ -109,7 +110,7 @@ def _step_js(step, cap, dynamic, has_headers, static_headers_ref="HEADERS") -> s
         else:
             lines.append(f"      const res = http.del({url}, null, {params_obj});")
     else:
-        be = body_expr(step.body, cap)
+        be = body_expr(step.body, cap, has_data)
         lines.append(f"      const payload = JSON.stringify({be});")
         base_hdr = "{ 'Content-Type': 'application/json' }"
         merged = base_hdr if not hdr else f"Object.assign({base_hdr}, {hdr})"
@@ -135,7 +136,7 @@ def _scenario_js(sc, si, cap, data_on, corr_on, has_headers, dynamic) -> str:
     think = round(sc.think_time.max_seconds - sc.think_time.min_seconds, 3)
     lo = sc.think_time.min_seconds
     for step in sc.steps:
-        out.append(_step_js(step, cap, dynamic, has_headers))
+        out.append(_step_js(step, cap, dynamic, has_headers, data_on))
         out.append(f"    sleep(Math.random() * {think} + {lo});")
     out.append("  });")
     out.append("}")
@@ -161,15 +162,22 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
         })
         scenario_funcs.append(_scenario_js(sc, i, cap, data_on, corr_on, has_headers, dynamic))
 
-    # headers declarations
-    header_decls = ""
+    # extra imports (uuid generator) + headers declarations.
+    # Build as a list and join, so the uuid import is never overwritten by the
+    # header declaration (that was a bug: a reassignment wiped the import).
+    decl_parts = []
+    if needs_uuid_import(model):
+        decl_parts.append(UUID_IMPORT)
+    if needs_faker(model):
+        decl_parts.append(FAKER_HELPERS)
     if has_headers and dynamic:
         # DYN_HEADERS builds headers per request, substituting ${var}/${row} refs
-        header_decls = (
-            "function DYN_HEADERS(vars, row) {\n  return " + headers_expr(headers, cap) + ";\n}\n"
+        decl_parts.append(
+            "function DYN_HEADERS(vars, row) {\n  return " + headers_expr(headers, cap, data_on) + ";\n}"
         )
     elif has_headers:
-        header_decls = "const HEADERS = " + json.dumps(headers) + ";\n"
+        decl_parts.append("const HEADERS = " + json.dumps(headers) + ";")
+    header_decls = ("\n".join(decl_parts) + "\n") if decl_parts else ""
 
     template = _env.get_template("k6.js.j2")
     return template.render(

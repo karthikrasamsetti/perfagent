@@ -41,7 +41,10 @@ from perfagent.importers import ImportError_, import_endpoints
 from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, get_session
 from perfagent.evaluation import evaluate_plan, evaluate_report
 from perfagent.generator import generate_script, supported_tools
+from perfagent.chat_intent import ChatIntent, CHAT_SYSTEM_PROMPT, build_chat_user_prompt
+from perfagent.dynamize import DynamizedBody, DYNAMIZE_SYSTEM_PROMPT, build_dynamize_user_prompt
 from perfagent.planner import PlanRequest, draft_plan
+from perfagent.planner.spec import EndpointSpec
 from perfagent.providers import build_provider
 from perfagent.runner import get_run, k6_available, start_run, stop_run
 
@@ -232,6 +235,124 @@ def create_plan(request: PlanRequest) -> dict:
         "guardrail": _summarize_redactions(redaction_counts),
         "evaluation": plan_eval,
         "rationale": _plan_rationale(plan.load_model),
+    }
+
+
+
+
+class ChatPlanBody(BaseModel):
+    message: str
+    collection_text: str = ""
+
+
+@app.post("/api/chat-plan")
+def chat_plan(body: ChatPlanBody) -> dict:
+    """Turn a plain-English request (+ optional pasted collection) into a plan.
+
+    If essential info is missing, returns clarifying questions instead of a plan.
+    The chat text goes through the guarded provider, so secrets are redacted.
+    """
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="message is empty")
+    try:
+        provider = build_provider()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # 1. extract structured intent from the chat (guarded LLM call)
+    intent: ChatIntent = provider.structured(
+        response_model=ChatIntent,
+        system=CHAT_SYSTEM_PROMPT,
+        user=build_chat_user_prompt(body.message, body.collection_text),
+    )
+
+    # 2. if essential info is missing, ask instead of guessing
+    questions = list(intent.needs_clarification)
+    if not intent.target_base_url:
+        questions.insert(0, "What's the target base URL (e.g. https://staging.example.com)?")
+    if not intent.endpoints:
+        questions.append("Which endpoints should I test (method + path)?")
+    if questions:
+        return {"status": "clarify", "questions": questions,
+                "notes": intent.notes, "provider": provider.name}
+
+    # 3. build a PlanRequest and draft a plan (reuses the normal planner path)
+    req = PlanRequest(
+        target_base_url=intent.target_base_url,
+        goal=intent.goal or body.message[:120],
+        max_users=intent.max_users or 20,
+        duration_seconds=intent.duration_seconds or 60,
+        profile_type=intent.profile_type,
+        endpoints=[EndpointSpec(method=e.method, path=e.path, example_body=e.example_body)
+                   for e in intent.endpoints],
+    )
+    plan = draft_plan(req, provider)
+
+    with get_session() as s:
+        row = PlanRow(
+            id=plan.id,
+            target_base_url=plan.load_model.target_base_url,
+            goal=req.goal,
+            load_model_json=plan.load_model.model_dump_json(),
+        )
+        s.add(row)
+        s.commit()
+
+    audit.record("plan.created", entity="plan", entity_id=plan.id,
+                 target=plan.load_model.target_base_url,
+                 summary=f"Chat-drafted a plan with {len(plan.load_model.scenarios)} scenario(s)")
+
+    plan_eval = evaluate_plan(plan.load_model, req).summary()
+    redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
+
+    return {
+        "status": "plan",
+        "plan_id": plan.id,
+        "provider": provider.name,
+        "load_model": plan.load_model.model_dump(),
+        "guardrail": _summarize_redactions(redaction_counts),
+        "evaluation": plan_eval,
+        "rationale": _plan_rationale(plan.load_model),
+        "notes": intent.notes,
+    }
+
+
+
+
+class DynamizeBody(BaseModel):
+    body: dict
+    data_file_id: str | None = None
+
+
+@app.post("/api/dynamize")
+def dynamize(req: DynamizeBody) -> dict:
+    """Ask the AI to assign generator tokens to the fields of a body that should vary."""
+    import json as _json
+    if not req.body:
+        raise HTTPException(status_code=400, detail="body is empty")
+    try:
+        provider = build_provider()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # look up the uploaded data file's columns, if one is attached
+    columns: list[str] = []
+    if req.data_file_id:
+        with get_session() as s:
+            dr = s.get(DataFileRow, req.data_file_id)
+            if dr is not None:
+                columns = dr.columns
+
+    result: DynamizedBody = provider.structured(
+        response_model=DynamizedBody,
+        system=DYNAMIZE_SYSTEM_PROMPT,
+        user=build_dynamize_user_prompt(_json.dumps(req.body, indent=2), columns),
+    )
+    return {
+        "body": result.body,
+        "changed_fields": result.changed_fields,
+        "notes": result.notes,
+        "guardrail": _summarize_redactions(getattr(provider, "last_redaction_counts", {}) or {}),
     }
 
 
