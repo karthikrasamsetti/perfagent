@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from perfagent.guardrails.output import scrub_output_model
 from perfagent.guardrails.redaction import redact, restore
 from perfagent.logging_config import get_logger
+from perfagent.usage import Usage, extract_usage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -45,6 +46,7 @@ class GuardedProvider:
         self._restore = restore_identifiers
         self.name = f"guarded:{getattr(inner, 'name', 'llm')}"
         self.last_redaction_counts: dict[str, int] = {}
+        self.last_usage: Usage = Usage()
 
     def structured(self, *, response_model: type[T], system: str, user: str) -> T:
         # 1. Redact the USER prompt only — that's where user-supplied data (and any
@@ -70,6 +72,13 @@ class GuardedProvider:
             system=system,
             user=usr_r.text,
         )
+
+        # capture token usage from the wrapped provider (best-effort)
+        inner_usage = getattr(self._inner, "last_usage", None)
+        if isinstance(inner_usage, Usage) and inner_usage.total_tokens:
+            self.last_usage = inner_usage
+        else:
+            self.last_usage = extract_usage(result, getattr(self._inner, "model", ""))
 
         # 3. scrub the output for any leaked sensitive-looking content
         result, scrubbed = scrub_output_model(result)

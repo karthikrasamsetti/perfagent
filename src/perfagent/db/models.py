@@ -113,6 +113,8 @@ class AuditRow(Base):
     target: Mapped[str] = mapped_column(String(500), default="")
     summary: Mapped[str] = mapped_column(Text, default="")
     actor: Mapped[str] = mapped_column(String(80), default="local")  # future: real user
+    tokens: Mapped[int] = mapped_column(default=0)      # LLM tokens for this action
+    cost_usd: Mapped[float] = mapped_column(default=0.0)  # rough cost estimate
 
 
 _engine = None

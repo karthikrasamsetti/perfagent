@@ -84,6 +84,16 @@ _REDACTION_LABELS = {
 }
 
 
+
+def _usage_summary(provider) -> dict:
+    """Token usage of the provider's last call, for the UI + audit."""
+    u = getattr(provider, "last_usage", None)
+    try:
+        return u.summary() if u else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _summarize_redactions(counts: dict) -> dict:
     """Turn raw redaction counts into a UI-friendly summary. No raw values, ever."""
     total = sum(counts.values()) if counts else 0
@@ -113,6 +123,12 @@ def tools() -> dict:
 def get_audit(limit: int = 100) -> dict:
     """Return recent audit events for the activity log."""
     return {"events": audit.recent(limit=limit)}
+
+
+@app.get("/api/usage/total")
+def usage_total() -> dict:
+    """Total LLM token usage + rough cost across all AI calls (for the top-bar chip)."""
+    return audit.totals()
 
 
 @app.post("/api/data")
@@ -221,9 +237,11 @@ def create_plan(request: PlanRequest) -> dict:
         s.add(row)
         s.commit()
 
+    _u = _usage_summary(provider)
     audit.record("plan.created", entity="plan", entity_id=plan.id,
                  target=plan.load_model.target_base_url,
-                 summary=f"AI drafted a plan with {len(plan.load_model.scenarios)} scenario(s)")
+                 summary=f"AI drafted a plan with {len(plan.load_model.scenarios)} scenario(s)",
+                 tokens=_u.get("total_tokens", 0), cost_usd=_u.get("cost_usd", 0.0))
 
     # Grade the drafted plan against the endpoints that were actually supplied.
     plan_eval = evaluate_plan(plan.load_model, request).summary()
@@ -235,6 +253,7 @@ def create_plan(request: PlanRequest) -> dict:
         "guardrail": _summarize_redactions(redaction_counts),
         "evaluation": plan_eval,
         "rationale": _plan_rationale(plan.load_model),
+        "usage": _usage_summary(provider),
     }
 
 
@@ -298,9 +317,11 @@ def chat_plan(body: ChatPlanBody) -> dict:
         s.add(row)
         s.commit()
 
+    _uc = _usage_summary(provider)
     audit.record("plan.created", entity="plan", entity_id=plan.id,
                  target=plan.load_model.target_base_url,
-                 summary=f"Chat-drafted a plan with {len(plan.load_model.scenarios)} scenario(s)")
+                 summary=f"Chat-drafted a plan with {len(plan.load_model.scenarios)} scenario(s)",
+                 tokens=_uc.get("total_tokens", 0), cost_usd=_uc.get("cost_usd", 0.0))
 
     plan_eval = evaluate_plan(plan.load_model, req).summary()
     redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
@@ -353,6 +374,7 @@ def dynamize(req: DynamizeBody) -> dict:
         "changed_fields": result.changed_fields,
         "notes": result.notes,
         "guardrail": _summarize_redactions(getattr(provider, "last_redaction_counts", {}) or {}),
+        "usage": _usage_summary(provider),
     }
 
 

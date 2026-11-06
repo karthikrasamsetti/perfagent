@@ -4,17 +4,34 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AI Performance Testing Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --ink:#1b211e; --muted:#6b7280; --line:#e6e4dd; --bg:#f5f6f4; --card:#ffffff;
-    --teal:#0f6e56; --teal-d:#0a5343; --teal-l:#e6f4ef; --teal-ring:#bfe4d7;
-    --amber:#9a6412; --amber-l:#fbf0dc; --amber-line:#e8cf9b;
-    --red:#b4342b; --red-l:#fbe9e7; --blue:#2563a8; --blue-l:#e8f0f9;
-    --shadow:0 1px 2px rgba(20,30,26,.04), 0 4px 16px rgba(20,30,26,.06);
+    --ink:#16201c; --muted:#6a7570; --line:#e7e9e5; --bg:#f4f6f4; --card:#ffffff;
+    --teal:#0f7a5f; --teal-d:#0a5a46; --teal-l:#e8f5ef; --teal-ring:#b3e2d2;
+    --amber:#9a6412; --amber-l:#fcf2dd; --amber-line:#ecd29c;
+    --red:#b4342b; --red-l:#fcebe8; --blue:#2563a8; --blue-l:#e9f0f9;
+    --shadow-sm:0 1px 2px rgba(16,32,26,.05);
+    --shadow:0 1px 3px rgba(16,32,26,.06), 0 6px 20px rgba(16,32,26,.05);
+    --shadow-lg:0 10px 40px rgba(16,32,26,.12);
+    --radius:14px; --radius-sm:10px;
   }
   *{box-sizing:border-box}
   body{margin:0;font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-       color:var(--ink);background:var(--bg);font-size:14px;line-height:1.5;}
+       color:var(--ink);background:var(--bg);font-size:14px;line-height:1.55;
+       -webkit-font-smoothing:antialiased;letter-spacing:-0.01em;}
+  /* ---- info tooltip (ℹ️ what's this?) ---- */
+  .info{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+        border-radius:50%;background:var(--teal-l);color:var(--teal-d);font-size:10px;font-weight:700;
+        cursor:help;margin-left:6px;position:relative;border:1px solid var(--teal-ring);font-style:normal}
+  .info:hover::after{content:attr(data-tip);position:absolute;left:50%;bottom:140%;transform:translateX(-50%);
+        background:#16201c;color:#fff;padding:8px 11px;border-radius:8px;font-size:11.5px;font-weight:400;
+        line-height:1.45;width:max-content;max-width:260px;white-space:normal;z-index:3000;
+        box-shadow:0 6px 20px rgba(0,0,0,.25);letter-spacing:0;text-align:left}
+  .info:hover::before{content:'';position:absolute;left:50%;bottom:140%;transform:translateX(-50%) translateY(6px);
+        border:5px solid transparent;border-top-color:#16201c;z-index:3000}
   a{color:var(--teal)}
   .topbar{background:linear-gradient(100deg,#0f6e56,#0a5343);color:#fff;padding:14px 28px;
           display:flex;align-items:center;gap:12px;}
@@ -143,6 +160,74 @@
   .genmenu-item:hover{background:#f1f8f5}
   .genmenu-item code{background:#eef1ee;padding:1px 6px;border-radius:5px;font-size:11px;color:#0a5343;white-space:nowrap}
   .genmenu-item span{color:#6b7280;font-size:11.5px;text-align:right}
+
+  /* ---- modern polish layer ---- */
+  .topbar{background:linear-gradient(105deg,#0f7a5f 0%,#0a5a46 100%);box-shadow:0 2px 12px rgba(10,90,70,.18)}
+  .card{border-radius:var(--radius);box-shadow:var(--shadow);border-color:var(--line);transition:box-shadow .15s}
+  .card h2{letter-spacing:-.02em}
+  .btn{border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);transition:all .14s;letter-spacing:-.01em}
+  .btn:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+  .btn:active{transform:translateY(0)}
+  input,select,textarea{border-radius:var(--radius-sm);transition:border-color .12s, box-shadow .12s}
+  .step{border-radius:var(--radius);transition:all .18s}
+  .step.active{box-shadow:var(--shadow)}
+  .modeswitch{border-radius:12px}
+  .modebtn{transition:all .14s;border-radius:9px}
+  .pill{letter-spacing:-.01em}
+  .genmenu{border-radius:12px;box-shadow:var(--shadow-lg)}
+  .note{border-radius:var(--radius-sm)}
+  ::selection{background:var(--teal-ring)}
+  /* section label with info */
+  .lblrow{display:flex;align-items:center;margin:10px 0 4px}
+  .lblrow label{margin:0}
+
+
+  /* ---- run-existing-script panel ---- */
+  .existing-divider{display:flex;align-items:center;gap:12px;margin:22px 0 16px;color:var(--muted);font-size:12px;font-weight:600}
+  .existing-divider::before,.existing-divider::after{content:'';flex:1;height:1px;background:var(--line)}
+  .existing-panel{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#fcfdfc}
+  .existing-head{display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;transition:background .12s}
+  .existing-head:hover{background:var(--teal-l)}
+  .existing-icon{width:38px;height:38px;border-radius:10px;background:var(--teal-l);border:1px solid var(--teal-ring);
+                 display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+  .existing-title{font-weight:650;font-size:14px;color:var(--ink)}
+  .existing-sub{font-size:12.5px;color:var(--muted)}
+  .existing-chevron{color:var(--muted);font-size:14px;transition:transform .18s}
+  .existing-panel.open .existing-chevron{transform:rotate(180deg)}
+  .existing-body{padding:0 16px 16px;border-top:1px solid var(--line)}
+  .existing-body label{margin-top:10px}
+  .dropzone{display:flex;align-items:center;gap:10px;border:1.5px dashed var(--teal-ring);border-radius:var(--radius-sm);
+            padding:14px 16px;background:var(--teal-l);color:var(--teal-d);cursor:pointer;font-size:13px;transition:.12s}
+  .dropzone:hover{background:#dcefe8;border-color:var(--teal)}
+  .dz-icon{font-size:18px}
+
+  .usage-chip{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.25);
+              border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;white-space:nowrap;
+              display:flex;align-items:center;gap:6px;letter-spacing:-.01em}
+
+  /* ---- report page layout fix (prevent overlap/collapse) ---- */
+  .mini{display:block;width:100%}
+  #baseline, #diagnostics, #reportObs, #reportRecs, #reportSummary{display:block;width:100%;clear:both}
+  #diagnostics{margin-bottom:16px}
+  #reportSummary{margin-top:10px}
+  #baseline > *, #diagnostics > *{display:block;width:100%}
+  #baseline .note, #diagnostics .note, #reportEval{display:block;line-height:1.5}
+  .finding{display:block !important;width:100% !important;height:auto !important;border-radius:var(--radius-sm);
+           padding:11px 14px;margin-bottom:8px;font-size:13px;border:1px solid}
+  .finding.high{background:var(--red-l);border-color:#f0c8c3}
+  .finding.medium{background:var(--amber-l);border-color:var(--amber-line)}
+  .finding.low{background:var(--blue-l);border-color:#cadbf0}
+  .finding.info{background:var(--teal-l);border-color:var(--teal-ring)}
+  .finding .ttl{font-weight:650;margin-bottom:2px}
+  .finding .rec{margin-top:4px;font-size:12px;color:#4a4f57}
+  .finding .rec b{color:var(--teal-d)}
+  .sevdot{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;text-transform:uppercase;color:#fff}
+  .sevdot.high{background:var(--red)}.sevdot.medium{background:var(--amber)}
+  .sevdot.low{background:var(--blue)}.sevdot.info{background:var(--teal)}
+  .finding .ttl{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  #reportObs ul, #reportRecs ul{margin:4px 0 12px;padding-left:20px}
+  #reportObs li, #reportRecs li{margin:2px 0}
+
 </style>
 </head>
 <body>
@@ -152,6 +237,11 @@
   <div>
     <h1>AI Performance Testing Agent</h1>
     <p>AI drafts the plan · you approve · code generates, runs &amp; reports</p>
+  </div>
+  <div style="flex:1"></div>
+  <div class="usage-chip" id="sessionUsage" title="Total AI tokens used this session (rough cost estimate)">
+    🪙 <span id="sessionTokens">0</span> tokens
+    <span id="sessionCost" style="opacity:.8"></span>
   </div>
 </div>
 
@@ -208,7 +298,7 @@
         <div class="field"><label>Load tool</label><select id="tool"></select></div>
       </div>
       <div class="field">
-        <label>Test type <span class="muted" style="font-weight:400">— shapes how load is applied</span></label>
+        <div class="lblrow"><label>Test type</label><i class="info" data-tip="Ramp = gradual up/steady/down. Spike = sudden burst. Soak = long steady load (find leaks). Stress = step past the limit to find the breaking point.">i</i></div>
         <select id="profileType">
           <option value="ramp">Ramp — up, steady, down (balanced, default)</option>
           <option value="spike">Spike — sudden sharp burst to peak</option>
@@ -218,7 +308,7 @@
       </div>
 
       <div class="field" style="margin-top:4px">
-        <label>Import endpoints (optional) — OpenAPI / Swagger JSON, Postman collection, or HAR</label>
+        <div class="lblrow"><label>Import endpoints (optional)</label><i class="info" data-tip="Load endpoints automatically from an OpenAPI/Swagger spec, a Postman collection, or a HAR capture — instead of typing them.">i</i></div>
         <div class="dz" id="impdz" onclick="document.getElementById('importFile').click()" style="padding:10px">
           📥 Click to import from OpenAPI / Postman / HAR
         </div>
@@ -226,12 +316,12 @@
         <div class="note info" id="importInfo" style="display:none"></div>
       </div>
 
-      <label>Endpoints</label>
+      <div class="lblrow"><label>Endpoints</label><i class="info" data-tip="The API paths to test (method + path, e.g. POST /login). Add a body for POST/PUT. These become the requests each virtual user sends.">i</i></div>
       <div id="endpoints"></div>
       <button class="btn ghost sm" onclick="addEndpoint()">+ Add endpoint</button>
 
       <div class="field" style="margin-top:16px">
-        <label>Test data file (optional) — parameterize requests per virtual user</label>
+        <div class="lblrow"><label>Test data file (optional)</label><i class="info" data-tip="Upload a CSV of REAL values (e.g. real usernames, branch codes). Each virtual user picks a row, so requests use real data the API will accept. Reference columns as ${columnName}.">i</i></div>
         <div class="dz" id="dz" onclick="document.getElementById('dataFile').click()">
           📁 Click to upload a CSV / TSV / TXT / JSON file
         </div>
@@ -240,7 +330,7 @@
       </div>
 
       <div class="field" style="margin-top:4px">
-        <label>Custom headers (optional) — sent with every request (e.g. Authorization)</label>
+        <div class="lblrow"><label>Custom headers (optional)</label><i class="info" data-tip="Headers added to every request, e.g. Authorization: Bearer TOKEN or an API key. Values can reference a captured token as ${token}.">i</i></div>
         <div id="headersList"></div>
         <button class="btn ghost sm" onclick="addHeader()">+ Add header</button>
       </div>
@@ -252,20 +342,36 @@
       </div>
       <div class="statusline" id="planStatus"></div>
 
-      <details style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">
-        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--teal-d)">⚡ Or: run an existing k6 script (skip planning)</summary>
-        <div style="margin-top:10px">
-          <label>Target base URL (for the report)</label>
+      <div class="existing-divider"><span>or</span></div>
+
+      <div class="existing-panel" id="existingPanel">
+        <div class="existing-head" onclick="toggleExisting()">
+          <div class="existing-icon">⚡</div>
+          <div style="flex:1">
+            <div class="existing-title">Already have a k6 script?</div>
+            <div class="existing-sub">Upload or paste it and run directly — skip AI planning.</div>
+          </div>
+          <div class="existing-chevron" id="existingChevron">▾</div>
+        </div>
+        <div class="existing-body" id="existingBody" style="display:none">
+          <div class="lblrow"><label>Target base URL</label><i class="info" data-tip="Where the script sends traffic — used for the report. The script's own BASE_URL still applies at run time.">i</i></div>
           <input id="exTarget" value="http://127.0.0.1:8000" />
-          <label style="margin-top:8px">Paste your k6 script, or choose a file</label>
-          <input type="file" id="exFile" accept=".js" onchange="loadExistingFile()" style="margin-bottom:6px"/>
-          <textarea id="exContent" style="min-height:140px;font-family:ui-monospace,Menlo,monospace;font-size:12px" placeholder="// paste an existing k6 script here"></textarea>
+
+          <label style="margin-top:12px">Your k6 script</label>
+          <label class="dropzone" for="exFile">
+            <span class="dz-icon">📄</span>
+            <span id="exFileName">Choose a <b>.js</b> file — or paste the script below</span>
+          </label>
+          <input type="file" id="exFile" accept=".js" onchange="loadExistingFile()" style="display:none"/>
+          <textarea id="exContent" style="min-height:150px;margin-top:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px" placeholder="// paste your k6 script here, or choose a file above"></textarea>
+
           <div class="btnrow">
-            <button class="btn ghost" onclick="uploadExisting()">Use this script →</button>
+            <button class="btn" onclick="uploadExisting()">Use this script &rarr;</button>
+            <span class="hint" style="margin:0">Goes straight to the Script step, ready to validate &amp; run.</span>
           </div>
           <div class="statusline" id="exStatus"></div>
         </div>
-      </details>
+      </div>
       </div><!-- /modeManual -->
     </div>
   </div>
@@ -276,6 +382,7 @@
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
         <h2 style="margin:0">Review &amp; approve the plan</h2>
         <span class="pill ghost" id="planMeta" style="display:none"></span>
+        <span class="pill" id="usagePill" style="display:none;background:#eef0ee;color:#6b7280"></span>
       </div>
       <p class="hint">The AI drafted this. Adjust scenarios, weights, think-times and thresholds — then approve. Nothing runs load here.</p>
 
@@ -398,7 +505,7 @@
       <button class="btn ghost sm" onclick="loadAudit()">↻ Refresh</button>
       <span class="muted">who did what, when — for debugging &amp; audit</span>
     </div>
-    <table id="auditTable" style="margin-top:10px"><thead><tr><th>When</th><th>Action</th><th>Target</th><th>Details</th></tr></thead><tbody></tbody></table>
+    <table id="auditTable" style="margin-top:10px"><thead><tr><th>When</th><th>Action</th><th>Target</th><th>Details</th><th>AI usage</th></tr></thead><tbody></tbody></table>
   </div>
 
 </div>
@@ -463,7 +570,7 @@ async function doChatPlan(){
     // got a plan -> load it into the review step, exactly like doPlan()
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
     renderPlanForm(); renderRawFromModel();
-    showGuardrail(j.guardrail); showPlanEval(j.evaluation);
+    showGuardrail(j.guardrail); showPlanEval(j.evaluation); showUsage(j.usage); refreshUsage();
     document.getElementById('planMeta').style.display='inline-flex';
     document.getElementById('planMeta').textContent='drafted by '+j.provider+' (from chat)';
     res.className='note ok';
@@ -646,7 +753,7 @@ async function doPlan(){
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
     renderPlanForm(); renderRawFromModel();
-    showGuardrail(j.guardrail); showPlanEval(j.evaluation);
+    showGuardrail(j.guardrail); showPlanEval(j.evaluation); showUsage(j.usage); refreshUsage();
     document.getElementById('planMeta').style.display='inline-flex';
     document.getElementById('planMeta').textContent='drafted by '+j.provider;
     goStep(2); loadPlans();
@@ -666,6 +773,29 @@ function showPlanEval(e){
          el.innerHTML=`⚠ Plan needs review — ${e.passed}/${e.total} checks passed. Issues: ${f||'see plan'}`; }
 }
 
+
+
+
+/* ---------- session token usage (top bar) ---------- */
+async function refreshUsage(){
+  try{
+    const j=await (await fetch('/api/usage/total')).json();
+    const t=document.getElementById('sessionTokens'); const c=document.getElementById('sessionCost');
+    if(t) t.textContent=(j.tokens||0).toLocaleString();
+    if(c) c.textContent = j.cost_usd ? ('· ~$'+j.cost_usd.toFixed(4)) : '';
+  }catch(e){}
+}
+
+/* ---------- token usage display ---------- */
+function showUsage(u){
+  const pill=document.getElementById('usagePill'); if(!pill) return;
+  if(u && u.total_tokens){
+    pill.style.display='inline-flex';
+    const cost = u.cost_usd ? ' (~$'+u.cost_usd.toFixed(4)+')' : '';
+    pill.textContent = '🪙 '+u.total_tokens.toLocaleString()+' tokens'+cost;
+    pill.title = (u.prompt_tokens||0)+' in + '+(u.completion_tokens||0)+' out · '+(u.model||'');
+  } else { pill.style.display='none'; }
+}
 
 /* ---------- plain-English plan summary ---------- */
 let planRationale = "";   // the AI's "why", set when a plan is drafted
@@ -964,15 +1094,18 @@ function downloadReport(){ if(currentRunId) location=`/api/runs/${currentRunId}/
 
 /* ---------- activity log ---------- */
 async function loadAudit(){
+  refreshUsage();
   try{
     const j=await (await fetch('/api/audit?limit=100')).json();
     const colors={'plan.created':'#2563a8','plan.approved':'#9a6412','script.generated':'#0f6e56',
       'script.downloaded':'#6b7280','run.started':'#9a6412','run.finished':'#0f6e56'};
     document.querySelector('#auditTable tbody').innerHTML=(j.events||[]).map(e=>{
       const c=colors[e.action]||'#6b7280';
+      const tok = e.tokens ? (e.tokens.toLocaleString()+' tok'+(e.cost_usd?(' · $'+e.cost_usd.toFixed(4)):'')) : '';
       return `<tr><td>${new Date(e.created_at).toLocaleString()}</td>`+
              `<td><b style="color:${c}">${esc(e.action)}</b></td>`+
-             `<td>${esc(e.target||'')}</td><td>${esc(e.summary||'')}</td></tr>`;
+             `<td>${esc(e.target||'')}</td><td>${esc(e.summary||'')}</td>`+
+             `<td style="color:var(--muted);white-space:nowrap">${tok}</td></tr>`;
     }).join('')||'<tr><td colspan="4" class="muted">No activity yet.</td></tr>';
   }catch(e){}
 }
@@ -1059,12 +1192,24 @@ function readHeaders(){
 
 
 
+
+/* ---------- run-existing panel toggle ---------- */
+function toggleExisting(){
+  const panel=document.getElementById('existingPanel');
+  const body=document.getElementById('existingBody');
+  const open = body.style.display==='none';
+  body.style.display = open ? 'block' : 'none';
+  panel.classList.toggle('open', open);
+}
+
 /* ---------- run an existing script ---------- */
 function loadExistingFile(){
   const f=document.getElementById('exFile').files[0]; if(!f) return;
   const r=new FileReader();
   r.onload=()=>{ document.getElementById('exContent').value=r.result; };
   r.readAsText(f);
+  const el=document.getElementById('exFileName');
+  if(el) el.innerHTML='Loaded <b>'+f.name+'</b> — or edit below';
 }
 async function uploadExisting(){
   const st=document.getElementById('exStatus');
@@ -1163,6 +1308,7 @@ addEndpoint("POST","/cart",'{"product_id":1}');
 addEndpoint("POST","/checkout",'{"pay":"card"}');
 loadPlans();
 loadAudit();
+refreshUsage();
 goStep(1);
 </script>
 
@@ -1180,7 +1326,7 @@ goStep(1);
       <div class="note" id="bodyModalNote" style="display:none"></div>
       <div class="btnrow" style="margin-top:12px">
         <button class="btn" onclick="dynamizeBody()" id="dynBtn">✨ Add dynamic data (AI)</button>
-        <span class="muted" style="margin:0">AI assigns unique/random generators to the fields that should vary</span>
+        <span class="muted" style="margin:0">AI assigns unique/random generators to the fields that should vary</span><i class="info" data-tip="Dynamic data = values that change per request. Unique email/id so signups don't collide; random numbers; real values from your uploaded CSV. The AI picks the right source per field.">i</i>
       </div>
     </div>
     <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end">
