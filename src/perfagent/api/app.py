@@ -20,6 +20,7 @@ Then open:   http://127.0.0.1:8080
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from pathlib import Path
@@ -129,6 +130,45 @@ def get_audit(limit: int = 100) -> dict:
 def usage_total() -> dict:
     """Total LLM token usage + rough cost across all AI calls (for the top-bar chip)."""
     return audit.totals()
+
+
+@app.get("/api/runs")
+def list_runs(limit: int = 50) -> dict:
+    """List past runs (with their saved report) — newest first, for the Runs history."""
+    with get_session() as s:
+        rows = (s.query(RunResultRow)
+                .order_by(RunResultRow.created_at.desc())
+                .limit(limit).all())
+        return {"runs": [
+            {
+                "run_id": r.id,
+                "created_at": r.created_at.isoformat(),
+                "target": r.target_base_url,
+                "goal": r.goal,
+                "verdict": r.verdict,
+                "requests": r.requests,
+                "error_rate": r.error_rate,
+                "p95_ms": r.p95_ms,
+                "rps": r.rps,
+                "has_report": bool(r.report_json),
+            }
+            for r in rows
+        ]}
+
+
+@app.get("/api/runs/{result_id}/saved-report")
+def get_saved_report(result_id: str) -> dict:
+    """Return a previously-saved report so it can be reopened."""
+    with get_session() as s:
+        r = s.get(RunResultRow, result_id)
+        if r is None or not r.report_json:
+            raise HTTPException(status_code=404, detail="saved report not found")
+        try:
+            return json.loads(r.report_json)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail="corrupt saved report") from e
+
+
 
 
 @app.post("/api/data")
@@ -800,11 +840,27 @@ def run_report(run_id: str) -> dict:
                          target=run.target,
                          summary=f"Run {vtxt.upper()} — {cur_metrics['requests']} requests, "
                                  f"{cur_metrics['error_rate']*100:.2f}% errors")
+            # Full report payload — persisted so it can be reopened later.
+            report_payload = {
+                "run_id": run.run_id,
+                "target": run.target,
+                "verdict": verdict,
+                "narrative": narrative.model_dump(),
+                "evaluation": report_eval,
+                "diagnostics": diag.to_dict(),
+                "baseline": baseline_summary,
+                "snapshot": run.snapshot,
+            }
+            goal = ""
+            prow = s.get(PlanRow, plan_id)
+            if prow is not None:
+                goal = prow.goal or ""
             s.add(RunResultRow(
                 plan_id=plan_id, target_base_url=run.target, verdict=vtxt,
                 requests=cur_metrics["requests"], error_rate=cur_metrics["error_rate"],
                 rps=cur_metrics["rps"], p95_ms=cur_metrics["p95_ms"],
                 p99_ms=cur_metrics["p99_ms"], avg_ms=cur_metrics["avg_ms"],
+                goal=goal, report_json=json.dumps(report_payload),
             ))
             s.commit()
 

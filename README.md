@@ -5,17 +5,18 @@
 **Plan, generate, run, and diagnose performance tests from one guided web app —
 powered by AI where it helps, deterministic code where it matters.**
 
-Describe your test in plain English (or fill a form) → the AI drafts a realistic plan with
-auth flow and dynamic data → you review & approve → the agent generates a k6 script, runs it
-with live monitoring, and delivers a diagnosed report that compares against your last run.
+Describe your test in plain English (or fill a form, or import a spec) → the AI drafts a
+realistic plan with auth flow and dynamic data → you review & approve → the agent generates
+a k6 script, runs it with live monitoring, and delivers a **report dashboard** that compares
+against your last run and is saved to a browsable history.
 
 </div>
 
 > [!IMPORTANT]
 > **Guiding principle — _AI proposes, code proves, humans approve._**
 > The AI only *drafts the plan* and *writes the narrative*. Deterministic code owns every
-> number, the generated script, and the pass/fail verdict. A human approves before any
-> load is fired, and **sensitive data is redacted before it ever reaches the AI.**
+> number, the generated script, and the pass/fail verdict. A human approves before any load
+> is fired, and **sensitive data is redacted before it ever reaches the AI.**
 
 ---
 
@@ -34,7 +35,7 @@ with live monitoring, and delivers a diagnosed report that compares against your
 - [How it works](#how-it-works)
 - [Data guardrails](#data-guardrails)
 - [AI evaluation](#ai-evaluation)
-- [Logging & audit](#logging--audit)
+- [Observability — logging, audit & tokens](#observability--logging-audit--tokens)
 - [Architecture](#architecture)
 - [Project layout](#project-layout)
 - [Safety notes](#safety-notes)
@@ -45,11 +46,11 @@ with live monitoring, and delivers a diagnosed report that compares against your
 
 ## Why this exists
 
-Performance testing is slow and expert-bound: deciding *what* to test is tribal
-knowledge, writing load scripts (with auth tokens and realistic data) is error-prone, and
-reading results is inconsistent. This agent compresses that loop — **minutes instead of
-hours** — while keeping humans in control of every decision that matters and keeping the AI
-away from anything that must be exact.
+Performance testing is slow and expert-bound: deciding *what* to test is tribal knowledge,
+writing load scripts (with auth tokens and realistic data) is error-prone, and reading
+results is inconsistent. This agent compresses that loop — **minutes instead of hours** —
+while keeping humans in control of every decision that matters and keeping the AI away from
+anything that must be exact.
 
 | Traditional performance testing | With this agent |
 |---|---|
@@ -57,8 +58,9 @@ away from anything that must be exact.
 | Hand-write & maintain scripts | Deterministic generation — the same plan always yields the same script |
 | Set up auth/token flow manually | AI auto-detects login → token → reuse (correlation) |
 | Hand-wire unique/random request data | AI assigns dynamic generators + your CSV data per field |
-| Stare at raw metrics | Plain-English report + automatic bottleneck diagnosis |
+| Stare at raw metrics | A report dashboard + automatic bottleneck diagnosis |
 | "Is it worse than last time?" — unknown | Automatic **baseline comparison** flags regressions |
+| Reports lost after the run | Every run's report is **saved** and reopenable |
 
 ---
 
@@ -69,9 +71,10 @@ Step 1 offers a toggle between two modes:
 - **💬 Chat — describe it:** type what you want in plain English ("load test login and
   checkout, 100 users, make each signup email unique"). The AI drafts a plan you review.
 - **⚙️ Manual — fill a form:** full control — endpoints, import, data files, headers, test
-  type, a body editor with one-click dynamic data, and "run an existing script."
+  type, a body editor with one-click **dynamic data**, and "run an existing script."
 
-Both produce the same structured plan you review and approve.
+Both produce the same structured plan you review and approve. Inline **ℹ️ tooltips** explain
+every concept, so a QA engineer can use it without a walkthrough.
 
 ---
 
@@ -79,20 +82,16 @@ Both produce the same structured plan you review and approve.
 
 ```
   1 ─ Describe ──▶ 2 ─ Review & Approve ──▶ 3 ─ Generate ──▶ 4 ─ Run & Monitor ──▶ 5 ─ Report
-  chat or form,       editable form,          k6 script         validate, pre-flight,  verdict +
+  chat or form,       editable form,          k6 script         validate, pre-flight,  dashboard +
   import a spec       plain-English summary   (deterministic)   live metrics + chart   diagnosis +
-                      + grounding + guardrail                                          vs. last run
+                      + grounding + guardrail                                          vs. last run (saved)
 ```
 
-1. **Describe** — chat or form; type/import endpoints (OpenAPI/Swagger/Postman/HAR), add a
-   data file, custom headers, and a test type (ramp / spike / soak / stress).
-2. **Review & approve** — the AI drafts a plan; edit it in a **form** (weight sliders,
-   think-times, thresholds — no JSON), with a plain-English summary of what it does and why.
+1. **Describe** — chat or form; type/import endpoints, add a data file, custom headers, test type.
+2. **Review & approve** — edit the plan in a form (weight sliders, think-times, thresholds), with a plain-English summary of what it does and why.
 3. **Generate** — a deterministic renderer produces a runnable **k6** script. No LLM touches it.
-4. **Run & monitor** — **validate** the script and **pre-flight** the endpoints, then launch
-   k6 with live tiles + chart.
-5. **Report** — a **PASS / FAIL / INCONCLUSIVE** verdict, an automatic **diagnosis**, a
-   **comparison to your last run**, and an AI narrative whose figures are verified.
+4. **Run & monitor** — **validate** the script and **pre-flight** the endpoints, then launch k6 with live tiles + chart.
+5. **Report** — a **dashboard**: PASS/FAIL/INCONCLUSIVE verdict, KPI tiles, automatic **diagnosis**, a **comparison to your last run**, and an AI narrative whose figures are verified. Saved to the **Runs & reports** history so you can reopen it anytime.
 
 ---
 
@@ -106,7 +105,7 @@ Both produce the same structured plan you review and approve.
 - **Correlation** — capture a login token / created id from a response (**JSON field,
   header, or cookie**) and reuse it later as `${var}`. Auto-set-up for login flows.
 - **Custom headers** — global `Authorization` / API-key headers; values can use captured vars.
-- **Dynamic test data** — three sources per field (see below).
+- **Dynamic test data** — three sources per field (see below), assigned by the AI with one click.
 
 ### ⏱ Realistic load
 - **Test types** — ramp, spike, soak, stress, each a genuinely different load shape.
@@ -116,14 +115,18 @@ Both produce the same structured plan you review and approve.
 - **Data guardrails** — secrets/PII/URLs redacted before the AI; output scrubbed.
 - **AI evaluation** — plan grounding (no invented endpoints) + report citation (no fabricated numbers).
 - **Fail-closed verdict** — an unmeasurable threshold → **INCONCLUSIVE**, never a silent PASS.
-- **Logging & audit** — structured logs + an activity log of who-did-what-when.
 
 ### 🔎 Run & diagnose
 - **Pre-flight check**, **script validation** (`k6 inspect`), **live monitoring + chart**,
   a **diagnosis engine** (bottlenecks, latency tail, concurrency), and **baseline/regression**.
 
+### 📊 Report & history
+- **Report dashboard** — verdict hero, KPI tiles, diagnosis + baseline cards, executive summary.
+- **Runs & reports history** — every finished run saved; click to reopen its full report.
+- **Downloadable HTML report** for stakeholders.
+
 ### 🧰 Convenience
-- **Run an existing script**, **saved plans** (reopen & re-run), **downloadable HTML report**.
+- **Run an existing script**, **saved plans** (reopen & re-run), **token-usage** visibility.
 
 ---
 
@@ -143,9 +146,9 @@ Built-in generators include: `uuid`, `randomEmail`, `randomFullName`, `randomCom
 `randomStreetAddress`, `randomCity`, `randomState`, `randomZipCode`, `randomPhone`,
 `randomCatchPhrase`, `randomBic`, `randomInt(min,max)`, `randomString(n)`,
 `randomFrom(a,b,c)`, `dateOffset(n,'days')`, `timestamp`, `sequential`. Postman-style
-`{{var}}` / `{{$randomX}}` syntax is also accepted and converted automatically. The
-realistic generators emit **self-contained helper functions** — no external faker
-dependency, so the script runs on any standard k6.
+`{{var}}` / `{{$randomX}}` syntax is also accepted and converted automatically. The realistic
+generators emit **self-contained helper functions** — no external faker dependency, so the
+script runs on any standard k6.
 
 ---
 
@@ -265,20 +268,21 @@ A concrete trace — you draft a plan:
    forces the target URL, applies the chosen load profile, collapses duplicate journeys,
    sanity-fixes thresholds, auto-adds the auth header when a token is captured, and
    **restores your real request bodies** (the model only ever saw redacted ones).
-4. The API returns the plan + a **grounding score** + the **redaction summary**.
+4. The API returns the plan + a **grounding score** + the **redaction summary** + token usage.
 5. You approve → the k6 script is rendered deterministically (data + headers + correlation +
    dynamic generators).
 6. You run → k6 launches, the aggregator computes metrics, the browser polls live.
 7. On finish → the API computes the **verdict**, **diagnosis**, and **baseline comparison**,
-   and the AI writes a **citation-checked** narrative. Every consequential action is audited.
+   writes a **citation-checked** narrative, and **saves the full report**. Every consequential
+   action (and its token cost) is audited.
 
 ---
 
 ## Data guardrails
 
-A guardrail layer wraps **every** LLM call (via the provider interface) — there is no path
-to the model that bypasses it. Only the **user** prompt (which carries user data) is
-redacted; the fixed system prompt is left intact.
+A guardrail layer wraps **every** LLM call (via the provider interface) — there is no path to
+the model that bypasses it. Only the **user** prompt (which carries user data) is redacted;
+the fixed system prompt is left intact.
 
 | Category | Handling |
 |---|---|
@@ -287,9 +291,9 @@ redacted; the fixed system prompt is left intact.
 | URL hostnames, internal hosts, private IPs | reversible (restored in reports) |
 | `${placeholder}` / `{{var}}` template references | preserved (not treated as secrets) |
 
-Only redaction **counts** are surfaced — never raw values. A standalone
-`verify_guardrails.py` script and a `GUARDRAIL_DEBUG=1` mode (logs the *redacted* prompt)
-let you confirm nothing sensitive reaches the AI before testing real endpoints.
+Only redaction **counts** are surfaced — never raw values. A standalone `verify_guardrails.py`
+script and a `GUARDRAIL_DEBUG=1` mode (logs the *redacted* prompt) let you confirm nothing
+sensitive reaches the AI before testing real endpoints.
 
 ---
 
@@ -302,46 +306,52 @@ let you confirm nothing sensitive reaches the AI before testing real endpoints.
 
 ---
 
-## Logging & audit
+## Observability — logging, audit & tokens
 
-- **Structured logging** (structlog) — readable on the console, JSON in
-  `logs/perfagent.log`; records workflow steps and counts, never secrets or bodies.
+- **Structured logging** (structlog) — readable on the console, JSON in `logs/perfagent.log`;
+  records workflow steps and counts, never secrets or bodies.
 - **Audit trail** — a durable record of consequential actions (plan created/approved, script
-  generated, **run started** with target + peak VUs, **run finished** with verdict),
-  surfaced as an **Activity log** in the UI and at `GET /api/audit`.
+  generated, **run started** with target + peak VUs, **run finished** with verdict), shown as
+  an **Activity log** in the UI and at `GET /api/audit`.
+- **Token usage** — every AI call's tokens + rough cost are captured, shown as a **session
+  total chip** in the top bar and **per-action** in the activity log.
 
 ---
 
 ## Architecture
 
+The system is a pipeline connected by a shared contract (the `LoadModel`). The AI is involved
+only in drafting the plan and writing the report narrative; everything else is deterministic
+code, and a human approves before any load is fired.
+
 ```mermaid
 flowchart TD
-    IN([Inputs: chat or form; imported from OpenAPI / Postman / HAR])
-    PLAN["1 · Plan<br/><small>AI drafts journeys, weights, thresholds · auto-correlation · dynamic data</small><br/><code>planner/ · chat_intent · dynamize</code>"]
-    LM["LoadModel — the contract<br/><small>scenarios · headers · extracts · thresholds · data</small><br/><code>contracts/</code>"]
-    APPROVE["2 · Approve — human gate<br/><small>editable form · plain-English summary · grounding score</small><br/><code>web/</code>"]
-    GEN["3 · Generate — deterministic<br/><small>k6 script: data + headers + correlation + generators</small><br/><code>generator/</code>"]
-    RUN["4 · Run + monitor<br/><small>validate · pre-flight · k6 · live metrics + chart</small><br/><code>runner/ · stats/</code>"]
-    REPORT["5 · Report<br/><small>verdict · diagnosis · vs. last run · cited narrative</small><br/><code>analyzer/</code>"]
-    OUT([Live dashboard + diagnosed report])
+    IN([Inputs: chat · form · import OpenAPI/Postman/HAR])
+    PLAN["1 · Plan — AI drafts<br/><small>journeys · weights · correlation · dynamic data</small>"]
+    LM["LoadModel — the contract<br/><small>scenarios · headers · extracts · thresholds · data</small>"]
+    APPROVE["2 · Approve — human gate<br/><small>editable form · plain-English summary · nothing runs yet</small>"]
+    GEN["3 · Generate — deterministic<br/><small>k6 script: data + headers + correlation + generators</small>"]
+    RUN["4 · Run + monitor<br/><small>validate · pre-flight · k6 · live metrics + chart</small>"]
+    REPORT["5 · Report — dashboard<br/><small>verdict · KPIs · diagnosis · vs. last run · saved</small>"]
+    OUT([Live dashboard + saved report history])
 
     IN --> PLAN --> LM --> APPROVE --> GEN --> RUN --> REPORT --> OUT
 
-    GUARD["Data guardrails<br/><small>redact input · scrub output</small><br/><code>guardrails/</code>"]
-    EVAL["AI evaluation<br/><small>plan grounding · report citation</small><br/><code>evaluation/</code>"]
-    AUDIT["Logging & audit<br/><small>structured logs · activity trail</small><br/><code>logging · audit</code>"]
+    GUARD["Guardrails<br/><small>redact before AI · scrub output</small>"]
+    EVAL["AI evaluation<br/><small>plan grounding · report citation</small>"]
+    OBS["Logging · audit · tokens<br/><small>every action recorded</small>"]
     GUARD -. protects .-> PLAN
     GUARD -. protects .-> REPORT
     EVAL -. checks .-> PLAN
     EVAL -. checks .-> REPORT
-    AUDIT -. records .-> RUN
+    OBS -. records .-> RUN
 
     classDef ai fill:#EEEDFE,stroke:#534AB7,color:#26215C;
     classDef code fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
     classDef gate fill:#FAEEDA,stroke:#854F0B,color:#412402;
     classDef io fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A;
-    class PLAN,REPORT ai;
-    class LM,GEN,RUN,EVAL,AUDIT code;
+    class PLAN ai;
+    class LM,GEN,RUN,REPORT,EVAL,OBS code;
     class APPROVE,GUARD gate;
     class IN,OUT io;
 ```
@@ -368,6 +378,7 @@ flowchart TD
 | `importers/endpoints.py` | Import endpoints from OpenAPI/Swagger (JSON+YAML), Postman, HAR. |
 | `guardrails/` | Redaction engine + output scrubbing around every LLM call. |
 | `evaluation/` | Plan-grounding and report-citation checks. |
+| `usage.py` | Token-usage extraction + rough cost estimate. |
 | `providers/` | OpenAI / Anthropic behind one interface (Instructor), wrapped by guardrails. |
 | `planner/` | Endpoints → AI-drafted LoadModel; deterministic controls (target, profile, sanity, auto-correlation, real-body restore). |
 | `generator/k6_renderer.py` · `k6_data.py` · `k6_corr.py` · `generators.py` · `templates/` | LoadModel → k6 script (data, headers, correlation, dynamic generators). |
@@ -376,16 +387,16 @@ flowchart TD
 | `runner/k6_runner.py` · `runner/validator.py` | Launch & stream k6; validate a script via `k6 inspect`. |
 | `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS). |
 | `analyzer/verdict.py` · `diagnostics.py` · `baseline.py` · `narrator.py` · `report.py` | Verdict (fail-closed), diagnosis, regression compare, AI narrative, HTML report. |
-| `logging_config.py` · `audit.py` | Structured logging + the audit trail. |
-| `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results, audit. |
+| `logging_config.py` · `audit.py` | Structured logging + the audit trail (with token usage). |
+| `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports), audit. |
 | `api/app.py` | FastAPI app: REST API + serves the UI. |
-| `web/index.html` | The guided wizard UI (chat + manual modes, single file). |
+| `web/index.html` | The guided wizard UI (chat + manual modes, report dashboard, single file). |
 | `sample_target/app.py` | A mock website to test against safely. |
 
-**Tests** cover the schema, generators (incl. realistic + Postman syntax), planner &
-profiles & body-restore, runner/stats/validator, analyzer (fail-closed verdict,
-diagnostics, baseline), API, guardrails (URL + placeholder), evaluation, data, importers,
-headers/pre-flight, correlation (JSON/header/cookie), chat intent, dynamize, and audit.
+**Tests** cover the schema, generators (incl. realistic + Postman syntax), planner & profiles
+& body-restore, runner/stats/validator, analyzer (fail-closed verdict, diagnostics, baseline),
+API, guardrails (URL + placeholder), evaluation, data, importers, headers/pre-flight,
+correlation (JSON/header/cookie), chat intent, dynamize, audit, and token usage.
 
 ---
 
@@ -412,7 +423,7 @@ headers/pre-flight, correlation (JSON/header/cookie), chat intent, dynamize, and
 | Chat asks clarifying questions | Expected — add the answers to your description and draft again, or use Manual mode. |
 | Imported a spec but no endpoints | Confirm it's valid OpenAPI (JSON/YAML), a Postman collection, or a `.har`. |
 | `/me` (or a protected call) is 401 in pre-flight | Expected — pre-flight hits endpoints alone; correlation flows the token only in a full run. |
-| `table ... already exists` on startup | Delete the SQLite DB once (new tables were added) and restart. |
+| `table ... already exists` on startup | Delete the SQLite DB once (new tables/columns were added) and restart. |
 | Tests fail on import | Run `uv sync` again; make sure you're in the project `.venv`. |
 
 ---
@@ -422,18 +433,20 @@ headers/pre-flight, correlation (JSON/header/cookie), chat intent, dynamize, and
 **✅ Working today**
 Chat or form input · import (OpenAPI/Swagger JSON+YAML, Postman, HAR) · AI planning with an
 editable form & plain-English summary · guardrails (+ verify script & debug mode) · AI
-evaluation · correlation (JSON/header/cookie, auto-set-up) · **dynamic data (generators +
-CSV + AI "add dynamic data", Postman `{{var}}` syntax)** · custom headers · test types
+evaluation · correlation (JSON/header/cookie, auto-set-up) · **dynamic data (generators + CSV
++ AI "add dynamic data", Postman `{{var}}` syntax)** · custom headers · test types
 (ramp/spike/soak/stress) · pre-flight · script validation · live monitoring + chart ·
-diagnosis engine · fail-closed verdict · baseline/regression · run-an-existing-script ·
-logging & audit · cited reports.
+diagnosis engine · fail-closed verdict · baseline/regression · **report dashboard + saved
+runs history** · run-an-existing-script · logging, audit & token usage · modern UI with inline
+guidance.
 
 **🔭 Planned next**
+- **Tracing** — a per-AI-call trace view (step · model · tokens · latency · status) for debugging.
 - **Conversational chat** — a true back-and-forth chat interface (replacing the single-shot describe).
-- **Autonomy & reach** — MCP server interface (Cursor / Claude Code / CI); scheduled & CI-triggered runs; LangGraph orchestration.
+- **Autonomy & reach** — MCP server interface (Cursor / Claude Code / CI); scheduled & CI-triggered runs.
 - **More tools** — JMeter / Gatling runners; regex extraction.
-- **Hosting / enterprise** — durable run state (Postgres + job queue), load workers,
-  auth & RBAC, target allow-list & safety rails, multi-tenancy, WebSockets, observability.
+- **Hosting / enterprise** — durable run state (Postgres + job queue), load workers, auth & RBAC,
+  target allow-list & safety rails, multi-tenancy, WebSockets.
 
 ---
 

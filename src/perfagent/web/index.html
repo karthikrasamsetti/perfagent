@@ -23,14 +23,14 @@
        color:var(--ink);background:var(--bg);font-size:14px;line-height:1.55;
        -webkit-font-smoothing:antialiased;letter-spacing:-0.01em;}
   /* ---- info tooltip (ℹ️ what's this?) ---- */
-  .info{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+  .infohint{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
         border-radius:50%;background:var(--teal-l);color:var(--teal-d);font-size:10px;font-weight:700;
         cursor:help;margin-left:6px;position:relative;border:1px solid var(--teal-ring);font-style:normal}
-  .info:hover::after{content:attr(data-tip);position:absolute;left:50%;bottom:140%;transform:translateX(-50%);
+  .infohint:hover::after{content:attr(data-tip);position:absolute;left:50%;bottom:140%;transform:translateX(-50%);
         background:#16201c;color:#fff;padding:8px 11px;border-radius:8px;font-size:11.5px;font-weight:400;
         line-height:1.45;width:max-content;max-width:260px;white-space:normal;z-index:3000;
         box-shadow:0 6px 20px rgba(0,0,0,.25);letter-spacing:0;text-align:left}
-  .info:hover::before{content:'';position:absolute;left:50%;bottom:140%;transform:translateX(-50%) translateY(6px);
+  .infohint:hover::before{content:'';position:absolute;left:50%;bottom:140%;transform:translateX(-50%) translateY(6px);
         border:5px solid transparent;border-top-color:#16201c;z-index:3000}
   a{color:var(--teal)}
   .topbar{background:linear-gradient(100deg,#0f6e56,#0a5343);color:#fff;padding:14px 28px;
@@ -228,6 +228,25 @@
   #reportObs ul, #reportRecs ul{margin:4px 0 12px;padding-left:20px}
   #reportObs li, #reportRecs li{margin:2px 0}
 
+
+  /* ---- report dashboard ---- */
+  .rpt-hero{display:flex;align-items:center;gap:18px;padding:22px 26px;color:#fff}
+  .rpt-hero.pass{background:linear-gradient(105deg,#0f7a5f,#0a5a46)}
+  .rpt-hero.fail{background:linear-gradient(105deg,#c0392b,#962a1e)}
+  .rpt-hero.na{background:linear-gradient(105deg,#9a6412,#7a4e0d)}
+  .rpt-hero-emoji{font-size:34px;line-height:1}
+  .rpt-hero-title{font-size:19px;font-weight:700;letter-spacing:-.02em}
+  .rpt-hero-sub{font-size:13px;opacity:.9;margin-top:2px}
+  .kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line)}
+  .kpi{background:var(--card);padding:16px 14px;text-align:center}
+  .kpi-v{font-size:22px;font-weight:750;color:var(--teal-d);letter-spacing:-.03em}
+  .kpi-v.bad{color:var(--red)}
+  .kpi-l{font-size:11px;color:var(--muted);font-weight:600;margin-top:3px;text-transform:uppercase;letter-spacing:.3px}
+  .rpt-section-h{font-size:14px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;letter-spacing:-.01em}
+  .rpt-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+  .panel#panel5 .card{margin-bottom:18px}
+  @media(max-width:860px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.rpt-cols{grid-template-columns:1fr}}
+
 </style>
 </head>
 <body>
@@ -298,7 +317,7 @@
         <div class="field"><label>Load tool</label><select id="tool"></select></div>
       </div>
       <div class="field">
-        <div class="lblrow"><label>Test type</label><i class="info" data-tip="Ramp = gradual up/steady/down. Spike = sudden burst. Soak = long steady load (find leaks). Stress = step past the limit to find the breaking point.">i</i></div>
+        <div class="lblrow"><label>Test type</label><i class="infohint" data-tip="Ramp = gradual up/steady/down. Spike = sudden burst. Soak = long steady load (find leaks). Stress = step past the limit to find the breaking point.">i</i></div>
         <select id="profileType">
           <option value="ramp">Ramp — up, steady, down (balanced, default)</option>
           <option value="spike">Spike — sudden sharp burst to peak</option>
@@ -308,7 +327,7 @@
       </div>
 
       <div class="field" style="margin-top:4px">
-        <div class="lblrow"><label>Import endpoints (optional)</label><i class="info" data-tip="Load endpoints automatically from an OpenAPI/Swagger spec, a Postman collection, or a HAR capture — instead of typing them.">i</i></div>
+        <div class="lblrow"><label>Import endpoints (optional)</label><i class="infohint" data-tip="Load endpoints automatically from an OpenAPI/Swagger spec, a Postman collection, or a HAR capture — instead of typing them.">i</i></div>
         <div class="dz" id="impdz" onclick="document.getElementById('importFile').click()" style="padding:10px">
           📥 Click to import from OpenAPI / Postman / HAR
         </div>
@@ -316,12 +335,12 @@
         <div class="note info" id="importInfo" style="display:none"></div>
       </div>
 
-      <div class="lblrow"><label>Endpoints</label><i class="info" data-tip="The API paths to test (method + path, e.g. POST /login). Add a body for POST/PUT. These become the requests each virtual user sends.">i</i></div>
+      <div class="lblrow"><label>Endpoints</label><i class="infohint" data-tip="The API paths to test (method + path, e.g. POST /login). Add a body for POST/PUT. These become the requests each virtual user sends.">i</i></div>
       <div id="endpoints"></div>
       <button class="btn ghost sm" onclick="addEndpoint()">+ Add endpoint</button>
 
       <div class="field" style="margin-top:16px">
-        <div class="lblrow"><label>Test data file (optional)</label><i class="info" data-tip="Upload a CSV of REAL values (e.g. real usernames, branch codes). Each virtual user picks a row, so requests use real data the API will accept. Reference columns as ${columnName}.">i</i></div>
+        <div class="lblrow"><label>Test data file (optional)</label><i class="infohint" data-tip="Upload a CSV of REAL values (e.g. real usernames, branch codes). Each virtual user picks a row, so requests use real data the API will accept. Reference columns as ${columnName}.">i</i></div>
         <div class="dz" id="dz" onclick="document.getElementById('dataFile').click()">
           📁 Click to upload a CSV / TSV / TXT / JSON file
         </div>
@@ -330,7 +349,7 @@
       </div>
 
       <div class="field" style="margin-top:4px">
-        <div class="lblrow"><label>Custom headers (optional)</label><i class="info" data-tip="Headers added to every request, e.g. Authorization: Bearer TOKEN or an API key. Values can reference a captured token as ${token}.">i</i></div>
+        <div class="lblrow"><label>Custom headers (optional)</label><i class="infohint" data-tip="Headers added to every request, e.g. Authorization: Bearer TOKEN or an API key. Values can reference a captured token as ${token}.">i</i></div>
         <div id="headersList"></div>
         <button class="btn ghost sm" onclick="addHeader()">+ Add header</button>
       </div>
@@ -354,7 +373,7 @@
           <div class="existing-chevron" id="existingChevron">▾</div>
         </div>
         <div class="existing-body" id="existingBody" style="display:none">
-          <div class="lblrow"><label>Target base URL</label><i class="info" data-tip="Where the script sends traffic — used for the report. The script's own BASE_URL still applies at run time.">i</i></div>
+          <div class="lblrow"><label>Target base URL</label><i class="infohint" data-tip="Where the script sends traffic — used for the report. The script's own BASE_URL still applies at run time.">i</i></div>
           <input id="exTarget" value="http://127.0.0.1:8000" />
 
           <label style="margin-top:12px">Your k6 script</label>
@@ -438,7 +457,7 @@
         <button class="btn ghost" id="preflightBtn" onclick="doPreflight()" disabled>✈ Pre-flight check</button>
         <button class="btn" id="runBtn" onclick="runScript()" disabled>▶ Run &amp; monitor live</button>
       </div>
-      <div class="note warn" style="margin-top:10px" id="runHint" style="display:none"></div>
+      <div class="note warn" id="runHint" style="margin-top:10px;display:none"></div>
       <div class="note" id="validateResult" style="display:none"></div>
       <div class="note" id="preflightResult" style="display:none"></div>
     </div>
@@ -469,23 +488,50 @@
 
   <!-- ===== STEP 5: REPORT ===== -->
   <div class="panel" id="panel5">
+    <!-- verdict hero + actions -->
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="rpt-hero na" id="verdictHero">
+        <div class="rpt-hero-emoji" id="verdictEmoji">⏳</div>
+        <div style="flex:1">
+          <div class="rpt-hero-title" id="verdictHeadline">Waiting for a finished run…</div>
+          <div class="rpt-hero-sub" id="verdictSub"></div>
+        </div>
+        <button class="btn" onclick="downloadReport()" style="background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.3)">⬇ Download report</button>
+      </div>
+
+      <!-- KPI tiles -->
+      <div class="kpi-grid" id="kpiGrid">
+        <div class="kpi"><div class="kpi-v" id="kRequests">—</div><div class="kpi-l">Requests</div></div>
+        <div class="kpi"><div class="kpi-v" id="kErr">—</div><div class="kpi-l">Error rate</div></div>
+        <div class="kpi"><div class="kpi-v" id="kRps">—</div><div class="kpi-l">Throughput</div></div>
+        <div class="kpi"><div class="kpi-v" id="kP95">—</div><div class="kpi-l">p95 latency</div></div>
+        <div class="kpi"><div class="kpi-v" id="kP99">—</div><div class="kpi-l">p99 latency</div></div>
+        <div class="kpi"><div class="kpi-v" id="kAvg">—</div><div class="kpi-l">Avg latency</div></div>
+      </div>
+    </div>
+
+    <!-- executive summary -->
     <div class="card">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-        <h2 style="margin:0">Report for stakeholders</h2>
-        <div class="spacer"></div>
-        <button class="btn ghost sm" onclick="downloadReport()">⬇ Download HTML report</button>
+      <div class="rpt-section-h">📝 Executive summary <span class="note ok" id="reportEval" style="display:none;margin:0;padding:3px 9px;font-size:11px"></span></div>
+      <p id="reportSummary" style="font-size:14px;line-height:1.6;margin:8px 0 0"></p>
+    </div>
+
+    <!-- two-column: diagnosis + baseline -->
+    <div class="rpt-cols">
+      <div class="card">
+        <div class="rpt-section-h">🔍 Diagnosis</div>
+        <div id="diagnostics"></div>
       </div>
-      <div class="verdict-hero na" id="verdictHero">
-        <div class="big" id="verdictEmoji">⏳</div>
-        <div><div style="font-weight:700" id="verdictHeadline">Waiting for a finished run…</div>
-             <div class="hint" id="verdictSub" style="margin:0"></div></div>
+      <div class="card">
+        <div class="rpt-section-h">📈 vs. previous run</div>
+        <div id="baseline"></div>
       </div>
-      <div class="note" id="reportEval" style="display:none"></div>
-      <div id="baseline" style="display:none;margin:4px 0 14px"></div>
-      <div id="diagnostics" style="display:none;margin:4px 0 14px"></div>
-      <p id="reportSummary"></p>
-      <div id="reportObs"></div>
-      <div id="reportRecs"></div>
+    </div>
+
+    <!-- observations + recommendations -->
+    <div class="rpt-cols">
+      <div class="card"><div id="reportObs"></div></div>
+      <div class="card"><div id="reportRecs"></div></div>
     </div>
   </div>
 
@@ -496,6 +542,16 @@
       <button class="btn ghost sm" onclick="loadPlans()">↻ Refresh</button>
     </div>
     <table id="plansTable" style="margin-top:10px"><thead><tr><th>Created</th><th>Target</th><th>Goal</th><th>Scripts</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- RUNS / REPORTS HISTORY -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:14px">Runs &amp; reports</h2>
+      <button class="btn ghost sm" onclick="loadRuns()">↻ Refresh</button>
+      <span class="muted">every finished run — click to reopen its report</span>
+    </div>
+    <table id="runsTable" style="margin-top:10px"><thead><tr><th>When</th><th>Verdict</th><th>Target</th><th>Goal</th><th>Requests</th><th>Errors</th><th>p95</th><th></th></tr></thead><tbody></tbody></table>
   </div>
 
   <!-- ACTIVITY LOG -->
@@ -1008,7 +1064,7 @@ async function pollRun(){
     const j=await (await fetch(`/api/runs/${currentRunId}`)).json();
     const rs=document.getElementById('runStatus'); const pill=document.getElementById('runPill');
     pill.textContent=j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':j.status==='error'?'fail':'ghost');
-    const s=j.snapshot||{}; const lat=s.latency||{};
+    const s=j.snapshot||{}; const lat=s.latency||{}; window._lastSnap=s; window._lastElapsed=j.elapsed_s;
     document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
     document.getElementById('mReqs').textContent=s.requests??0;
     document.getElementById('mRps').textContent=s.rps??0;
@@ -1035,10 +1091,26 @@ async function loadReport(){
   if(!currentRunId) return;
   try{
     const r=await fetch(`/api/runs/${currentRunId}/report`); const j=await r.json(); if(!r.ok) return;
+    renderReport(j);
+  }catch(e){}
+}
+
+function renderReport(j){
+  try{
     const v=j.verdict.overall_passed;
     const hero=document.getElementById('verdictHero');
-    hero.className='verdict-hero '+(v===true?'pass':v===false?'fail':'na');
+    hero.className='rpt-hero '+(v===true?'pass':v===false?'fail':'na');
     document.getElementById('verdictEmoji').textContent=v===true?'✅':v===false?'❌':'⚠️';
+    // KPI tiles — from the report's snapshot (saved) or the last live snapshot
+    const s=j.snapshot||window._lastSnap||{}; const lat=s.latency||{};
+    const setK=(id,val)=>{const el=document.getElementById(id); if(el) el.textContent=val;};
+    setK('kRequests', (s.requests??0).toLocaleString());
+    const er=((s.error_rate??0)*100); const erEl=document.getElementById('kErr');
+    if(erEl){ erEl.textContent=er.toFixed(2)+'%'; erEl.classList.toggle('bad', er>0); }
+    setK('kRps', (s.rps??0).toFixed(2)+'/s');
+    setK('kP95', (lat.p95_ms??0)+' ms');
+    setK('kP99', (lat.p99_ms??0)+' ms');
+    setK('kAvg', (lat.avg_ms??0)+' ms');
     document.getElementById('verdictHeadline').textContent=v===true?'PASS — all thresholds met':v===false?'FAIL — a threshold was breached':'INCONCLUSIVE — a threshold could not be evaluated';
     const n=j.narrative;
     document.getElementById('verdictSub').textContent=n.headline||'';
@@ -1050,7 +1122,7 @@ async function loadReport(){
     if(bl){
       blEl.style.display='block';
       if(!bl.has_previous){
-        blEl.innerHTML='<div class="mini">📈 vs. previous run</div><div class="note info" style="margin:0">'+esc(bl.headline)+'</div>';
+        blEl.innerHTML='<div class="note info" style="margin:0">'+esc(bl.headline)+'</div>';
       } else {
         const rows=bl.deltas.map(d=>{
           const up = d.pct_change>0;
@@ -1065,7 +1137,7 @@ async function loadReport(){
         const banner = bl.regressed
           ? '<div class="note warn" style="margin:0 0 8px">⚠ '+esc(bl.headline)+'</div>'
           : '<div class="note ok" style="margin:0 0 8px">✅ '+esc(bl.headline)+'</div>';
-        blEl.innerHTML='<div class="mini">📈 vs. previous run</div>'+banner+
+        blEl.innerHTML=banner+
           '<table><thead><tr><th>Metric</th><th>Previous</th><th>Current</th><th>Change</th></tr></thead><tbody>'+rows+'</tbody></table>';
       }
     } else { blEl.style.display='none'; }
@@ -1073,7 +1145,7 @@ async function loadReport(){
     const dg=j.diagnostics; const dgEl=document.getElementById('diagnostics');
     if(dg && dg.findings && dg.findings.length){
       dgEl.style.display='block';
-      dgEl.innerHTML='<div class="mini">🔍 Diagnosis</div>'+
+      dgEl.innerHTML=
         dg.findings.map(f=>{
           const emoji={high:'🔴',medium:'🟠',low:'🔵',info:'🟢'}[f.severity]||'•';
           return `<div class="finding ${f.severity}"><div class="ttl">${emoji} ${esc(f.title)} <span class="sevdot ${f.severity}">${f.severity}</span></div>`+
@@ -1111,6 +1183,33 @@ async function loadAudit(){
 }
 
 /* ---------- history ---------- */
+
+/* ---------- runs & reports history ---------- */
+async function loadRuns(){
+  try{
+    const j=await (await fetch('/api/runs?limit=50')).json();
+    const badge=(v)=>{const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
+      return '<span class="pill '+m[0]+'">'+m[1]+'</span>';};
+    document.querySelector('#runsTable tbody').innerHTML=(j.runs||[]).map(r=>
+      `<tr><td>${new Date(r.created_at).toLocaleString()}</td>`+
+      `<td>${badge(r.verdict)}</td>`+
+      `<td>${esc(r.target||'')}</td><td>${esc(r.goal||'')}</td>`+
+      `<td>${(r.requests||0).toLocaleString()}</td>`+
+      `<td>${((r.error_rate||0)*100).toFixed(2)}%</td>`+
+      `<td>${(r.p95_ms||0)} ms</td>`+
+      `<td>${r.has_report?`<button class="btn sec sm" onclick="openSavedReport('${r.run_id}')">Open report</button>`:''}</td></tr>`
+    ).join('') || '<tr><td colspan="8" class="muted">No runs yet — run a test to see it here.</td></tr>';
+  }catch(e){}
+}
+async function openSavedReport(id){
+  try{
+    const r=await fetch(`/api/runs/${id}/saved-report`); const j=await r.json();
+    if(!r.ok){ alert('Could not open report: '+(j.detail||'not found')); return; }
+    renderReport(j);
+    goStep(5);
+  }catch(e){ alert('Error opening report: '+e.message); }
+}
+
 async function loadPlans(){
   const j=await (await fetch('/api/plans')).json();
   document.querySelector('#plansTable tbody').innerHTML=j.plans.map(p=>
@@ -1307,6 +1406,7 @@ addEndpoint("POST","/login",'{"user":"demo","password":"x"}');
 addEndpoint("POST","/cart",'{"product_id":1}');
 addEndpoint("POST","/checkout",'{"pay":"card"}');
 loadPlans();
+loadRuns();
 loadAudit();
 refreshUsage();
 goStep(1);
@@ -1326,7 +1426,7 @@ goStep(1);
       <div class="note" id="bodyModalNote" style="display:none"></div>
       <div class="btnrow" style="margin-top:12px">
         <button class="btn" onclick="dynamizeBody()" id="dynBtn">✨ Add dynamic data (AI)</button>
-        <span class="muted" style="margin:0">AI assigns unique/random generators to the fields that should vary</span><i class="info" data-tip="Dynamic data = values that change per request. Unique email/id so signups don't collide; random numbers; real values from your uploaded CSV. The AI picks the right source per field.">i</i>
+        <span class="muted" style="margin:0">AI assigns unique/random generators to the fields that should vary</span><i class="infohint" data-tip="Dynamic data = values that change per request. Unique email/id so signups don't collide; random numbers; real values from your uploaded CSV. The AI picks the right source per field.">i</i>
       </div>
     </div>
     <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end">

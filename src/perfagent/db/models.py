@@ -92,6 +92,8 @@ class RunResultRow(Base):
     p95_ms: Mapped[float] = mapped_column(default=0.0)
     p99_ms: Mapped[float] = mapped_column(default=0.0)
     avg_ms: Mapped[float] = mapped_column(default=0.0)
+    goal: Mapped[str] = mapped_column(Text, default="")        # plan goal, for the history list
+    report_json: Mapped[str] = mapped_column(Text, default="")  # full saved report (verdict, diagnosis, narrative...)
 
 
 
