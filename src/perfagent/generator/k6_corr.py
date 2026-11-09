@@ -89,13 +89,22 @@ def headers_expr(headers: dict, cap: set[str], has_data: bool = True) -> str:
     return "{ " + ", ".join(parts) + " }"
 
 
+def _json_path_to_k6(path: str) -> str:
+    """Convert a JSON path with array indices to k6's dotted form.
+
+    k6's r.json() uses dot notation for arrays: data[0].id -> data.0.id
+    """
+    return path.replace("[", ".").replace("]", "")
+
+
 def extract_code(step, indent: str = "      ") -> str:
     """Emit k6 capture lines for a step's extracts (reads from `res`).
 
-    Supports three sources:
-      - json   -> res.json('path')
+    Supports four sources:
+      - json   -> res.json('path')   (arrays: data[0].id -> data.0.id)
       - header -> res.headers['Header-Name']
       - cookie -> res.cookies['name'][0].value
+      - regex  -> first capture group of a pattern matched against the body
     """
     lines = []
     for ex in getattr(step, "extract", []) or []:
@@ -103,13 +112,21 @@ def extract_code(step, indent: str = "      ") -> str:
         if source == "header":
             expr = f"res.headers[{json.dumps(ex.path)}]"
         elif source == "cookie":
-            # k6 exposes cookies as res.cookies[name] -> array of {value,...}
             expr = (
                 f"(res.cookies[{json.dumps(ex.path)}] && res.cookies[{json.dumps(ex.path)}][0] "
                 f"? res.cookies[{json.dumps(ex.path)}][0].value : '')"
             )
-        else:  # json
-            expr = f"res.json({json.dumps(ex.path)})"
+        elif source == "regex":
+            # match the pattern against the body, take capture group 1
+            pat = json.dumps(ex.path)
+            lines.append(
+                f"{indent}try {{ var _m_{ex.var} = (res.body || '').match(new RegExp({pat})); "
+                f"vars.{ex.var} = _m_{ex.var} ? _m_{ex.var}[1] : ''; }} "
+                f"catch (e) {{ vars.{ex.var} = ''; }}"
+            )
+            continue
+        else:  # json (with array-index support)
+            expr = f"res.json({json.dumps(_json_path_to_k6(ex.path))})"
         lines.append(
             f"{indent}try {{ vars.{ex.var} = {expr}; }} "
             f"catch (e) {{ vars.{ex.var} = ''; }}"
@@ -120,3 +137,38 @@ def extract_code(step, indent: str = "      ") -> str:
 def headers_dynamic(headers: dict) -> bool:
     """True if any header value contains a ${name} reference (needs per-request build)."""
     return any(isinstance(v, str) and _PLACEHOLDER.search(v) for v in headers.values())
+
+
+def assertion_checks(step) -> str:
+    """Emit k6 check() entries for a step's assertions. Returns the JS object body."""
+    import json as _json
+    parts = []
+    for a in getattr(step, "assertions", []) or []:
+        kind = a.kind; op = a.op; val = a.value; path = a.path
+        if kind == "status":
+            # numeric status comparison
+            cmp = {"eq": "===", "ne": "!==", "gt": ">", "lt": "<"}.get(op, "===")
+            label = f"status {op} {val}"
+            parts.append(f"{_json.dumps(label)}: (r) => r.status {cmp} {int(val) if str(val).lstrip('-').isdigit() else 0}")
+        elif kind == "json_path":
+            getter = f"r.json({_json.dumps(path)})"
+            label = f"{path} {op} {val}"
+            if op == "contains":
+                parts.append(f"{_json.dumps(label)}: (r) => {{ try {{ return String({getter}).includes({_json.dumps(val)}); }} catch(e) {{ return false; }} }}")
+            elif op in ("gt", "lt"):
+                cmp = ">" if op == "gt" else "<"
+                parts.append(f"{_json.dumps(label)}: (r) => {{ try {{ return Number({getter}) {cmp} {_json.dumps_num(val) if False else _num(val)}; }} catch(e) {{ return false; }} }}")
+            else:  # eq / ne
+                cmp = "==" if op == "eq" else "!="
+                parts.append(f"{_json.dumps(label)}: (r) => {{ try {{ return String({getter}) {cmp} {_json.dumps(val)}; }} catch(e) {{ return false; }} }}")
+        elif kind == "body_contains":
+            label = f"body contains {val}"
+            parts.append(f"{_json.dumps(label)}: (r) => r.body && r.body.includes({_json.dumps(val)})")
+    return ", ".join(parts)
+
+
+def _num(v):
+    try:
+        f = float(v); return int(f) if f.is_integer() else f
+    except (ValueError, TypeError):
+        return 0

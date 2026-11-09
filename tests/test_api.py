@@ -138,5 +138,5 @@ def test_generate_with_edited_model(client):
 def test_unknown_tool_rejected(client):
     r = client.post("/api/plan", json=_plan_body())
     plan_id = r.json()["plan_id"]
-    r2 = client.post(f"/api/plan/{plan_id}/generate", json={"tool": "jmeter"})
+    r2 = client.post(f"/api/plan/{plan_id}/generate", json={"tool": "notatool"})
     assert r2.status_code == 400

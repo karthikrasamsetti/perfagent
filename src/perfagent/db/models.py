@@ -119,6 +119,40 @@ class AuditRow(Base):
     cost_usd: Mapped[float] = mapped_column(default=0.0)  # rough cost estimate
 
 
+
+class SlaProfileRow(Base):
+    """A reusable named set of thresholds (an SLA), applicable to any plan."""
+
+    __tablename__ = "sla_profiles"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    name: Mapped[str] = mapped_column(String(120))
+    thresholds_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
+
+class TraceRow(Base):
+    """A trace of a single LLM call — for debugging the AI steps.
+
+    Records which step called the model, the model, token usage, latency, and whether
+    it succeeded, so you can see 'the dynamize call took 3.2s / 1,400 tokens / ok'.
+    """
+
+    __tablename__ = "traces"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    created_at: Mapped[datetime] = mapped_column(default=_now, index=True)
+    step: Mapped[str] = mapped_column(String(40), default="")   # plan | chat | dynamize | narrate
+    model: Mapped[str] = mapped_column(String(80), default="")
+    prompt_tokens: Mapped[int] = mapped_column(default=0)
+    completion_tokens: Mapped[int] = mapped_column(default=0)
+    latency_ms: Mapped[int] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(String(20), default="ok")  # ok | error
+    redactions: Mapped[int] = mapped_column(default=0)
+    error: Mapped[str] = mapped_column(Text, default="")
+
+
 _engine = None
 
 

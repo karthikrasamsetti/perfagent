@@ -33,13 +33,13 @@ from perfagent.contracts.artifacts import PlanArtifact
 from perfagent.contracts.load_model import DataFile, LoadModel
 from perfagent.data import DataValidationError, load_data
 from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline
-from perfagent import audit
+from perfagent import audit, tracing
 from perfagent.logging_config import configure as _configure_logging, get_logger
 from perfagent.analyzer.diagnostics import diagnose
 from perfagent.preflight import preflight
 from perfagent.runner.validator import validate_script
 from perfagent.importers import ImportError_, import_endpoints
-from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, get_session
+from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, SlaProfileRow, get_session
 from perfagent.evaluation import evaluate_plan, evaluate_report
 from perfagent.generator import generate_script, supported_tools
 from perfagent.chat_intent import ChatIntent, CHAT_SYSTEM_PROMPT, build_chat_user_prompt
@@ -132,6 +132,12 @@ def usage_total() -> dict:
     return audit.totals()
 
 
+@app.get("/api/traces")
+def get_traces(limit: int = 100) -> dict:
+    """Recent AI-call traces (step, model, tokens, latency, status) for debugging."""
+    return {"traces": tracing.recent(limit=limit)}
+
+
 @app.get("/api/runs")
 def list_runs(limit: int = 50) -> dict:
     """List past runs (with their saved report) — newest first, for the Runs history."""
@@ -151,6 +157,72 @@ def list_runs(limit: int = 50) -> dict:
                 "p95_ms": r.p95_ms,
                 "rps": r.rps,
                 "has_report": bool(r.report_json),
+            }
+            for r in rows
+        ]}
+
+
+
+
+
+
+class SlaProfileBody(BaseModel):
+    name: str
+    thresholds: list[dict]
+
+
+@app.get("/api/sla")
+def list_sla() -> dict:
+    """List saved SLA / threshold profiles."""
+    with get_session() as s:
+        rows = s.query(SlaProfileRow).order_by(SlaProfileRow.created_at.desc()).all()
+        import json as _j
+        return {"profiles": [
+            {"id": r.id, "name": r.name, "thresholds": _j.loads(r.thresholds_json or "[]")}
+            for r in rows
+        ]}
+
+
+@app.post("/api/sla")
+def create_sla(body: SlaProfileBody) -> dict:
+    """Save a reusable SLA / threshold profile."""
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="name is required")
+    import json as _j
+    with get_session() as s:
+        row = SlaProfileRow(name=body.name.strip(), thresholds_json=_j.dumps(body.thresholds))
+        s.add(row)
+        s.commit()
+        return {"id": row.id, "name": row.name}
+
+
+@app.delete("/api/sla/{sla_id}")
+def delete_sla(sla_id: str) -> dict:
+    with get_session() as s:
+        row = s.get(SlaProfileRow, sla_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="not found")
+        s.delete(row)
+        s.commit()
+        return {"deleted": sla_id}
+
+
+@app.get("/api/runs/trend")
+def runs_trend(plan_id: str = "", limit: int = 10) -> dict:
+    """Return recent runs' key metrics for a plan (oldest->newest) for the trend chart."""
+    with get_session() as s:
+        q = s.query(RunResultRow)
+        if plan_id:
+            q = q.filter(RunResultRow.plan_id == plan_id)
+        rows = q.order_by(RunResultRow.created_at.desc()).limit(limit).all()
+        rows = list(reversed(rows))  # oldest first for a left-to-right chart
+        return {"points": [
+            {
+                "created_at": r.created_at.isoformat(),
+                "p95_ms": r.p95_ms,
+                "error_rate": r.error_rate,
+                "rps": r.rps,
+                "verdict": r.verdict,
             }
             for r in rows
         ]}
@@ -264,6 +336,7 @@ def create_plan(request: PlanRequest) -> dict:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    tracing.set_step("plan")
     plan: PlanArtifact = draft_plan(request, provider)
     redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
 
@@ -318,6 +391,7 @@ def chat_plan(body: ChatPlanBody) -> dict:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    tracing.set_step("chat")
     # 1. extract structured intent from the chat (guarded LLM call)
     intent: ChatIntent = provider.structured(
         response_model=ChatIntent,
@@ -345,6 +419,7 @@ def chat_plan(body: ChatPlanBody) -> dict:
         endpoints=[EndpointSpec(method=e.method, path=e.path, example_body=e.example_body)
                    for e in intent.endpoints],
     )
+    tracing.set_step("chat")
     plan = draft_plan(req, provider)
 
     with get_session() as s:
@@ -404,6 +479,7 @@ def dynamize(req: DynamizeBody) -> dict:
             if dr is not None:
                 columns = dr.columns
 
+    tracing.set_step("dynamize")
     result: DynamizedBody = provider.structured(
         response_model=DynamizedBody,
         system=DYNAMIZE_SYSTEM_PROMPT,
@@ -759,6 +835,7 @@ def _build_report(run) -> tuple[dict, str]:
         provider = build_provider()
     except ValueError:
         provider = None
+    tracing.set_step('narrate')
     narrative = narrate(run.target, run.snapshot, verdict, provider)
 
     report_html = render_report_html(
@@ -794,6 +871,7 @@ def run_report(run_id: str) -> dict:
         provider = build_provider()
     except ValueError:
         provider = None
+    tracing.set_step('narrate')
     narrative = narrate(run.target, run.snapshot, verdict, provider)
 
     # Check the AI narrative cites only real, computed numbers.

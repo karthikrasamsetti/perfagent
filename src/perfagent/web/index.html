@@ -426,6 +426,12 @@
         <div class="mini" style="margin-top:18px">Pass / fail thresholds</div>
         <div id="thresholds"></div>
         <button class="btn ghost sm" onclick="addThreshold()">+ Add threshold</button>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <span class="muted" style="font-size:12px">SLA profiles:</span>
+          <select id="slaSelect" style="width:auto;padding:5px 8px"><option value="">— apply a saved SLA —</option></select>
+          <button class="btn ghost sm" onclick="applySla()">Apply</button>
+          <button class="btn ghost sm" onclick="saveSla()">Save current as SLA…</button>
+        </div>
       </div>
 
       <!-- raw editor -->
@@ -510,6 +516,20 @@
       </div>
     </div>
 
+    <!-- time-series + trend charts -->
+    <div class="rpt-cols">
+      <div class="card">
+        <div class="rpt-section-h">📉 During this run</div>
+        <canvas id="tsChart" height="150" style="width:100%;margin-top:10px"></canvas>
+        <div class="muted" style="font-size:11.5px;margin-top:4px">RPS (teal) · p95 ms (amber) · error % (red) over time</div>
+      </div>
+      <div class="card">
+        <div class="rpt-section-h">📊 Trend across runs</div>
+        <canvas id="trendChart" height="150" style="width:100%;margin-top:10px"></canvas>
+        <div class="muted" style="font-size:11.5px;margin-top:4px" id="trendNote">p95 latency across recent runs of this plan</div>
+      </div>
+    </div>
+
     <!-- executive summary -->
     <div class="card">
       <div class="rpt-section-h">📝 Executive summary <span class="note ok" id="reportEval" style="display:none;margin:0;padding:3px 9px;font-size:11px"></span></div>
@@ -562,6 +582,16 @@
       <span class="muted">who did what, when — for debugging &amp; audit</span>
     </div>
     <table id="auditTable" style="margin-top:10px"><thead><tr><th>When</th><th>Action</th><th>Target</th><th>Details</th><th>AI usage</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- AI TRACES -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:14px">AI call traces</h2>
+      <button class="btn ghost sm" onclick="loadTraces()">↻ Refresh</button>
+      <span class="muted">each AI call — step, model, tokens, latency, status (for debugging)</span>
+    </div>
+    <table id="tracesTable" style="margin-top:10px"><thead><tr><th>When</th><th>Step</th><th>Model</th><th>Tokens</th><th>Latency</th><th>Redactions</th><th>Status</th></tr></thead><tbody></tbody></table>
   </div>
 
 </div>
@@ -853,6 +883,35 @@ function showUsage(u){
   } else { pill.style.display='none'; }
 }
 
+
+/* ---------- SLA / threshold profiles ---------- */
+async function loadSlaProfiles(){
+  try{
+    const j=await (await fetch('/api/sla')).json();
+    window._slaProfiles=j.profiles||[];
+    const sel=document.getElementById('slaSelect'); if(!sel) return;
+    sel.innerHTML='<option value="">— apply a saved SLA —</option>'+
+      window._slaProfiles.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  }catch(e){}
+}
+function applySla(){
+  const id=document.getElementById('slaSelect').value; if(!id||!planModel) return;
+  const p=(window._slaProfiles||[]).find(x=>x.id===id); if(!p) return;
+  planModel.thresholds=JSON.parse(JSON.stringify(p.thresholds||[]));
+  renderPlanForm();
+}
+async function saveSla(){
+  if(!planModel||!planModel.thresholds||!planModel.thresholds.length){ alert('Add some thresholds first.'); return; }
+  const name=prompt('Name this SLA profile (e.g. "API SLA — p95<300, err<1%"):');
+  if(!name) return;
+  try{
+    const r=await fetch('/api/sla',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name, thresholds:planModel.thresholds})});
+    if(!r.ok){ const j=await r.json(); throw new Error(j.detail||'failed'); }
+    await loadSlaProfiles();
+  }catch(e){ alert('Could not save SLA: '+e.message); }
+}
+
 /* ---------- plain-English plan summary ---------- */
 let planRationale = "";   // the AI's "why", set when a plan is drafted
 function renderSummary(){
@@ -908,8 +967,10 @@ function scenarioCard(sc,si){
     <div class="scn-head">
       <input class="name" value="${esc(sc.name||'')}" oninput="planModel.scenarios[${si}].name=this.value" placeholder="Scenario name"/>
       <div class="weightwrap">
-        <input type="range" min="1" max="10" step="1" value="${Math.max(1,Math.round(sc.weight*10)||1)}"
-               oninput="setWeight(${si},this.value)"/>
+        <span class="muted" style="font-size:11px;white-space:nowrap">Traffic share<i class="infohint" data-tip="What share of virtual users run this journey. With several scenarios the sliders split your users (e.g. 70% browse, 30% checkout) to model realistic traffic. With one scenario it's always 100%.">i</i></span>
+        ${(planModel.scenarios||[]).length>1
+          ? `<input type="range" min="1" max="10" step="1" value="${Math.max(1,Math.round(sc.weight*10)||1)}" oninput="setWeight(${si},this.value)"/>`
+          : ''}
         <span class="wbadge" id="wb${si}">—</span>
       </div>
       <button class="iconbtn" onclick="delScenario(${si})">×</button>
@@ -939,8 +1000,8 @@ function stepRow(si,sti,st){
   exline.style.cssText='display:flex;gap:7px;align-items:center;margin:0 0 8px 2px;font-size:12px;color:var(--muted)';
   if(ex){
     const src=ex.source||'json';
-    const srcOpts=['json','header','cookie'].map(o=>`<option ${o===src?'selected':''}>${o}</option>`).join('');
-    const ph=src==='header'?'header name e.g. X-Auth-Token':src==='cookie'?'cookie name e.g. session':'json path e.g. token';
+    const srcOpts=['json','header','cookie','regex'].map(o=>`<option ${o===src?'selected':''}>${o}</option>`).join('');
+    const ph=src==='header'?'header name e.g. X-Auth-Token':src==='cookie'?'cookie name e.g. session':src==='regex'?'pattern e.g. token=([A-Za-z0-9]+)':'json path e.g. token or data[0].id';
     exline.innerHTML=`🔗 capture <input style="width:110px;padding:5px 8px" value="${esc(ex.var)}" placeholder="var"
         oninput="setExtract(${si},${sti},'var',this.value)"/> from
       <select style="width:auto;padding:5px 8px" onchange="setExtract(${si},${sti},'source',this.value);renderPlanForm()">${srcOpts}</select>
@@ -952,7 +1013,60 @@ function stepRow(si,sti,st){
     exline.innerHTML=`<button class="btn ghost sm" style="padding:4px 10px" onclick="addExtract(${si},${sti})">🔗 Capture a value from this response (for correlation)</button>`;
   }
   el.appendChild(exline);
+  // assertions line
+  const asserts=(st.assertions)||[];
+  const aline=document.createElement('div');
+  aline.style.cssText='margin:0 0 10px 2px;font-size:12px;color:var(--muted)';
+  let ahtml='';
+  asserts.forEach((a,ai)=>{
+    ahtml+=assertRowHtml(si,sti,ai,a);
+  });
+  ahtml+=`<button class="btn ghost sm" style="padding:4px 10px;margin-top:4px" onclick="addAssertion(${si},${sti})">✔ Add assertion (check the response)</button>`;
+  aline.innerHTML=ahtml;
+  el.appendChild(aline);
+  // GraphQL line
+  const gline=document.createElement('div');
+  gline.style.cssText='margin:0 0 10px 2px;font-size:12px;color:var(--muted)';
+  if(st.graphql_query){
+    gline.innerHTML=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">⬡ GraphQL query<i class="infohint" data-tip="This step sends a GraphQL request: body = {query, variables}. Put variables in the body field above as JSON.">i</i><button class="iconbtn" style="padding:2px 7px" onclick="removeGql(${si},${sti})">×</button></div>`+
+      `<textarea style="width:100%;min-height:60px;font-family:ui-monospace,monospace;font-size:11.5px" oninput="setGql(${si},${sti},this.value)" placeholder="query { ... }">${esc(st.graphql_query)}</textarea>`;
+  } else {
+    gline.innerHTML=`<button class="btn ghost sm" style="padding:4px 10px" onclick="addGql(${si},${sti})">⬡ Make this a GraphQL query</button>`;
+  }
+  el.appendChild(gline);
   return el;
+}
+function setGql(si,sti,v){ planModel.scenarios[si].steps[sti].graphql_query=v; }
+function addGql(si,sti){ const st=planModel.scenarios[si].steps[sti]; st.graphql_query='query {\n  \n}'; if(st.method==='GET'){st.method='POST';} renderPlanForm(); }
+function removeGql(si,sti){ planModel.scenarios[si].steps[sti].graphql_query=''; renderPlanForm(); }
+function assertRowHtml(si,sti,ai,a){
+  const kinds=['status','json_path','body_contains'];
+  const ops=['eq','ne','contains','gt','lt'];
+  const kindOpts=kinds.map(k=>`<option ${k===a.kind?'selected':''}>${k}</option>`).join('');
+  const opOpts=ops.map(o=>`<option ${o===a.op?'selected':''}>${o}</option>`).join('');
+  const showPath = a.kind==='json_path';
+  return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;flex-wrap:wrap">`+
+    `✔ <select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'kind',this.value);renderPlanForm()">${kindOpts}</select>`+
+    (showPath?`<input style="width:120px;padding:4px 7px" value="${esc(a.path||'')}" placeholder="json path" oninput="setAssert(${si},${sti},${ai},'path',this.value)"/>`:'')+
+    `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'op',this.value)">${opOpts}</select>`+
+    `<input style="width:110px;padding:4px 7px" value="${esc(a.value||'')}" placeholder="expected" oninput="setAssert(${si},${sti},${ai},'value',this.value)"/>`+
+    `<button class="iconbtn" style="padding:2px 7px" onclick="removeAssertion(${si},${sti},${ai})">×</button></div>`;
+}
+function setAssert(si,sti,ai,key,val){
+  const st=planModel.scenarios[si].steps[sti];
+  if(!st.assertions) st.assertions=[];
+  if(!st.assertions[ai]) st.assertions[ai]={kind:'status',op:'eq',path:'',value:''};
+  st.assertions[ai][key]=val;
+}
+function addAssertion(si,sti){
+  const st=planModel.scenarios[si].steps[sti];
+  if(!st.assertions) st.assertions=[];
+  st.assertions.push({kind:'status',op:'eq',path:'',value:'200'});
+  renderPlanForm();
+}
+function removeAssertion(si,sti,ai){
+  planModel.scenarios[si].steps[sti].assertions.splice(ai,1);
+  renderPlanForm();
 }
 function setExtract(si,sti,key,val){
   const st=planModel.scenarios[si].steps[sti];
@@ -1071,7 +1185,7 @@ async function pollRun(){
     document.getElementById('mErr').textContent=((s.error_rate??0)*100).toFixed(2)+'%';
     document.getElementById('mP95').textContent=(lat.p95_ms??0)+' ms';
     document.getElementById('mP99').textContent=(lat.p99_ms??0)+' ms';
-    pushChart(j.elapsed_s??0, s.rps??0, lat.p95_ms??0);
+    pushChart(j.elapsed_s??0, s.rps??0, lat.p95_ms??0, s.error_rate??0);
     document.querySelector('#epTable tbody').innerHTML=(s.per_endpoint||[]).map(e=>
       `<tr><td>${esc(e.name)}</td><td>${e.requests}</td><td>${e.failed}</td><td>${e.avg_ms}</td><td>${e.p95_ms}</td></tr>`).join('');
     if(j.status==='running'){ rs.className='statusline'; rs.textContent='Running against '+j.target+' …'; }
@@ -1095,6 +1209,55 @@ async function loadReport(){
   }catch(e){}
 }
 
+
+/* ---------- report charts: time-series + trend ---------- */
+function _lineChart(canvas, series, opts){
+  // series: [{data:[{x,y}], color, label}], opts:{yLabel}
+  const c=canvas; if(!c) return;
+  const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=150;
+  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const pad=30;
+  const allY=series.flatMap(s=>s.data.map(p=>p.y));
+  const allX=series.flatMap(s=>s.data.map(p=>p.x));
+  if(allY.length<1){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('no data yet',10,20); return; }
+  const maxY=Math.max(1,...allY), minX=Math.min(...allX), maxX=Math.max(...allX);
+  const sx=v=>pad+((v-minX)/((maxX-minX)||1))*(W-pad*1.4);
+  const sy=v=>H-pad-(v/maxY)*(H-pad*1.5);
+  // axes
+  x.strokeStyle='#e7e9e5'; x.lineWidth=1; x.beginPath(); x.moveTo(pad,8); x.lineTo(pad,H-pad); x.lineTo(W-6,H-pad); x.stroke();
+  x.fillStyle='#9aa'; x.font='10px system-ui'; x.fillText(maxY.toFixed(maxY<10?1:0),4,14);
+  series.forEach(s=>{
+    if(s.data.length<1) return;
+    x.beginPath(); x.strokeStyle=s.color; x.lineWidth=2;
+    s.data.forEach((p,i)=>{ const px=sx(p.x),py=sy(p.y); i?x.lineTo(px,py):x.moveTo(px,py); });
+    x.stroke();
+    // dots for trend (few points)
+    if(s.data.length<=12){ x.fillStyle=s.color; s.data.forEach(p=>{ x.beginPath(); x.arc(sx(p.x),sy(p.y),2.5,0,7); x.fill(); }); }
+  });
+}
+function drawTsChart(){
+  const c=document.getElementById('tsChart'); if(!c||!chartData||!chartData.length) return;
+  _lineChart(c,[
+    {data:chartData.map(d=>({x:d.t,y:d.rps})),  color:'#0f7a5f'},
+    {data:chartData.map(d=>({x:d.t,y:d.p95})),  color:'#9a6412'},
+    {data:chartData.map(d=>({x:d.t,y:d.err||0})),color:'#b4342b'},
+  ]);
+}
+async function loadTrend(){
+  const c=document.getElementById('trendChart'); if(!c) return;
+  try{
+    const pid=currentPlanId||'';
+    const j=await (await fetch('/api/runs/trend?limit=10'+(pid?('&plan_id='+encodeURIComponent(pid)):''))).json();
+    const pts=j.points||[];
+    if(pts.length<2){ document.getElementById('trendNote').textContent='Run this plan again to see a trend across runs.'; }
+    else { document.getElementById('trendNote').textContent='p95 latency (amber) · error % (red) across the last '+pts.length+' runs'; }
+    _lineChart(c,[
+      {data:pts.map((p,i)=>({x:i,y:p.p95_ms})),         color:'#9a6412'},
+      {data:pts.map((p,i)=>({x:i,y:(p.error_rate||0)*100})), color:'#b4342b'},
+    ]);
+  }catch(e){}
+}
+
 function renderReport(j){
   try{
     const v=j.verdict.overall_passed;
@@ -1111,6 +1274,7 @@ function renderReport(j){
     setK('kP95', (lat.p95_ms??0)+' ms');
     setK('kP99', (lat.p99_ms??0)+' ms');
     setK('kAvg', (lat.avg_ms??0)+' ms');
+    drawTsChart(); loadTrend();
     document.getElementById('verdictHeadline').textContent=v===true?'PASS — all thresholds met':v===false?'FAIL — a threshold was breached':'INCONCLUSIVE — a threshold could not be evaluated';
     const n=j.narrative;
     document.getElementById('verdictSub').textContent=n.headline||'';
@@ -1163,6 +1327,26 @@ function renderReport(j){
 }
 function downloadReport(){ if(currentRunId) location=`/api/runs/${currentRunId}/report/download`; }
 
+
+
+/* ---------- AI call traces ---------- */
+async function loadTraces(){
+  try{
+    const j=await (await fetch('/api/traces?limit=100')).json();
+    const sc={plan:'#534ab7',chat:'#2563a8',dynamize:'#9a6412',narrate:'#0f7a5f'};
+    document.querySelector('#tracesTable tbody').innerHTML=(j.traces||[]).map(t=>{
+      const stCol=t.status==='error'?'#b4342b':'#0f7a5f';
+      const stepCol=sc[t.step]||'#6b7280';
+      return `<tr><td>${new Date(t.created_at).toLocaleString()}</td>`+
+        `<td><b style="color:${stepCol}">${esc(t.step)}</b></td>`+
+        `<td>${esc(t.model||'')}</td>`+
+        `<td>${(t.total_tokens||0).toLocaleString()} <span class="muted">(${t.prompt_tokens||0}+${t.completion_tokens||0})</span></td>`+
+        `<td>${t.latency_ms||0} ms</td>`+
+        `<td>${t.redactions||0}</td>`+
+        `<td style="color:${stCol};font-weight:600">${esc(t.status)}${t.error?' — '+esc(t.error):''}</td></tr>`;
+    }).join('')||'<tr><td colspan="7" class="muted">No AI calls yet.</td></tr>';
+  }catch(e){}
+}
 
 /* ---------- activity log ---------- */
 async function loadAudit(){
@@ -1376,7 +1560,7 @@ async function doPreflight(){
 /* ---------- live chart ---------- */
 let chartData=[];  // [{t, rps, p95}]
 function resetChart(){ chartData=[]; drawChart(); }
-function pushChart(elapsed, rps, p95){ chartData.push({t:elapsed,rps:rps||0,p95:p95||0}); if(chartData.length>120) chartData.shift(); drawChart(); }
+function pushChart(elapsed, rps, p95, err){ chartData.push({t:elapsed,rps:rps||0,p95:p95||0,err:(err||0)*100}); if(chartData.length>300) chartData.shift(); drawChart(); }
 function drawChart(){
   const c=document.getElementById('liveChart'); if(!c) return;
   const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=120;
@@ -1409,6 +1593,8 @@ loadPlans();
 loadRuns();
 loadAudit();
 refreshUsage();
+loadSlaProfiles();
+loadTraces();
 goStep(1);
 </script>
 

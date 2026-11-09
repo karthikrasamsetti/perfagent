@@ -34,13 +34,14 @@ class Extract(BaseModel):
     var: str = Field(..., description="Variable name, usable later as ${var}.")
     source: str = Field(
         default="json",
-        description="Where to read from: 'json' (body field), 'header', or 'cookie'.",
+        description="Where to read from: 'json' (body field), 'header', 'cookie', or 'regex'.",
     )
     path: str = Field(
         ...,
-        description="json: dotted path e.g. 'token' or 'data.id'; "
+        description="json: dotted path, supports arrays e.g. 'data[0].id'; "
                     "header: the header name e.g. 'X-Auth-Token'; "
-                    "cookie: the cookie name e.g. 'session'.",
+                    "cookie: the cookie name e.g. 'session'; "
+                    "regex: a pattern with one capture group, e.g. 'token=([A-Za-z0-9]+)'.",
     )
 
     @field_validator("var")
@@ -53,8 +54,38 @@ class Extract(BaseModel):
     @field_validator("source")
     @classmethod
     def known_source(cls, v: str) -> str:
-        if v not in {"json", "header", "cookie"}:
-            raise ValueError("source must be 'json', 'header', or 'cookie'")
+        if v not in {"json", "header", "cookie", "regex"}:
+            raise ValueError("source must be 'json', 'header', 'cookie', or 'regex'")
+        return v
+
+
+class Assertion(BaseModel):
+    """A check on a step's response — validates content, not just the status code.
+
+    kind:
+      status        — the HTTP status code (value = expected code, e.g. 200)
+      json_path     — a field in the JSON body (path = dotted field, value = expected)
+      body_contains — the response body contains the given text (value = text)
+    op: eq | ne | contains | gt | lt  (status/json_path support eq/ne/gt/lt; body uses contains)
+    """
+
+    kind: str = Field(..., description="status | json_path | body_contains")
+    op: str = Field(default="eq", description="eq | ne | contains | gt | lt")
+    path: str = Field(default="", description="For json_path: dotted field, e.g. 'data.id'.")
+    value: str = Field(default="", description="Expected value (as text).")
+
+    @field_validator("kind")
+    @classmethod
+    def known_kind(cls, v: str) -> str:
+        if v not in {"status", "json_path", "body_contains"}:
+            raise ValueError("kind must be status, json_path, or body_contains")
+        return v
+
+    @field_validator("op")
+    @classmethod
+    def known_op(cls, v: str) -> str:
+        if v not in {"eq", "ne", "contains", "gt", "lt"}:
+            raise ValueError(f"unsupported assertion op {v!r}")
         return v
 
 
@@ -72,6 +103,15 @@ class Step(BaseModel):
     extract: list[Extract] = Field(
         default_factory=list,
         description="Values to capture from this response for later steps.",
+    )
+    assertions: list[Assertion] = Field(
+        default_factory=list,
+        description="Checks on the response body/status beyond a 2xx.",
+    )
+    graphql_query: str = Field(
+        default="",
+        description="If set, this step is a GraphQL request: the body is sent as "
+                    "{query, variables}. The method should be POST.",
     )
 
     @field_validator("path")

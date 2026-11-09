@@ -3,7 +3,8 @@
 Adding a new tool = adding one renderer here and one entry in _RENDERERS. Nothing
 else in the pipeline changes - this is the "one plan, any tool" seam.
 
-k6 is the primary/default tool. Locust is available as an alternative.
+k6 is the primary/default tool and the only one with a live runner. Locust, JMeter,
+and Gatling scripts are generated and downloadable - run them in their own tooling.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ from collections.abc import Callable
 
 from perfagent.contracts.artifacts import PlanArtifact, ScriptArtifact
 from perfagent.contracts.load_model import LoadModel
+from perfagent.generator.gatling_renderer import render_gatling
+from perfagent.generator.jmeter_renderer import render_jmeter
 from perfagent.generator.k6_renderer import render_k6
 from perfagent.generator.locust_renderer import render_locust
 
@@ -19,6 +22,8 @@ from perfagent.generator.locust_renderer import render_locust
 _RENDERERS: dict[str, tuple[str, Callable[[LoadModel, str], str]]] = {
     "k6": ("loadtest.js", render_k6),
     "locust": ("locustfile.py", render_locust),
+    "jmeter": ("loadtest.jmx", render_jmeter),
+    "gatling": ("LoadSimulation.scala", render_gatling),
 }
 
 DEFAULT_TOOL = "k6"

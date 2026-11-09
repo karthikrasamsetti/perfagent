@@ -16,6 +16,7 @@ GUARDRAIL DEBUG MODE (for verifying redaction before testing real endpoints):
 
 from __future__ import annotations
 
+import time
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -23,6 +24,7 @@ from pydantic import BaseModel
 from perfagent.guardrails.output import scrub_output_model
 from perfagent.guardrails.redaction import redact, restore
 from perfagent.logging_config import get_logger
+from perfagent import tracing
 from perfagent.usage import Usage, extract_usage
 
 T = TypeVar("T", bound=BaseModel)
@@ -67,11 +69,25 @@ class GuardedProvider:
             )
 
         # 2. call the wrapped provider: system prompt as-is, user prompt redacted
-        result: T = self._inner.structured(
-            response_model=response_model,
-            system=system,
-            user=usr_r.text,
-        )
+        #    (timed + traced for the Traces view)
+        _t0 = time.perf_counter()
+        _status = "ok"
+        try:
+            result: T = self._inner.structured(
+                response_model=response_model,
+                system=system,
+                user=usr_r.text,
+            )
+        except Exception as e:  # noqa: BLE001
+            _latency = int((time.perf_counter() - _t0) * 1000)
+            tracing.record(step=tracing.current_step(),
+                           model=getattr(self._inner, "model", ""),
+                           prompt_tokens=0, completion_tokens=0,
+                           latency_ms=_latency, status="error",
+                           redactions=sum(self.last_redaction_counts.values()),
+                           error=f"{type(e).__name__}: {e}")
+            raise
+        _latency = int((time.perf_counter() - _t0) * 1000)
 
         # capture token usage from the wrapped provider (best-effort)
         inner_usage = getattr(self._inner, "last_usage", None)
@@ -79,6 +95,13 @@ class GuardedProvider:
             self.last_usage = inner_usage
         else:
             self.last_usage = extract_usage(result, getattr(self._inner, "model", ""))
+
+        tracing.record(step=tracing.current_step(),
+                       model=self.last_usage.model or getattr(self._inner, "model", ""),
+                       prompt_tokens=self.last_usage.prompt_tokens,
+                       completion_tokens=self.last_usage.completion_tokens,
+                       latency_ms=_latency, status=_status,
+                       redactions=sum(self.last_redaction_counts.values()))
 
         # 3. scrub the output for any leaked sensitive-looking content
         result, scrubbed = scrub_output_model(result)

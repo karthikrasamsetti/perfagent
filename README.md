@@ -61,6 +61,8 @@ anything that must be exact.
 | Stare at raw metrics | A report dashboard + automatic bottleneck diagnosis |
 | "Is it worse than last time?" — unknown | Automatic **baseline comparison** flags regressions |
 | Reports lost after the run | Every run's report is **saved** and reopenable |
+| Status-code-only checks | **Assertions** validate the response body, not just 2xx |
+| One load tool | Generate for **k6, Locust, JMeter, Gatling** from one plan |
 
 ---
 
@@ -102,13 +104,18 @@ every concept, so a QA engineer can use it without a walkthrough.
   **HAR captures** — endpoints, sample bodies, and target URL imported automatically.
 
 ### 🔐 Real-world auth & data
-- **Correlation** — capture a login token / created id from a response (**JSON field,
-  header, or cookie**) and reuse it later as `${var}`. Auto-set-up for login flows.
+- **Correlation** — capture a value from a response (**JSON field, header, cookie, or
+  regex**, incl. array indices like `data[0].id`) and reuse it later as `${var}`. Auto-set-up for login flows.
+- **Assertions** — validate the response, not just the status: a JSON field equals/contains,
+  a numeric field in range, or the body contains text. A failed assertion counts as an error.
 - **Custom headers** — global `Authorization` / API-key headers; values can use captured vars.
 - **Dynamic test data** — three sources per field (see below), assigned by the AI with one click.
 
 ### ⏱ Realistic load
 - **Test types** — ramp, spike, soak, stress, each a genuinely different load shape.
+- **Protocols** — REST/HTTP and **GraphQL** (a step can send a `{query, variables}` request).
+- **Multi-tool** — generate scripts for **k6** (primary, with a live runner), **Locust**,
+  **JMeter** (`.jmx`), and **Gatling** (`.scala`) from the same plan.
 - **Editable plan form** — scenarios, weights, think-times, thresholds (raw-JSON toggle too).
 
 ### ✅ Trust & safety
@@ -122,6 +129,8 @@ every concept, so a QA engineer can use it without a walkthrough.
 
 ### 📊 Report & history
 - **Report dashboard** — verdict hero, KPI tiles, diagnosis + baseline cards, executive summary.
+- **Time-series + trend charts** — latency/RPS/errors over the run, and p95/error trends across recent runs.
+- **SLA profiles** — save reusable threshold sets (e.g. "p95<300ms, errors<1%") and apply to any plan.
 - **Runs & reports history** — every finished run saved; click to reopen its full report.
 - **Downloadable HTML report** for stakeholders.
 
@@ -315,6 +324,8 @@ sensitive reaches the AI before testing real endpoints.
   an **Activity log** in the UI and at `GET /api/audit`.
 - **Token usage** — every AI call's tokens + rough cost are captured, shown as a **session
   total chip** in the top bar and **per-action** in the activity log.
+- **AI-call tracing** — each LLM call recorded with step · model · tokens · **latency** · status,
+  shown in a **Traces** view (`GET /api/traces`) for debugging the AI steps.
 
 ---
 
@@ -382,13 +393,13 @@ flowchart TD
 | `providers/` | OpenAI / Anthropic behind one interface (Instructor), wrapped by guardrails. |
 | `planner/` | Endpoints → AI-drafted LoadModel; deterministic controls (target, profile, sanity, auto-correlation, real-body restore). |
 | `generator/k6_renderer.py` · `k6_data.py` · `k6_corr.py` · `generators.py` · `templates/` | LoadModel → k6 script (data, headers, correlation, dynamic generators). |
-| `generator/locust_renderer.py` | Locust renderer (alternative tool). |
+| `generator/locust_renderer.py` · `jmeter_renderer.py` · `gatling_renderer.py` | Locust, JMeter (.jmx), and Gatling (.scala) renderers. |
 | `preflight.py` | One request per endpoint → status report (no load). |
 | `runner/k6_runner.py` · `runner/validator.py` | Launch & stream k6; validate a script via `k6 inspect`. |
 | `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS). |
 | `analyzer/verdict.py` · `diagnostics.py` · `baseline.py` · `narrator.py` · `report.py` | Verdict (fail-closed), diagnosis, regression compare, AI narrative, HTML report. |
-| `logging_config.py` · `audit.py` | Structured logging + the audit trail (with token usage). |
-| `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports), audit. |
+| `logging_config.py` · `audit.py` · `tracing.py` | Structured logging, audit trail, and per-AI-call traces. |
+| `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports), audit, SLA profiles, traces. |
 | `api/app.py` | FastAPI app: REST API + serves the UI. |
 | `web/index.html` | The guided wizard UI (chat + manual modes, report dashboard, single file). |
 | `sample_target/app.py` | A mock website to test against safely. |
@@ -396,7 +407,7 @@ flowchart TD
 **Tests** cover the schema, generators (incl. realistic + Postman syntax), planner & profiles
 & body-restore, runner/stats/validator, analyzer (fail-closed verdict, diagnostics, baseline),
 API, guardrails (URL + placeholder), evaluation, data, importers, headers/pre-flight,
-correlation (JSON/header/cookie), chat intent, dynamize, audit, and token usage.
+correlation (JSON/header/cookie/regex/array), assertions, chat intent, dynamize, audit, token usage, SLA profiles, trend, JMeter/Gatling, tracing, and GraphQL.
 
 ---
 
@@ -441,12 +452,11 @@ runs history** · run-an-existing-script · logging, audit & token usage · mode
 guidance.
 
 **🔭 Planned next**
-- **Tracing** — a per-AI-call trace view (step · model · tokens · latency · status) for debugging.
+- **More protocols** — gRPC (needs the k6 gRPC extension + `.proto`) and WebSocket streaming.
+- **Live runners for JMeter / Gatling** (scripts generate today; a live runner is k6-only).
 - **Conversational chat** — a true back-and-forth chat interface (replacing the single-shot describe).
-- **Autonomy & reach** — MCP server interface (Cursor / Claude Code / CI); scheduled & CI-triggered runs.
-- **More tools** — JMeter / Gatling runners; regex extraction.
-- **Hosting / enterprise** — durable run state (Postgres + job queue), load workers, auth & RBAC,
-  target allow-list & safety rails, multi-tenancy, WebSockets.
+- **Scheduled & CI-triggered runs**; trend alerting on regression.
+- **Reliability for the hub** — durable/concurrent run state, load workers, target allow-list & VU caps.
 
 ---
 

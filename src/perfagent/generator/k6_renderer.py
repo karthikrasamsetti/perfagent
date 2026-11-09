@@ -19,6 +19,7 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from perfagent.contracts.load_model import LoadModel
 from perfagent.generator.k6_corr import (
+    assertion_checks,
     body_expr,
     captured_vars,
     extract_code,
@@ -110,15 +111,26 @@ def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEAD
         else:
             lines.append(f"      const res = http.del({url}, null, {params_obj});")
     else:
-        be = body_expr(step.body, cap, has_data)
-        lines.append(f"      const payload = JSON.stringify({be});")
+        gql = getattr(step, "graphql_query", "") or ""
+        if gql:
+            # GraphQL: body is {query, variables} — variables come from step.body
+            vars_expr = body_expr(step.body, cap, has_data) if step.body else "{}"
+            lines.append(
+                f"      const payload = JSON.stringify({{ query: {json.dumps(gql)}, "
+                f"variables: {vars_expr} }});")
+        else:
+            be = body_expr(step.body, cap, has_data)
+            lines.append(f"      const payload = JSON.stringify({be});")
         base_hdr = "{ 'Content-Type': 'application/json' }"
         merged = base_hdr if not hdr else f"Object.assign({base_hdr}, {hdr})"
         lines.append(f"      const params = {{ headers: {merged}, {tags} }};")
         lines.append(f"      const res = http.{ml}({url}, payload, params);")
 
-    lines.append(f"      check(res, {{ {json.dumps(name + ' status ok')}: (r) => r.status >= 200 && r.status < 400 }});")
-    lines.append("      errorRate.add(res.status >= 400);")
+    base_check = f"{json.dumps(name + ' status ok')}: (r) => r.status >= 200 && r.status < 400"
+    extra = assertion_checks(step)
+    all_checks = base_check + (", " + extra if extra else "")
+    lines.append(f"      const ok = check(res, {{ {all_checks} }});")
+    lines.append("      errorRate.add(res.status >= 400 || !ok);")
     if capture:
         lines.append(capture)
     lines.append("    }")
