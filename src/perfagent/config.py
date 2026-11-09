@@ -39,6 +39,25 @@ class Settings(BaseSettings):
     # Logs only the redacted text, never raw secrets. Keep false for normal use.
     guardrail_debug: bool = Field(default=False)
 
+    # ---- k6 load engine -------------------------------------------------------
+    # k6 is found or downloaded automatically (see runner/k6_binary.py). Set this to
+    # use a specific k6 binary instead, e.g. on machines without internet access.
+    perfagent_k6_path: str = Field(default="")
+    # Base folder for PerfAgent's own files, including the downloaded k6.
+    # Empty = ~/.perfagent
+    perfagent_home: str = Field(default="")
+
+    # ---- Git export / import ---------------------------------------------------
+    # The repository URL, branch and access token are entered by the user in the
+    # UI for each push or import and are never stored. These are server-side options.
+    git_author_name: str = Field(default="PerfAgent")
+    git_author_email: str = Field(default="perfagent@localhost")
+    # Comma-separated Git hosts users may push to / import from, e.g.
+    # "github.com,dev.azure.com". Empty = any host. Recommended when hosted.
+    git_allowed_hosts: str = Field(default="")
+    # Allow file:// and local paths as repositories (tests / local demos only).
+    git_allow_local: bool = Field(default=False)
+
 
 @lru_cache
 def get_settings() -> Settings:
