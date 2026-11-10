@@ -8,6 +8,9 @@ Design (matches the trust boundary):
   - Runs are tracked in memory by run_id; the API polls get_run() for live status.
   - If the script is data-parameterized, the uploaded data file is written next to
     the script so k6's open('./file') finds it.
+  - k6's human-readable output (console.log/error from the script, threshold
+    crossings, the checks summary) goes to STDERR; we capture those lines into
+    run.logs for the "Live run logs" panel.
 
 k6 must be installed and on PATH. If it isn't, the run is marked 'error' with a
 clear message rather than crashing the server.
@@ -25,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from perfagent.stats import Aggregator
+
+_MAX_LOG_LINES = 1000   # keep the log buffer bounded
 
 
 @dataclass
@@ -44,6 +49,8 @@ class RunState:
     data_content: str = ""
     # live aggregated snapshot (computed deterministically)
     snapshot: dict = field(default_factory=dict)
+    # human-readable k6 output lines (console.*, thresholds, checks) — for live logs
+    logs: list[str] = field(default_factory=list)
     _proc: subprocess.Popen | None = None
     _agg: Aggregator = field(default_factory=Aggregator)
     _tmpdir: str | None = None
@@ -110,6 +117,26 @@ def start_run(
     return run
 
 
+def _append_log(run: RunState, line: str) -> None:
+    line = line.rstrip()
+    if not line:
+        return
+    run.logs.append(line)
+    if len(run.logs) > _MAX_LOG_LINES:
+        del run.logs[: len(run.logs) - _MAX_LOG_LINES]
+
+
+def _pump_stderr(run: RunState, proc: subprocess.Popen) -> None:
+    """Read k6's stderr line by line into run.logs (console.*, thresholds, checks)."""
+    if proc.stderr is None:
+        return
+    try:
+        for line in proc.stderr:
+            _append_log(run, line)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _run_worker(run: RunState, content: str) -> None:
     tmpdir = tempfile.mkdtemp(prefix="perfagent_run_")
     run._tmpdir = tmpdir
@@ -142,6 +169,12 @@ def _run_worker(run: RunState, content: str) -> None:
     run._proc = proc
     run.status = "running"
 
+    # Read k6's human output (console.*, thresholds, checks summary) in a thread,
+    # so we don't block the metrics loop below. These feed the "Live run logs" panel.
+    _append_log(run, f"$ k6 run loadtest.js  (target {run.target})")
+    stderr_thread = threading.Thread(target=_pump_stderr, args=(run, proc), daemon=True)
+    stderr_thread.start()
+
     last_snapshot = 0.0
     assert proc.stdout is not None
     for line in proc.stdout:
@@ -151,6 +184,8 @@ def _run_worker(run: RunState, content: str) -> None:
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
+            # Not a JSON metric point — treat as a human log line (defensive).
+            _append_log(run, line)
             continue
         # k6 json output: {"type":"Point","metric":"http_req_duration","data":{...}}
         if obj.get("type") == "Point":
@@ -162,11 +197,12 @@ def _run_worker(run: RunState, content: str) -> None:
             last_snapshot = now
 
     proc.wait()
+    stderr_thread.join(timeout=2)
     run.snapshot = run._agg.snapshot()
     if run.status != "stopped":
         run.status = "finished" if proc.returncode in (0, 99) else "error"
         # k6 exits 99 when a threshold fails — that's a completed run, not a crash.
         if proc.returncode not in (0, 99):
-            err = proc.stderr.read() if proc.stderr else ""
-            run.message = f"k6 exited {proc.returncode}. {err[:400]}"
+            run.message = f"k6 exited {proc.returncode}. See the run logs for details."
+    _append_log(run, f"— k6 exited {proc.returncode} —")
     run.ended_at = time.time()

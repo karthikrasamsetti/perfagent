@@ -42,6 +42,7 @@ export const options = {
     {{ th.expr }}
 {% endfor %}
   },
-};
+{% if insecure_tls %}  insecureSkipTLSVerify: true,
+{% endif %}};
 
 {{ scenario_funcs }}

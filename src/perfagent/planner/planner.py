@@ -123,6 +123,8 @@ def _restore_real_bodies(model: LoadModel, request: PlanRequest) -> LoadModel:
 def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> LoadModel:
     # 1. Target is exactly what was requested.
     model.target_base_url = request.target_base_url
+    model.environment = getattr(request, 'environment', '') or ''
+    model.insecure_tls = getattr(request, 'insecure_tls', False)
 
     # 1b. Restore the user's real bodies (the LLM only saw redacted ones).
     model = _restore_real_bodies(model, request)

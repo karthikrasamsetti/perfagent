@@ -32,6 +32,8 @@ class PlanRequest(BaseModel):
     max_users: int = Field(default=100, gt=0)
     duration_seconds: int = Field(default=300, gt=0)
     profile_type: LoadProfileType = LoadProfileType.RAMP
+    environment: str = ""
+    insecure_tls: bool = False
 
     @field_validator("target_base_url")
     @classmethod

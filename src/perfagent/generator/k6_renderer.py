@@ -131,6 +131,14 @@ def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEAD
     all_checks = base_check + (", " + extra if extra else "")
     lines.append(f"      const ok = check(res, {{ {all_checks} }});")
     lines.append("      errorRate.add(res.status >= 400 || !ok);")
+    # Console logging on failure — so live logs explain WHY a request failed
+    # (which step, status, and a short body preview). Mirrors how engineers log.
+    sname = json.dumps(step.name)
+    lines.append(
+        "      if (res.status >= 400 || !ok) {\n"
+        f"        console.error(`[FAIL][VU ${{__VU}}] {step.name} — status ${{res.status}}` + "
+        "(res.body ? ` — body: ${String(res.body).replace(/\\s+/g,' ').slice(0,180)}` : ''));\n"
+        "      }")
     if capture:
         lines.append(capture)
     lines.append("    }")
@@ -204,4 +212,5 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
         data_loader=k6_data_loader(model) if data_on else "",
         header_decls=header_decls,
         scenario_funcs="\n\n".join(scenario_funcs),
+        insecure_tls=getattr(model, "insecure_tls", False),
     )

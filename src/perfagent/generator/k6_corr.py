@@ -164,6 +164,12 @@ def assertion_checks(step) -> str:
         elif kind == "body_contains":
             label = f"body contains {val}"
             parts.append(f"{_json.dumps(label)}: (r) => r.body && r.body.includes({_json.dumps(val)})")
+        elif kind == "not_contains":
+            label = f"body does NOT contain {val}"
+            parts.append(f"{_json.dumps(label)}: (r) => !(r.body && r.body.includes({_json.dumps(val)}))")
+        elif kind == "response_time":
+            label = f"response under {val}ms"
+            parts.append(f"{_json.dumps(label)}: (r) => r.timings.duration < {_num(val)}")
     return ", ".join(parts)
 
 

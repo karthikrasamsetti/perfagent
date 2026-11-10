@@ -314,6 +314,7 @@
       <div class="grid3">
         <div class="field"><label>Max users</label><input id="maxUsers" type="number" value="50" /></div>
         <div class="field"><label>Duration (seconds)</label><input id="duration" type="number" value="60" /></div>
+        <div class="field"><label>Environment <span class="muted" style="font-weight:400">(optional)</span></label><input id="environment" placeholder="dev / staging / prod" /></div>
         <div class="field"><label>Load tool</label><select id="tool"></select></div>
       </div>
       <div class="field">
@@ -349,7 +350,8 @@
       </div>
 
       <div class="field" style="margin-top:4px">
-        <div class="lblrow"><label>Custom headers (optional)</label><i class="infohint" data-tip="Headers added to every request, e.g. Authorization: Bearer TOKEN or an API key. Values can reference a captured token as ${token}.">i</i></div>
+        <div style="margin:6px 0 10px"><label style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:13px"><input type="checkbox" id="insecureTls" style="width:auto"/> Skip TLS certificate verification<i class="infohint" data-tip="For test or dev hosts whose HTTPS certificate does not match the hostname. Never use against production.">i</i></label></div>
+      <div class="lblrow"><label>Custom headers (optional)</label><i class="infohint" data-tip="Headers added to every request, e.g. Authorization: Bearer TOKEN or an API key. Values can reference a captured token as ${token}.">i</i></div>
         <div id="headersList"></div>
         <button class="btn ghost sm" onclick="addHeader()">+ Add header</button>
       </div>
@@ -453,10 +455,14 @@
         <h2 style="margin:0">Generated script</h2>
         <span class="pill ghost" id="scriptPill" style="display:none"></span>
       </div>
-      <p class="hint" id="scriptMeta">Deterministic — same plan always produces the same script.</p>
+      <p class="hint" id="scriptMeta">Deterministic — same plan always produces the same script. You can edit it below to add custom logging or debugging.</p>
       <pre id="scriptOut">The generated script appears here.</pre>
+      <textarea id="scriptEdit" style="display:none;min-height:360px;width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5"></textarea>
+      <div class="note info" id="editNote" style="display:none;margin-top:8px">✏️ Editing mode — your changes (e.g. extra console.log for debugging) will be used when you validate or run. Click "Regenerate" to discard edits and restore the generated script.</div>
       <div class="btnrow">
         <button class="btn ghost sm" onclick="goStep(2)">← Back to plan</button>
+        <button class="btn ghost sm" id="editBtn" onclick="toggleEditScript()">✏️ Edit script</button>
+        <button class="btn ghost sm" id="regenBtn" onclick="regenScript()" style="display:none">↻ Regenerate</button>
         <button class="btn ghost sm" id="dlBtn" onclick="download()" disabled>⬇ Download</button>
         <div class="spacer"></div>
         <button class="btn ghost" id="validateBtn" onclick="doValidate()" disabled>✓ Validate script</button>
@@ -489,6 +495,11 @@
         <div class="tile"><div class="v" id="mP99">0 ms</div><div class="l">p99 latency</div></div>
       </div>
       <table id="epTable"><thead><tr><th>Endpoint</th><th>Requests</th><th>Failed</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead><tbody></tbody></table>
+
+      <details style="margin-top:14px" id="logDetails">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--teal-d)">📜 Live run logs <span class="muted" id="logCount"></span></summary>
+        <pre id="runLogs" style="margin-top:8px;background:#16201c;color:#d7e4dd;padding:12px 14px;border-radius:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;max-height:280px;overflow:auto;white-space:pre-wrap"></pre>
+      </details>
     </div>
   </div>
 
@@ -546,6 +557,18 @@
         <div class="rpt-section-h">📈 vs. previous run</div>
         <div id="baseline"></div>
       </div>
+    </div>
+
+    <!-- response checks / assertions -->
+    <div class="card" id="checksCard" style="display:none">
+      <div class="rpt-section-h">✔ Response checks</div>
+      <div id="checksBody" style="margin-top:8px"></div>
+    </div>
+
+    <!-- run logs -->
+    <div class="card" id="reportLogsCard" style="display:none">
+      <div class="rpt-section-h">📜 Run logs <button class="btn ghost sm" style="margin-left:8px" onclick="downloadRunLogs()">⬇ Download</button></div>
+      <pre id="reportLogs" style="margin-top:8px;background:#16201c;color:#d7e4dd;padding:12px 14px;border-radius:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;max-height:300px;overflow:auto;white-space:pre-wrap"></pre>
     </div>
 
     <!-- observations + recommendations -->
@@ -834,6 +857,8 @@ async function doPlan(){
       max_users:parseInt(document.getElementById('maxUsers').value),
       duration_seconds:parseInt(document.getElementById('duration').value),
       profile_type:document.getElementById('profileType').value,
+      environment:(document.getElementById('environment')||{}).value||'',
+      insecure_tls:(document.getElementById('insecureTls')||{}).checked||false,
       endpoints:eps};
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
@@ -883,6 +908,60 @@ function showUsage(u){
   } else { pill.style.display='none'; }
 }
 
+
+
+/* ---------- suggest checks from a response (Option B) ---------- */
+let _suggestTarget=null; let _suggested=[];
+function openSuggestChecks(si,sti){
+  _suggestTarget={si,sti};
+  document.getElementById('suggestSample').value='';
+  document.getElementById('suggestNote').style.display='none';
+  document.getElementById('suggestResults').style.display='none';
+  document.getElementById('applySuggestBtn').style.display='none';
+  document.getElementById('suggestModal').style.display='flex';
+}
+function closeSuggestChecks(){ document.getElementById('suggestModal').style.display='none'; _suggestTarget=null; _suggested=[]; }
+async function runSuggestChecks(){
+  const sample=document.getElementById('suggestSample').value.trim();
+  const n=document.getElementById('suggestNote');
+  if(!sample){ n.style.display='flex'; n.className='note err'; n.textContent='Paste a response first.'; return; }
+  n.style.display='flex'; n.className='note info'; n.textContent='AI is analyzing the response and suggesting checks...';
+  document.getElementById('suggestBtn').disabled=true;
+  try{
+    const r=await fetch('/api/suggest-checks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sample_response:sample})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'failed');
+    _suggested=j.checks||[];
+    if(!_suggested.length){ n.className='note warn'; n.textContent='No checks suggested — try a fuller response.'; return; }
+    n.style.display='none';
+    const res=document.getElementById('suggestResults'); res.style.display='block';
+    res.innerHTML='<div class="mini">Suggested checks — untick any you don\'t want</div>'+
+      _suggested.map((c,i)=>{
+        const label=checkLabel(c);
+        return `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 8px;background:#f7faf8;border-radius:8px;margin-bottom:4px;cursor:pointer">`+
+          `<input type="checkbox" checked data-ci="${i}" style="margin-top:3px"/>`+
+          `<div><div style="font-size:12.5px"><b>${esc(label)}</b></div>`+
+          (c.reason?`<div class="muted" style="font-size:11px">${esc(c.reason)}</div>`:'')+`</div></label>`;
+      }).join('');
+    document.getElementById('applySuggestBtn').style.display='inline-flex';
+  }catch(e){ n.className='note err'; n.textContent='Error: '+e.message; }
+  finally{ document.getElementById('suggestBtn').disabled=false; }
+}
+function checkLabel(c){
+  if(c.kind==='body_contains') return 'Body contains "'+c.value+'"';
+  if(c.kind==='not_contains')  return 'Body does NOT contain "'+c.value+'"';
+  if(c.kind==='status')        return 'Status is '+c.value;
+  if(c.kind==='response_time') return 'Response under '+c.value+'ms';
+  if(c.kind==='json_path')     return 'Field '+c.path+' '+c.op+' '+c.value;
+  return c.kind;
+}
+function applySuggestedChecks(){
+  if(!_suggestTarget) return;
+  const picks=[...document.querySelectorAll('#suggestResults input[type=checkbox]:checked')].map(cb=>_suggested[+cb.dataset.ci]);
+  const st=planModel.scenarios[_suggestTarget.si].steps[_suggestTarget.sti];
+  if(!st.assertions) st.assertions=[];
+  picks.forEach(c=>st.assertions.push({kind:c.kind,op:c.op||'eq',path:c.path||'',value:c.value||''}));
+  closeSuggestChecks(); renderPlanForm();
+}
 
 /* ---------- SLA / threshold profiles ---------- */
 async function loadSlaProfiles(){
@@ -1021,7 +1100,7 @@ function stepRow(si,sti,st){
   asserts.forEach((a,ai)=>{
     ahtml+=assertRowHtml(si,sti,ai,a);
   });
-  ahtml+=`<button class="btn ghost sm" style="padding:4px 10px;margin-top:4px" onclick="addAssertion(${si},${sti})">✔ Add assertion (check the response)</button>`;
+  ahtml+=`<button class="btn ghost sm" style="padding:4px 10px;margin-top:4px" onclick="addAssertion(${si},${sti})">✔ Add check</button> `+`<button class="btn ghost sm" style="padding:4px 10px;margin-top:4px" onclick="openSuggestChecks(${si},${sti})">✨ Suggest checks from a response</button>`;
   aline.innerHTML=ahtml;
   el.appendChild(aline);
   // GraphQL line
@@ -1039,17 +1118,24 @@ function stepRow(si,sti,st){
 function setGql(si,sti,v){ planModel.scenarios[si].steps[sti].graphql_query=v; }
 function addGql(si,sti){ const st=planModel.scenarios[si].steps[sti]; st.graphql_query='query {\n  \n}'; if(st.method==='GET'){st.method='POST';} renderPlanForm(); }
 function removeGql(si,sti){ planModel.scenarios[si].steps[sti].graphql_query=''; renderPlanForm(); }
+const CHECK_TYPES=[
+  {k:'body_contains', label:'Response body contains', vph:'text e.g. <Rate>'},
+  {k:'not_contains',  label:'Response body does NOT contain', vph:'text e.g. <Error>'},
+  {k:'status',        label:'Status code is', vph:'e.g. 200'},
+  {k:'json_path',     label:'JSON field compares', vph:'expected value', path:true},
+  {k:'response_time', label:'Response time under (ms)', vph:'e.g. 2000'},
+];
 function assertRowHtml(si,sti,ai,a){
-  const kinds=['status','json_path','body_contains'];
-  const ops=['eq','ne','contains','gt','lt'];
-  const kindOpts=kinds.map(k=>`<option ${k===a.kind?'selected':''}>${k}</option>`).join('');
+  const typeOpts=CHECK_TYPES.map(t=>`<option value="${t.k}" ${t.k===a.kind?'selected':''}>${t.label}</option>`).join('');
+  const ct=CHECK_TYPES.find(t=>t.k===a.kind)||CHECK_TYPES[0];
+  const ops=['eq','ne','gt','lt','contains'];
   const opOpts=ops.map(o=>`<option ${o===a.op?'selected':''}>${o}</option>`).join('');
-  const showPath = a.kind==='json_path';
-  return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;flex-wrap:wrap">`+
-    `✔ <select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'kind',this.value);renderPlanForm()">${kindOpts}</select>`+
-    (showPath?`<input style="width:120px;padding:4px 7px" value="${esc(a.path||'')}" placeholder="json path" oninput="setAssert(${si},${sti},${ai},'path',this.value)"/>`:'')+
-    `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'op',this.value)">${opOpts}</select>`+
-    `<input style="width:110px;padding:4px 7px" value="${esc(a.value||'')}" placeholder="expected" oninput="setAssert(${si},${sti},${ai},'value',this.value)"/>`+
+  return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;flex-wrap:wrap;background:#f7faf8;padding:6px 8px;border-radius:8px">`+
+    `<span style="color:var(--teal-d)">✔</span>`+
+    `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'kind',this.value);renderPlanForm()">${typeOpts}</select>`+
+    (ct.path?`<input style="width:100px;padding:4px 7px" value="${esc(a.path||'')}" placeholder="field" oninput="setAssert(${si},${sti},${ai},'path',this.value)"/>`+
+      `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'op',this.value)">${opOpts}</select>`:'')+
+    `<input style="width:130px;padding:4px 7px" value="${esc(a.value||'')}" placeholder="${ct.vph}" oninput="setAssert(${si},${sti},${ai},'value',this.value)"/>`+
     `<button class="iconbtn" style="padding:2px 7px" onclick="removeAssertion(${si},${sti},${ai})">×</button></div>`;
 }
 function setAssert(si,sti,ai,key,val){
@@ -1159,8 +1245,53 @@ async function doGenerate(){
 function download(){ if(currentScriptId) location=`/api/scripts/${currentScriptId}/download`; }
 
 /* ---------- run ---------- */
+
+/* ---------- editable script ---------- */
+let _scriptEdited=false;
+function toggleEditScript(){
+  const pre=document.getElementById('scriptOut'); const ta=document.getElementById('scriptEdit');
+  const editing = ta.style.display==='none';
+  if(editing){
+    ta.value=pre.textContent; ta.style.display='block'; pre.style.display='none';
+    document.getElementById('editNote').style.display='block';
+    document.getElementById('editBtn').textContent='✓ Done editing';
+    document.getElementById('regenBtn').style.display='inline-flex';
+  } else {
+    pre.textContent=ta.value; ta.style.display='none'; pre.style.display='block';
+    document.getElementById('editNote').style.display='none';
+    document.getElementById('editBtn').textContent='✏️ Edit script';
+    _scriptEdited=true;
+  }
+}
+async function regenScript(){
+  // re-generate from the plan, discarding edits
+  document.getElementById('scriptEdit').style.display='none';
+  document.getElementById('scriptOut').style.display='block';
+  document.getElementById('editNote').style.display='none';
+  document.getElementById('editBtn').textContent='✏️ Edit script';
+  document.getElementById('regenBtn').style.display='none';
+  _scriptEdited=false;
+  await doGenerate();   // existing generate flow
+}
+function currentScriptText(){
+  const ta=document.getElementById('scriptEdit');
+  return (ta.style.display!=='none') ? ta.value : document.getElementById('scriptOut').textContent;
+}
+// If the script was edited, upload it as an existing script and return the new id.
+async function ensureScriptId(){
+  if(!_scriptEdited) return currentScriptId;
+  const content=currentScriptText();
+  const target=(planModel&&planModel.target_base_url)||document.getElementById('target').value||'';
+  const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({content, target_base_url:target, tool:'k6'})});
+  const j=await r.json(); if(!r.ok) throw new Error(j.detail||'could not save edited script');
+  currentScriptId=j.script_id; _scriptEdited=false;
+  return currentScriptId;
+}
+
 async function runScript(){
   if(!currentScriptId) return;
+  try{ await ensureScriptId(); }catch(e){ alert(e.message); return; }
   goStep(4);
   const rs=document.getElementById('runStatus'); rs.className='statusline'; rs.textContent='Starting run…';
   try{ const av=await (await fetch('/api/run/available')).json();
@@ -1188,6 +1319,15 @@ async function pollRun(){
     pushChart(j.elapsed_s??0, s.rps??0, lat.p95_ms??0, s.error_rate??0);
     document.querySelector('#epTable tbody').innerHTML=(s.per_endpoint||[]).map(e=>
       `<tr><td>${esc(e.name)}</td><td>${e.requests}</td><td>${e.failed}</td><td>${e.avg_ms}</td><td>${e.p95_ms}</td></tr>`).join('');
+    // live logs
+    const logs=j.logs||[];
+    if(logs.length){
+      const pre=document.getElementById('runLogs');
+      const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+      pre.textContent=logs.join('\\n');
+      document.getElementById('logCount').textContent='('+logs.length+' lines)';
+      if(atBottom) pre.scrollTop=pre.scrollHeight;   // autoscroll unless user scrolled up
+    }
     if(j.status==='running'){ rs.className='statusline'; rs.textContent='Running against '+j.target+' …'; }
     else{
       clearInterval(pollTimer); pollTimer=null;
@@ -1275,6 +1415,33 @@ function renderReport(j){
     setK('kP99', (lat.p99_ms??0)+' ms');
     setK('kAvg', (lat.avg_ms??0)+' ms');
     drawTsChart(); loadTrend();
+
+    // run logs panel (persisted with the report)
+    window._reportLogs = j.logs || (j.snapshot&&j.snapshot.logs) || [];
+    const lc=document.getElementById('reportLogsCard'); const lp=document.getElementById('reportLogs');
+    if(lc&&lp&&window._reportLogs.length){
+      lc.style.display='block';
+      lp.textContent=window._reportLogs.join('\n');
+    } else if(lc){ lc.style.display='none'; }
+
+
+    // response checks / assertions panel
+    const chk=(j.snapshot||window._lastSnap||{}).checks||[];
+    const cc=document.getElementById('checksCard'); const cb=document.getElementById('checksBody');
+    if(cc&&cb&&chk.length){
+      cc.style.display='block';
+      const failing=chk.filter(c=>c.failed>0).length;
+      const head=failing
+        ? `<div class="note err" style="margin:0 0 8px">${failing} check${failing>1?'s':''} failing — these count as errors and fail the run.</div>`
+        : `<div class="note ok" style="margin:0 0 8px">All response checks passed.</div>`;
+      cb.innerHTML=head+'<table><thead><tr><th>Check</th><th>Passed</th><th>Result</th></tr></thead><tbody>'+
+        chk.map(c=>{
+          const ok=c.failed===0;
+          return `<tr><td>${esc(c.name)}</td><td>${c.passed}/${c.total}</td>`+
+            `<td style="color:${ok?'#0f7a5f':'#b4342b'};font-weight:600">${ok?'✓ pass':'✗ fail'}</td></tr>`;
+        }).join('')+'</tbody></table>';
+    } else if(cc){ cc.style.display='none'; }
+
     document.getElementById('verdictHeadline').textContent=v===true?'PASS — all thresholds met':v===false?'FAIL — a threshold was breached':'INCONCLUSIVE — a threshold could not be evaluated';
     const n=j.narrative;
     document.getElementById('verdictSub').textContent=n.headline||'';
@@ -1325,6 +1492,15 @@ function renderReport(j){
     goStep(5);
   }catch(e){}
 }
+
+function downloadRunLogs(){
+  const logs=window._reportLogs||[];
+  if(!logs.length){ alert('No logs for this run.'); return; }
+  const blob=new Blob([logs.join('\n')],{type:'text/plain'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='run_logs.txt'; a.click(); URL.revokeObjectURL(a.href);
+}
+
 function downloadReport(){ if(currentRunId) location=`/api/runs/${currentRunId}/report/download`; }
 
 
@@ -1522,6 +1698,7 @@ async function doValidate(){
   const el=document.getElementById('validateResult'); el.style.display='flex'; el.className='note info';
   el.textContent='Validating: running the script once (1 user, 1 iteration)…';
   try{
+    await ensureScriptId();
     const r=await fetch(`/api/scripts/${currentScriptId}/validate`,{method:'POST'});
     const j=await r.json();
     if(j.ok){
@@ -1618,6 +1795,32 @@ goStep(1);
     <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end">
       <button class="btn ghost" onclick="closeBodyEditor()">Cancel</button>
       <button class="btn" onclick="saveBodyEditor()">Save body</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- SUGGEST CHECKS MODAL -->
+<div id="suggestModal" style="display:none;position:fixed;inset:0;background:rgba(20,30,26,.45);z-index:2000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;width:min(640px,92vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.25)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+      <b style="font-size:15px;color:var(--teal-d)">✨ Suggest checks from a response</b>
+      <div style="flex:1"></div>
+      <button class="iconbtn" onclick="closeSuggestChecks()" style="font-size:18px">×</button>
+    </div>
+    <div style="padding:16px 20px;overflow:auto">
+      <div class="muted" style="margin-bottom:8px">Paste a <b>real response</b> you got from this endpoint (run it in Postman/curl first). The AI will suggest validation checks — which elements should be present, which errors to guard against, which numbers should be positive. You review and keep the ones you want.</div>
+      <div class="note info" style="margin:0 0 8px">🛡 The response is redacted (secrets/PII removed) before the AI sees it — only the structure is sent.</div>
+      <textarea id="suggestSample" style="min-height:160px;width:100%;font-family:ui-monospace,Menlo,monospace;font-size:11.5px" placeholder="Paste the API response here (XML or JSON)..."></textarea>
+      <div class="note" id="suggestNote" style="display:none"></div>
+      <div id="suggestResults" style="display:none;margin-top:10px"></div>
+      <div class="btnrow" style="margin-top:12px">
+        <button class="btn" onclick="runSuggestChecks()" id="suggestBtn">✨ Suggest checks</button>
+      </div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn ghost" onclick="closeSuggestChecks()">Cancel</button>
+      <button class="btn" onclick="applySuggestedChecks()" id="applySuggestBtn" style="display:none">Add selected checks</button>
     </div>
   </div>
 </div>

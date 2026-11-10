@@ -69,7 +69,7 @@ class Assertion(BaseModel):
     op: eq | ne | contains | gt | lt  (status/json_path support eq/ne/gt/lt; body uses contains)
     """
 
-    kind: str = Field(..., description="status | json_path | body_contains")
+    kind: str = Field(..., description="status | json_path | body_contains | not_contains | response_time")
     op: str = Field(default="eq", description="eq | ne | contains | gt | lt")
     path: str = Field(default="", description="For json_path: dotted field, e.g. 'data.id'.")
     value: str = Field(default="", description="Expected value (as text).")
@@ -77,8 +77,9 @@ class Assertion(BaseModel):
     @field_validator("kind")
     @classmethod
     def known_kind(cls, v: str) -> str:
-        if v not in {"status", "json_path", "body_contains"}:
-            raise ValueError("kind must be status, json_path, or body_contains")
+        if v not in {"status", "json_path", "body_contains", "not_contains", "response_time"}:
+            raise ValueError("kind must be status, json_path, body_contains, "
+                             "not_contains, or response_time")
         return v
 
     @field_validator("op")
@@ -192,6 +193,8 @@ class LoadModel(BaseModel):
     thresholds: list[Threshold] = Field(default_factory=list)
     data_file: DataFile | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+    environment: str = Field(default="", description="Environment label (dev/staging/prod).")
+    insecure_tls: bool = Field(default=False, description="Skip TLS verification (test hosts only).")
 
     @field_validator("target_base_url")
     @classmethod

@@ -43,6 +43,7 @@ from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, SlaProfi
 from perfagent.evaluation import evaluate_plan, evaluate_report
 from perfagent.generator import generate_script, supported_tools
 from perfagent.chat_intent import ChatIntent, CHAT_SYSTEM_PROMPT, build_chat_user_prompt
+from perfagent.check_suggest import SuggestedChecks, CHECK_SUGGEST_SYSTEM_PROMPT, build_check_suggest_prompt
 from perfagent.dynamize import DynamizedBody, DYNAMIZE_SYSTEM_PROMPT, build_dynamize_user_prompt
 from perfagent.planner import PlanRequest, draft_plan
 from perfagent.planner.spec import EndpointSpec
@@ -494,6 +495,38 @@ def dynamize(req: DynamizeBody) -> dict:
     }
 
 
+
+
+class SuggestChecksBody(BaseModel):
+    sample_response: str
+
+
+@app.post("/api/suggest-checks")
+def suggest_checks(body: SuggestChecksBody) -> dict:
+    """Propose validation assertions from a pasted sample response (Option B).
+
+    The response goes through the guarded provider (redacted) before the AI sees it.
+    """
+    if not body.sample_response.strip():
+        raise HTTPException(status_code=400, detail="paste a sample response first")
+    try:
+        provider = build_provider()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    tracing.set_step("suggest_checks")
+    result: SuggestedChecks = provider.structured(
+        response_model=SuggestedChecks,
+        system=CHECK_SUGGEST_SYSTEM_PROMPT,
+        user=build_check_suggest_prompt(body.sample_response),
+    )
+    return {
+        "checks": [c.model_dump() for c in result.checks],
+        "notes": result.notes,
+        "guardrail": _summarize_redactions(getattr(provider, "last_redaction_counts", {}) or {}),
+        "usage": _usage_summary(provider),
+    }
+
 @app.post("/api/plan/{plan_id}/generate")
 def generate(plan_id: str, body: GenerateBody) -> dict:
     """Render a plan to a script. Uses the edited LoadModel if provided, else stored.
@@ -802,6 +835,7 @@ def run_status(run_id: str) -> dict:
         "message": run.message,
         "elapsed_s": round((run.ended_at or time.time()) - run.started_at, 1),
         "snapshot": run.snapshot,
+        "logs": list(getattr(run, "logs", []) or [])[-200:],   # recent k6 output lines
     }
 
 
@@ -928,6 +962,7 @@ def run_report(run_id: str) -> dict:
                 "diagnostics": diag.to_dict(),
                 "baseline": baseline_summary,
                 "snapshot": run.snapshot,
+                "logs": list(getattr(run, "logs", []) or []),   # persisted run logs
             }
             goal = ""
             prow = s.get(PlanRow, plan_id)
@@ -950,7 +985,32 @@ def run_report(run_id: str) -> dict:
         "evaluation": report_eval,
         "diagnostics": diag.to_dict(),
         "baseline": baseline_summary,
+        "logs": list(getattr(run, "logs", []) or [])[-500:],
     }
+
+
+@app.get("/api/runs/{run_id}/logs/download")
+def run_logs_download(run_id: str):
+    """Download the run's logs as a .txt file (live run, or from the saved report)."""
+    from fastapi.responses import PlainTextResponse
+    run = get_run(run_id)
+    lines: list[str] = []
+    if run is not None and getattr(run, "logs", None):
+        lines = list(run.logs)
+    else:
+        # fall back to the saved report's logs
+        with get_session() as s:
+            r = s.get(RunResultRow, run_id)
+            if r is not None and r.report_json:
+                try:
+                    lines = json.loads(r.report_json).get("logs", []) or []
+                except Exception:  # noqa: BLE001
+                    lines = []
+    if not lines:
+        raise HTTPException(status_code=404, detail="no logs for this run")
+    body = "\n".join(lines)
+    return PlainTextResponse(
+        body, headers={"Content-Disposition": f'attachment; filename="run_{run_id}_logs.txt"'})
 
 
 @app.get("/api/runs/{run_id}/report/download", response_class=HTMLResponse)
