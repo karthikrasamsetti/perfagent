@@ -2004,7 +2004,8 @@ async function loadTraces(){
   try{
     const j=await (await fetch('/api/traces?limit=100')).json();
     const sc={plan:'#534ab7',chat:'#2563a8',dynamize:'#9a6412',narrate:'#0f7a5f'};
-    document.querySelector('#tracesTable tbody').innerHTML=(j.traces||[]).map(t=>{
+    const realTraces=(j.traces||[]).filter(t=>(t.total_tokens>0)||(t.model&&t.model.trim())||t.status==='error');
+    document.querySelector('#tracesTable tbody').innerHTML=realTraces.map(t=>{
       const stCol=t.status==='error'?'#b4342b':'#0f7a5f';
       const stepCol=sc[t.step]||'#6b7280';
       return `<tr><td>${new Date(t.created_at).toLocaleString()}</td>`+
@@ -2032,7 +2033,7 @@ async function loadAudit(){
              `<td><b style="color:${c}">${esc(e.action)}</b></td>`+
              `<td>${esc(e.target||'')}</td><td>${esc(e.summary||'')}</td>`+
              `<td style="color:var(--muted);white-space:nowrap">${tok}</td></tr>`;
-    }).join('')||'<tr><td colspan="4" class="muted">No activity yet.</td></tr>';
+    }).join('')||'<tr><td colspan="5" class="muted">No activity yet.</td></tr>';
   }catch(e){}
 }
 
