@@ -187,12 +187,12 @@ uv run python -m perfagent.sample_target.app
 |---|---|---|---|
 | **Python 3.11+** | The service is Python | `python --version` | <https://www.python.org/downloads/> |
 | **uv** *(or pip)* | Dependency manager | `uv --version` | <https://docs.astral.sh/uv/getting-started/installation/> |
-| **k6** | Runs & validates the load tests | `k6 version` | <https://grafana.com/docs/k6/latest/set-up/install-k6/> |
-| **Git** | Clone / push | `git --version` | <https://git-scm.com/downloads> |
+| **k6** *(optional)* | Runs & validates the load tests — **downloaded automatically** on first run if missing | `k6 version` | Not needed; see *k6 is installed automatically* below |
+| **Git 2.31+** | Clone / push, and Save to Git / Import from Git | `git --version` | <https://git-scm.com/downloads> |
 | **LLM API key** | AI planning + narration | — | [OpenAI](https://platform.openai.com/) · [Anthropic](https://console.anthropic.com/) |
 
 > [!NOTE]
-> - You **don't** need k6 to plan/generate — only to *run* or *validate*.
+> - You **don't** need to install k6. On the first run or validation PerfAgent downloads the pinned, checksum-verified k6 into `~/.perfagent/bin/` (see below).
 > - You **don't** need an API key to run the test suite — the tests mock the LLM.
 > - Set a **spend cap** on your provider account before using the AI features.
 
@@ -253,6 +253,111 @@ Then: **Describe** (chat or form) → **Draft plan** → review/edit → **Appro
 **Generate** → **Validate / Pre-flight** → **Run & monitor** → **Report**.
 
 ---
+
+### k6 is installed automatically
+
+PerfAgent looks for k6 in this order and uses the first one it finds:
+
+1. `PERFAGENT_K6_PATH` — an explicit path to a k6 binary.
+2. A bundled copy at `src/perfagent/runner/bin/<os>-<arch>/k6` (`k6.exe` on Windows), e.g. `windows-amd64`, `linux-amd64`, `macos-arm64`.
+3. The cache at `~/.perfagent/bin/k6-v1.3.0/` (change the base folder with `PERFAGENT_HOME`).
+4. A `k6` already on `PATH`.
+5. Otherwise it downloads the official k6 v1.3.0 for this OS from GitHub, verifies its SHA-256
+   against a hash pinned in `runner/k6_binary.py`, and stores it in the cache (step 3).
+
+The first run shows "Setting up the load engine (first run only)…" while this happens. For machines
+without internet access, use option 1 or 2. In Docker, install k6 in the image and set
+`PERFAGENT_K6_PATH` so nothing is downloaded at runtime.
+
+## Save tests to Git and import them back
+
+### Save to Git (Step 3)
+
+After generating a k6 script, the **Save to Git for CI/CD** card exports it into a named
+framework and pushes it. Enter a framework name, a test name, the repository URL, branch
+and an access token with push rights (not needed for SSH URLs). The token is used for that
+push only and is never stored; no user name is needed.
+
+```
+<framework>/
+  tests/<test>/loadtest.js · plan.json · test.json
+  environments/dev.env          BASE_URL (copy for uat.env, staging.env, …)
+  scripts/run-tests.sh · .ps1   run one test or all
+  ci/Jenkinsfile · azure-pipelines.yml · gitlab-ci.yml
+  README.md · perfagent.json
+.github/workflows/perf-<framework>.yml
+```
+
+* Pushing into an existing repository only **adds** files; nothing else is touched.
+  PerfAgent refuses to write into a folder it didn't create, so pick a new framework name.
+* Secret header values are never committed: the script reads `PERF_HEADER_<NAME>` from the
+  environment and stops if one is missing. Add them as CI secrets.
+* Test data is only committed if you tick the box. A final scan aborts the push if any secret
+  value ended up in a file.
+* Thresholds are enforced by k6, so a breach exits with code 99 and fails the pipeline.
+* Exporting again with the same names updates the test in a new commit.
+* **Download framework (.zip)** gives the same files without Git.
+* Uploaded scripts ("Already have a k6 script?") can't be saved to Git yet.
+
+### Import from Git (Step 1)
+
+**Import an existing test from Git** lists what's on a branch:
+
+* **Tests PerfAgent saved** — *Import* loads one back as an editable plan (Step 2), asking
+  again for its secrets; committed test data comes along. Tests whose `loadtest.js` was
+  edited by hand are flagged, because PerfAgent rebuilds scripts from the plan.
+* **Other load-test scripts** (k6, Locust, JMeter) — *View* shows them; a k6 script can be
+  loaded with *Use this script*, exactly like "Already have a k6 script?".
+
+Every push and import is recorded in the activity log. The server needs `git` 2.31+.
+Admins can set `GIT_ALLOWED_HOSTS`, `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL` in `.env`.
+
+API: `POST /api/scripts/{id}/export/git`, `POST /api/scripts/{id}/export/zip`,
+`GET /api/export/settings`, `POST /api/git/scan`, `POST /api/git/import`, `POST /api/git/script`.
+
+## Run in Jenkins (Step 3)
+
+The **Run in Jenkins** card triggers the Jenkins pipeline for a test you saved to Git and
+follows it in PerfAgent: queued → running → finished, with the console log streaming in, a
+link to the build, and — when it finishes — the k6 results the Jenkinsfile archived
+(requests, req/sec, error rate, avg / p95 / max, each threshold, and a PASS / FAIL verdict).
+**Stop** aborts the build.
+
+Enter the Jenkins URL, your Jenkins user name, an **API token** (Jenkins → your name →
+Security → API Token), the job name (`folder/job` for folders), the test (or `all`) and the
+environment. The token is sent with each call and never stored.
+
+**Set up Jenkins job** creates the Pipeline job — or updates it if it exists — pointing at
+`<framework>/ci/Jenkinsfile` in your repository, with the `TEST` and `PERF_ENV` parameters
+declared, so no manual first build is needed (needs the *Job/Create* permission; give a Git
+credentials ID for private repositories). If you create the job by hand instead, run it once
+in Jenkins so it learns its parameters.
+
+Jenkins side: Pipeline + Git plugins; a Linux/macOS agent with `curl`, `sha256sum` and `tar`, or a
+Windows agent with PowerShell (the Jenkinsfile picks the right one and downloads k6 once per
+workspace, verifying its checksum); and a
+*Secret text* credential for each secret the test needs (e.g. `PERF_HEADER_AUTHORIZATION`).
+PerfAgent must be able to reach Jenkins, and Jenkins must reach Git and the application.
+Admins can restrict which Jenkins servers may be called with `JENKINS_ALLOWED_HOSTS`.
+
+API: `POST /api/jenkins/trigger`, `/api/jenkins/status`, `/api/jenkins/stop`, `/api/jenkins/setup-job`.
+
+## Saved Git and Jenkins details
+
+PerfAgent remembers the **non-secret** details you used, per plan, so you don't retype them:
+the Git repository, branch, framework, test and pipelines; the Jenkins URL, user name, job,
+test and environment, and the job set-up details (repository, branch, framework, Git
+credentials ID). They are saved only after something **succeeds** — a push, an import, a
+Jenkins run or job set-up — and filled in when you open the plan again from *Saved plans*.
+A brand-new plan starts with the last-used repository, branch, Jenkins URL, user name,
+Git credentials ID and environment.
+
+**Never saved:** Git tokens, Jenkins API tokens and test secrets — you enter those each time.
+URLs that contain credentials are refused. *Forget saved details* on each card removes them
+(for that plan and from the last-used defaults). They live in the `integration_settings`
+table, which is added automatically to existing databases.
+
+API: `GET /api/integrations?plan_id=…`, `DELETE /api/integrations?plan_id=…&section=git|jenkins|all`.
 
 ## Running the tests
 
@@ -395,7 +500,7 @@ flowchart TD
 | `generator/k6_renderer.py` · `k6_data.py` · `k6_corr.py` · `generators.py` · `templates/` | LoadModel → k6 script (data, headers, correlation, dynamic generators). |
 | `generator/locust_renderer.py` · `jmeter_renderer.py` · `gatling_renderer.py` | Locust, JMeter (.jmx), and Gatling (.scala) renderers. |
 | `preflight.py` | One request per endpoint → status report (no load). |
-| `runner/k6_runner.py` · `runner/validator.py` | Launch & stream k6; validate a script via `k6 inspect`. |
+| `runner/k6_runner.py` · `runner/validator.py` · `runner/k6_binary.py` | Launch & stream k6; validate a script via `k6 inspect`; find or auto-download k6. |
 | `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS). |
 | `analyzer/verdict.py` · `diagnostics.py` · `baseline.py` · `narrator.py` · `report.py` | Verdict (fail-closed), diagnosis, regression compare, AI narrative, HTML report. |
 | `logging_config.py` · `audit.py` · `tracing.py` | Structured logging, audit trail, and per-AI-call traces. |
@@ -428,7 +533,14 @@ correlation (JSON/header/cookie/regex/array), assertions, chat intent, dynamize,
 
 | Symptom | Fix |
 |---|---|
-| "k6 is not installed or not on PATH" | Install k6, reopen the terminal, check `k6 version`. |
+| Save to Git: "folder already exists and was not created by PerfAgent" | Choose a new framework name; PerfAgent never writes into folders it didn't create. |
+| Save to Git / Import: "git ... failed: Authentication failed" | Check the token has access to that repository (push rights for Save to Git). |
+| Jenkins log: `Cannot run program "sh"` | The job ran an old Jenkinsfile on a Windows agent. Push the test again with **Save to Git** (the new Jenkinsfile supports Windows), then run again. |
+| Run in Jenkins: "doesn't accept parameters yet" | Run the job once in Jenkins, or use **Set up Jenkins job**. |
+| Run in Jenkins: "rejected the user name or API token" | Use a Jenkins **API token** (not your password) for that user. |
+| Jenkins build fails with "Could not find credentials entry with ID 'PERF_HEADER_…'" | Add that Secret text credential in Jenkins. |
+| "could not download k6" | The machine can't reach github.com. Set `HTTPS_PROXY`, or point `PERFAGENT_K6_PATH` at a k6 binary. |
+| "no prebuilt k6 for this platform" | Unusual OS/CPU — install k6 manually and set `PERFAGENT_K6_PATH`. |
 | "OPENAI_API_KEY is not set" | Fill the key in `.env` and restart the app. |
 | Run shows 0 requests / "Run error" | The target isn't running, or the URL is wrong. Start the target and retry. |
 | Chat asks clarifying questions | Expected — add the answers to your description and draft again, or use Manual mode. |

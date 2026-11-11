@@ -10,7 +10,8 @@ scripts use named `scenarios` + `exec` functions (no default export), so that
 approach falsely reports "function 'default' not found". `k6 inspect` has no such
 problem — it validates the script as written.
 
-Deterministic, no LLM. Needs k6 on PATH (same as a real run).
+Deterministic, no LLM. k6 is located or auto-provisioned by k6_binary (same as a
+real run), so the customer doesn't install it.
 """
 
 from __future__ import annotations
@@ -21,9 +22,17 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from perfagent.runner.k6_binary import K6Unavailable, ensure_k6, k6_ready_or_provisionable
+
 
 def k6_available() -> bool:
-    return shutil.which("k6") is not None
+    """True if k6 is present, or can be fetched automatically on first use."""
+    return k6_ready_or_provisionable()
+
+
+def _k6_path() -> str:
+    """Path to k6, downloading the pinned release on first use (raises K6Unavailable)."""
+    return ensure_k6()
 
 
 def validate_script(content: str, data_filename: str = "", data_content: str = "",
@@ -40,9 +49,14 @@ def validate_script(content: str, data_filename: str = "", data_content: str = "
     if not k6_available():
         return {
             "ok": False, "status": "k6_missing",
-            "message": "k6 is not installed or not on PATH — cannot validate.",
+            "message": "The k6 load engine is not available on this platform — cannot validate. "
+                       "Set PERFAGENT_K6_PATH to a k6 binary.",
             "detail": "",
         }
+    try:
+        k6_path = _k6_path()
+    except K6Unavailable as e:
+        return {"ok": False, "status": "k6_missing", "message": f"Cannot validate: {e}", "detail": ""}
 
     tmpdir = tempfile.mkdtemp(prefix="perfagent_validate_")
     try:
@@ -52,7 +66,7 @@ def validate_script(content: str, data_filename: str = "", data_content: str = "
             (Path(tmpdir) / data_filename).write_text(data_content, encoding="utf-8")
 
         # `k6 inspect` parses the script + options and exits non-zero on problems.
-        cmd = ["k6", "inspect", str(script_path)]
+        cmd = [k6_path, "inspect", str(script_path)]
         try:
             proc = subprocess.run(
                 cmd, cwd=tmpdir, capture_output=True, text=True, timeout=timeout,

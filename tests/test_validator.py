@@ -18,6 +18,7 @@ def test_k6_missing_returns_clean_result():
 def test_valid_script_when_k6_succeeds():
     fake = mock.Mock(returncode=0, stdout='{"scenarios":{"s1":{}}}', stderr="")
     with mock.patch.object(validator, "k6_available", return_value=True), \
+         mock.patch.object(validator, "_k6_path", return_value="k6"), \
          mock.patch.object(validator.subprocess, "run", return_value=fake):
         r = validator.validate_script("export default function(){}")
     assert r["ok"] is True
@@ -27,6 +28,7 @@ def test_valid_script_when_k6_succeeds():
 def test_failed_script_surfaces_error():
     fake = mock.Mock(returncode=255, stdout="", stderr="SyntaxError: unexpected token")
     with mock.patch.object(validator, "k6_available", return_value=True), \
+         mock.patch.object(validator, "_k6_path", return_value="k6"), \
          mock.patch.object(validator.subprocess, "run", return_value=fake):
         r = validator.validate_script("broken(")
     assert r["ok"] is False
@@ -37,8 +39,27 @@ def test_failed_script_surfaces_error():
 def test_timeout_is_handled():
     import subprocess
     with mock.patch.object(validator, "k6_available", return_value=True), \
+         mock.patch.object(validator, "_k6_path", return_value="k6"), \
          mock.patch.object(validator.subprocess, "run",
                            side_effect=subprocess.TimeoutExpired(cmd="k6", timeout=30)):
         r = validator.validate_script("while(true){}")
     assert r["ok"] is False
     assert r["status"] == "timeout"
+
+def test_download_failure_is_reported_as_missing():
+    from perfagent.runner.k6_binary import K6Unavailable
+    with mock.patch.object(validator, "k6_available", return_value=True), \
+         mock.patch.object(validator, "_k6_path", side_effect=K6Unavailable("offline")):
+        r = validator.validate_script("export default function(){}")
+    assert r["ok"] is False
+    assert r["status"] == "k6_missing"
+    assert "offline" in r["message"]
+
+
+def test_uses_resolved_k6_path():
+    fake = mock.Mock(returncode=0, stdout="{}", stderr="")
+    with mock.patch.object(validator, "k6_available", return_value=True), \
+         mock.patch.object(validator, "_k6_path", return_value="/opt/k6/bin/k6"), \
+         mock.patch.object(validator.subprocess, "run", return_value=fake) as run:
+        validator.validate_script("export default function(){}")
+    assert run.call_args.args[0][0] == "/opt/k6/bin/k6"

@@ -74,7 +74,6 @@ class DataFileRow(Base):
         return [c for c in self.columns_csv.split(",") if c]
 
 
-
 class RunResultRow(Base):
     """A finished run's key metrics — stored so later runs can compare against it
     (baseline / regression). One row per completed run of a plan."""
@@ -94,7 +93,6 @@ class RunResultRow(Base):
     avg_ms: Mapped[float] = mapped_column(default=0.0)
     goal: Mapped[str] = mapped_column(Text, default="")        # plan goal, for the history list
     report_json: Mapped[str] = mapped_column(Text, default="")  # full saved report (verdict, diagnosis, narrative...)
-
 
 
 class AuditRow(Base):
@@ -119,7 +117,6 @@ class AuditRow(Base):
     cost_usd: Mapped[float] = mapped_column(default=0.0)  # rough cost estimate
 
 
-
 class SlaProfileRow(Base):
     """A reusable named set of thresholds (an SLA), applicable to any plan."""
 
@@ -129,7 +126,6 @@ class SlaProfileRow(Base):
     created_at: Mapped[datetime] = mapped_column(default=_now)
     name: Mapped[str] = mapped_column(String(120))
     thresholds_json: Mapped[str] = mapped_column(Text, default="[]")
-
 
 
 class TraceRow(Base):
@@ -151,6 +147,24 @@ class TraceRow(Base):
     status: Mapped[str] = mapped_column(String(20), default="ok")  # ok | error
     redactions: Mapped[int] = mapped_column(default=0)
     error: Mapped[str] = mapped_column(Text, default="")
+
+
+class IntegrationSettingsRow(Base):
+    """Saved, NON-secret Git and Jenkins details, so users don't retype them.
+
+    One row per plan (plan_id = the plan's id) plus one row with plan_id "__last__"
+    holding the most recently used values, used as defaults for new plans.
+    Tokens, API keys and test secrets are never stored here (see perfagent.integrations).
+    Its own table, so existing databases just gain it on start-up — no migration.
+    """
+
+    __tablename__ = "integration_settings"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    plan_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+    git_json: Mapped[str] = mapped_column(Text, default="{}")       # repo, branch, framework, ...
+    jenkins_json: Mapped[str] = mapped_column(Text, default="{}")   # url, user name, job, ...
 
 
 _engine = None

@@ -195,6 +195,9 @@
   .existing-chevron{color:var(--muted);font-size:14px;transition:transform .18s}
   .existing-panel.open .existing-chevron{transform:rotate(180deg)}
   .existing-body{padding:0 16px 16px;border-top:1px solid var(--line)}
+  .muted{color:var(--muted)}
+  .chk{display:inline-flex;align-items:center;gap:6px;font-weight:400;margin:0 16px 0 0;color:var(--ink)}
+  .chk input{width:auto;margin:0}
   .existing-body label{margin-top:10px}
   .dropzone{display:flex;align-items:center;gap:10px;border:1.5px dashed var(--teal-ring);border-radius:var(--radius-sm);
             padding:14px 16px;background:var(--teal-l);color:var(--teal-d);cursor:pointer;font-size:13px;transition:.12s}
@@ -277,6 +280,48 @@
 
   <!-- ===== STEP 1: DESCRIBE ===== -->
   <div class="panel show" id="panel1">
+    <div class="card" id="gitImportCard" style="padding:0">
+      <div class="existing-panel" id="gitImportPanel" style="border:0">
+        <div class="existing-head" onclick="toggleGitImport()">
+          <div class="existing-icon">📂</div>
+          <div style="flex:1">
+            <div class="existing-title">Import an existing test from Git</div>
+            <div class="existing-sub">Pull a test that PerfAgent saved to Git back as an editable plan, or pick up another k6 script from the repository.</div>
+          </div>
+          <div class="existing-chevron">▾</div>
+        </div>
+        <div class="existing-body" id="gitImportBody" style="display:none">
+          <div class="grid3" style="margin-top:14px">
+            <div class="field"><label>Repository URL</label><input id="impRepo" placeholder="https://github.com/org/perf-tests.git" autocomplete="off" /></div>
+            <div class="field"><label>Branch</label><input id="impBranch" value="main" autocomplete="off" /></div>
+            <div class="field"><label>Access token</label><input id="impToken" type="password" placeholder="Token with read access" autocomplete="new-password" spellcheck="false" /></div>
+          </div>
+          <p class="hint" style="margin:6px 0 0">The token is used only to read the repository and is never saved. Not needed for public repositories or SSH URLs (git@…).</p>
+          <div class="btnrow" style="margin-top:10px">
+            <button class="btn ghost" id="impBrowseBtn" onclick="gitBrowse()">🔍 Browse repository</button>
+          </div>
+          <div class="statusline" id="impStatus"></div>
+          <div id="impResults"></div>
+          <div id="impScriptView" style="display:none;margin-top:12px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <b id="impScriptTitle"></b><span class="pill ghost" id="impScriptTool"></span>
+              <div class="spacer"></div>
+              <button class="btn ghost sm" onclick="document.getElementById('impScriptView').style.display='none'">Close</button>
+            </div>
+            <pre id="impScriptBody" style="max-height:340px"></pre>
+            <div id="impUseRow" style="display:none">
+              <div class="grid2" style="align-items:end">
+                <div class="field"><label>Target base URL for this script</label><input id="impUseTarget" value="http://127.0.0.1:8000" /></div>
+                <div class="btnrow" style="margin:0 0 14px"><button class="btn" onclick="gitUseScript()">Use this script &rarr;</button></div>
+              </div>
+              <p class="hint" style="margin:0">Loads it like "Already have a k6 script?": you can validate and run it, but it isn't linked to a PerfAgent plan.</p>
+            </div>
+            <p class="hint" id="impViewOnly" style="display:none;margin:0">Shown for reference — only k6 scripts can be run in PerfAgent.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Describe the test</h2>
 
@@ -407,6 +452,7 @@
       </div>
       <p class="hint">The AI drafted this. Adjust scenarios, weights, think-times and thresholds — then approve. Nothing runs load here.</p>
 
+      <div class="note" id="importNote" style="display:none"></div>
       <div class="note" id="guardrailBadge" style="display:none"></div>
       <div class="note" id="planEval" style="display:none"></div>
 
@@ -472,6 +518,85 @@
       <div class="note warn" id="runHint" style="margin-top:10px;display:none"></div>
       <div class="note" id="validateResult" style="display:none"></div>
       <div class="note" id="preflightResult" style="display:none"></div>
+    </div>
+
+    <div class="card" id="gitCard">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">Save to Git for CI/CD</h2>
+        <span class="muted" id="gitSaved" style="font-size:12px;display:none"></span>
+      </div>
+      <p class="hint">Saves this test into a named k6 framework with ready-made pipelines. Secrets (auth headers) are never committed; CI provides them.</p>
+      <div class="grid2">
+        <div class="field"><label>Framework name</label><input id="gitFw" placeholder="e.g. payments-perf" /></div>
+        <div class="field"><label>Test name</label><input id="gitTest" placeholder="e.g. checkout-peak" /></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>Repository URL</label><input id="gitRepo" placeholder="https://github.com/org/perf-tests.git" autocomplete="off" /></div>
+        <div class="field"><label>Branch</label><input id="gitBranch" value="main" autocomplete="off" /></div>
+        <div class="field"><label>Access token</label><input id="gitToken" type="password" placeholder="Token with push access" autocomplete="new-password" spellcheck="false" /></div>
+      </div>
+      <p class="hint" id="gitHint" style="margin:-6px 0 12px">The token is used only for this push and is never saved. Not needed for SSH URLs (git@…). Use a new framework name for a new folder — PerfAgent never writes into folders it didn't create.</p>
+      <div class="field">
+        <label>Pipelines to include</label>
+        <label class="chk"><input type="checkbox" class="gitCi" value="github" checked> GitHub Actions</label>
+        <label class="chk"><input type="checkbox" class="gitCi" value="jenkins" checked> Jenkins</label>
+        <label class="chk"><input type="checkbox" class="gitCi" value="azure" checked> Azure DevOps</label>
+        <label class="chk"><input type="checkbox" class="gitCi" value="gitlab" checked> GitLab</label>
+      </div>
+      <div class="field">
+        <label class="chk"><input type="checkbox" id="gitData"> Also commit the test-data file (only if it holds no real customer data)</label>
+      </div>
+      <div class="btnrow">
+        <button class="btn ghost sm" id="gitZipBtn" onclick="exportZip()" disabled>⬇ Download framework (.zip)</button>
+        <div class="spacer"></div>
+        <button class="btn" id="gitBtn" onclick="exportGit()" disabled>⇪ Push to Git</button>
+      </div>
+      <div class="statusline" id="gitStatus"></div>
+    </div>
+
+    <div class="card" id="jenkinsCard">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="margin:0">Run in Jenkins</h2>
+        <span class="pill ghost" id="jkPill" style="display:none"></span>
+        <a id="jkLink" href="#" target="_blank" rel="noopener" style="display:none;font-size:12.5px">Open build in Jenkins ↗</a>
+        <span class="muted" id="jkSaved" style="font-size:12px;display:none"></span>
+      </div>
+      <p class="hint">Triggers the Jenkins pipeline for a test you saved to Git and follows it here. Jenkins runs the version in Git — push your latest changes first.</p>
+      <div class="grid3">
+        <div class="field"><label>Jenkins URL</label><input id="jkUrl" placeholder="https://jenkins.mycompany.com" autocomplete="off" /></div>
+        <div class="field"><label>Jenkins user name</label><input id="jkUser" autocomplete="off" /></div>
+        <div class="field"><label>API token</label><input id="jkToken" type="password" placeholder="Jenkins → your name → Security → API Token" autocomplete="new-password" spellcheck="false" /></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>Job name</label><input id="jkJob" placeholder="e.g. demo-perf  (folders: perf/demo-perf)" autocomplete="off" /></div>
+        <div class="field"><label>Test</label><input id="jkTest" placeholder="test name, or all" autocomplete="off" /></div>
+        <div class="field"><label>Environment</label><input id="jkEnv" value="dev" autocomplete="off" /></div>
+      </div>
+      <p class="hint" id="jkHint" style="margin:-6px 0 12px">The API token is used only for these calls and is never saved. The job needs Jenkins credentials for the test's secrets (e.g. PERF_HEADER_AUTHORIZATION).</p>
+
+      <div id="jkSetup" style="display:none;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px">
+        <b style="font-size:13px">Set up the Jenkins job</b>
+        <p class="hint" style="margin:4px 0 10px">Creates the Pipeline job (or updates it if it exists) so it builds <code class="k">&lt;framework&gt;/ci/Jenkinsfile</code> from your repository, with the Test and Environment parameters ready — no manual first build. Needs the Job/Create permission.</p>
+        <div class="grid2">
+          <div class="field"><label>Repository URL</label><input id="jkRepo" placeholder="https://github.com/org/perf-tests.git" autocomplete="off" /></div>
+          <div class="field"><label>Branch</label><input id="jkBranch" value="main" autocomplete="off" /></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Framework name</label><input id="jkFw" placeholder="e.g. demo-perf" autocomplete="off" /></div>
+          <div class="field"><label>Git credentials ID in Jenkins (private repositories)</label><input id="jkGitCred" placeholder="optional, e.g. github-pat" autocomplete="off" /></div>
+        </div>
+        <div class="btnrow" style="margin-top:4px"><button class="btn ghost sm" onclick="jenkinsSetup()">Create / update job</button></div>
+      </div>
+
+      <div class="btnrow">
+        <button class="btn ghost sm" onclick="toggleJenkinsSetup()">⚙ Set up Jenkins job</button>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="jkStopBtn" onclick="jenkinsStop()" disabled>■ Stop</button>
+        <button class="btn" id="jkRunBtn" onclick="jenkinsRun()">▶ Run in Jenkins</button>
+      </div>
+      <div class="statusline" id="jkStatus"></div>
+      <div id="jkResults" style="display:none;margin-top:12px"></div>
+      <pre id="jkLog" style="display:none;max-height:260px;margin-top:12px;font-size:11.5px"></pre>
     </div>
   </div>
 
@@ -678,6 +803,8 @@ async function doChatPlan(){
     }
     // got a plan -> load it into the review step, exactly like doPlan()
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
+    document.getElementById('importNote').style.display='none';
+    applyIntegrations(j.plan_id);
     renderPlanForm(); renderRawFromModel();
     showGuardrail(j.guardrail); showPlanEval(j.evaluation); showUsage(j.usage); refreshUsage();
     document.getElementById('planMeta').style.display='inline-flex';
@@ -863,6 +990,8 @@ async function doPlan(){
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
+    document.getElementById('importNote').style.display='none';
+    applyIntegrations(j.plan_id);
     renderPlanForm(); renderRawFromModel();
     showGuardrail(j.guardrail); showPlanEval(j.evaluation); showUsage(j.usage); refreshUsage();
     document.getElementById('planMeta').style.display='inline-flex';
@@ -1236,6 +1365,7 @@ async function doGenerate(){
     document.getElementById('runBtn').disabled=(j.tool!=='k6');
     document.getElementById('preflightBtn').disabled=false;
     document.getElementById('validateBtn').disabled=false;
+    setGitExport(j.tool==='k6', '');
     document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — from plan ${j.plan_id.slice(0,8)}`;
     const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
     if(j.tool!=='k6'){ const h=document.getElementById('runHint'); h.style.display='flex'; h.textContent='Live run is implemented for k6; download and run this '+j.tool+' script yourself.'; }
@@ -1243,6 +1373,369 @@ async function doGenerate(){
   }catch(e){ status.className='statusline err'; status.textContent='Error: '+e.message; }
 }
 function download(){ if(currentScriptId) location=`/api/scripts/${currentScriptId}/download`; }
+
+/* ---------- saved (non-secret) Git & Jenkins details ---------- */
+const GIT_FIELDS={repo_url:'gitRepo', branch:'gitBranch', framework:'gitFw', test:'gitTest'};
+const JK_FIELDS={url:'jkUrl', username:'jkUser', job:'jkJob', test:'jkTest', environment:'jkEnv',
+                 repo_url:'jkRepo', branch:'jkBranch', framework:'jkFw', git_credentials_id:'jkGitCred'};
+const FIELD_DEFAULTS={gitBranch:'main', jkBranch:'main', jkEnv:'dev'};
+let integrationsSeq=0;
+function setFields(map, values){
+  Object.entries(map).forEach(([key,id])=>{
+    const el=document.getElementById(id); if(!el) return;
+    el.value = values[key] ?? FIELD_DEFAULTS[id] ?? '';
+  });
+}
+async function applyIntegrations(planId){
+  const seq=++integrationsSeq;
+  try{
+    const j=await (await fetch('/api/integrations'+(planId?`?plan_id=${encodeURIComponent(planId)}`:''))).json();
+    if(seq!==integrationsSeq) return;            // a newer plan was opened meanwhile
+    setFields(GIT_FIELDS, j.git||{});
+    if(j.git && Array.isArray(j.git.ci) && j.git.ci.length)
+      document.querySelectorAll('.gitCi').forEach(c=>{ c.checked=j.git.ci.includes(c.value); });
+    const jv={...(j.jenkins||{})};
+    if(!jv.repo_url && j.git && j.git.repo_url) jv.repo_url=j.git.repo_url;
+    if(!jv.framework && j.git && j.git.framework) jv.framework=j.git.framework;
+    if(!jv.job && j.git && j.git.framework) jv.job=j.git.framework;
+    if(!jv.test && j.git && j.git.test) jv.test=j.git.test;
+    setFields(JK_FIELDS, jv);
+    showSaved('gitSaved', (j.saved||[]).includes('git'), 'git');
+    showSaved('jkSaved', (j.saved||[]).includes('jenkins'), 'jenkins');
+  }catch(e){ /* saved details are a convenience; never block the page */ }
+}
+function showSaved(id, saved, section){
+  const el=document.getElementById(id);
+  if(!saved){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='inline';
+  el.innerHTML=`· saved details loaded — just enter your token · <a href="#" onclick="forgetIntegrations('${section}');return false">Forget saved details</a>`;
+}
+async function forgetIntegrations(section){
+  if(!confirm(`Forget the saved ${section==='git'?'Git':'Jenkins'} details for this plan (and the last-used defaults)? Tokens were never saved.`)) return;
+  try{
+    await fetch(`/api/integrations?section=${section}`+(currentPlanId?`&plan_id=${encodeURIComponent(currentPlanId)}`:''),{method:'DELETE'});
+    applyIntegrations(currentPlanId);
+  }catch(e){}
+}
+applyIntegrations(null);
+
+/* ---------- run in Jenkins ---------- */
+let jk={queueId:null, build:null, logNext:0, timer:null, errors:0};
+function jkVal(id){ return document.getElementById(id).value.trim(); }
+function fillIfEmpty(id, v){ const el=document.getElementById(id); if(!el.value.trim() && v) el.value=v; }
+function syncJenkinsDefaults(){
+  fillIfEmpty('jkJob', jkVal('gitFw')); fillIfEmpty('jkTest', jkVal('gitTest'));
+  fillIfEmpty('jkRepo', jkVal('gitRepo')); fillIfEmpty('jkFw', jkVal('gitFw'));
+  if(jkVal('gitBranch') && jkVal('jkBranch')==='main') document.getElementById('jkBranch').value=jkVal('gitBranch');
+}
+function jkAuth(){
+  return {jenkins_url:jkVal('jkUrl'), username:jkVal('jkUser'), api_token:jkVal('jkToken'), job:jkVal('jkJob'), plan_id:currentPlanId||null};
+}
+function jkCheck(st){
+  const a=jkAuth();
+  if(!a.jenkins_url||!a.username||!a.api_token){ st.className='statusline err'; st.textContent='Enter the Jenkins URL, user name and API token.'; return null; }
+  if(!a.job){ st.className='statusline err'; st.textContent='Enter the Jenkins job name.'; return null; }
+  return a;
+}
+function toggleJenkinsSetup(){
+  syncJenkinsDefaults();
+  const el=document.getElementById('jkSetup'); el.style.display = el.style.display==='none' ? 'block' : 'none';
+}
+function jkSetPill(text, cls){
+  const p=document.getElementById('jkPill'); p.style.display='inline-flex'; p.textContent=text; p.className='pill '+cls;
+}
+async function jenkinsSetup(){
+  const st=document.getElementById('jkStatus'); const a=jkCheck(st); if(!a) return;
+  const body={...a, repo_url:jkVal('jkRepo'), branch:jkVal('jkBranch')||'main', framework:jkVal('jkFw'), git_credentials_id:jkVal('jkGitCred')};
+  if(!body.repo_url||!body.framework){ st.className='statusline err'; st.textContent='Enter the repository URL and framework name for the job.'; return; }
+  st.className='statusline'; st.textContent='Setting up the Jenkins job…';
+  try{
+    const j=await gitPost('/api/jenkins/setup-job', body);
+    st.className='statusline ok';
+    applyIntegrations(currentPlanId);
+    st.textContent=`Job '${j.job}' ${j.action}. It builds ${body.framework}/ci/Jenkinsfile from ${body.branch}.`+(j.warnings.length?' Note: '+j.warnings.join(' '):'');
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+async function jenkinsRun(){
+  syncJenkinsDefaults();
+  const st=document.getElementById('jkStatus'); const a=jkCheck(st); if(!a) return;
+  if(jk.timer){ clearInterval(jk.timer); jk.timer=null; }
+  jk={queueId:null, build:null, logNext:0, timer:null, errors:0};
+  const log=document.getElementById('jkLog'); log.textContent=''; log.style.display='none';
+  document.getElementById('jkResults').style.display='none';
+  document.getElementById('jkLink').style.display='none';
+  st.className='statusline'; st.textContent='Triggering Jenkins…';
+  document.getElementById('jkRunBtn').disabled=true;
+  try{
+    const j=await gitPost('/api/jenkins/trigger', {...a, test:jkVal('jkTest')||'all', environment:jkVal('jkEnv')||'dev'});
+    jk.queueId=j.queue_id; jkSetPill('queued','ghost'); applyIntegrations(currentPlanId);
+    st.textContent=`Triggered job '${j.job}'. Waiting for Jenkins…`+(j.warnings.length?' Note: '+j.warnings.join(' '):'');
+    jk.timer=setInterval(jenkinsPoll, 3000); jenkinsPoll();
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; document.getElementById('jkRunBtn').disabled=false; }
+}
+async function jenkinsPoll(){
+  if(jk.polling) return; jk.polling=true;
+  const st=document.getElementById('jkStatus'), log=document.getElementById('jkLog');
+  try{
+    const body={...jkAuth(), log_start:jk.logNext};
+    if(jk.build) body.build_number=jk.build; else body.queue_id=jk.queueId;
+    const j=await gitPost('/api/jenkins/status', body); jk.errors=0;
+    if(j.build_number && !jk.build){ jk.build=j.build_number; document.getElementById('jkStopBtn').disabled=false; }
+    if(j.build_url){ const l=document.getElementById('jkLink'); l.href=j.build_url; l.style.display='inline'; }
+    if(j.log){ log.style.display='block'; const atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;
+      log.textContent+=j.log; if(atEnd) log.scrollTop=log.scrollHeight; }
+    jk.logNext=j.log_next;
+    if(j.state==='queued'){ jkSetPill('queued','ghost'); st.className='statusline'; st.textContent='Queued in Jenkins: '+(j.why||'waiting'); }
+    else if(j.state==='running'){ jkSetPill('running','pass'); st.className='statusline'; st.textContent=`Build #${j.build_number} is running…`; }
+    else if(j.state==='cancelled'){ jenkinsDone(); jkSetPill('cancelled','na'); st.className='statusline err'; st.textContent=j.why||'Cancelled.'; }
+    else if(j.state==='finished' && !j.log_more){
+      jenkinsDone();
+      const v=j.verdict, res=j.result||'';
+      jkSetPill(v?v.toUpperCase():res, v==='pass'?'pass':v==='fail'?'fail':(res==='SUCCESS'?'pass':res==='ABORTED'?'na':'fail'));
+      st.className='statusline '+((v==='pass'||(!v&&res==='SUCCESS'))?'ok':'err');
+      st.textContent=`Build #${j.build_number} finished: ${res}`+(j.duration_ms?` in ${Math.round(j.duration_ms/1000)}s`:'')
+        +(v?` · verdict ${v.toUpperCase()}`:(res==='SUCCESS'?'':' · no k6 results were archived (see the console log)'));
+      renderJenkinsResults(j.results||[]);
+    }
+  }catch(e){
+    jk.errors++;
+    if(jk.errors>=3){ jenkinsDone(); st.className='statusline err'; st.textContent='Stopped following the build: '+e.message; }
+  }finally{ jk.polling=false; }
+}
+function jenkinsDone(){
+  if(jk.timer){ clearInterval(jk.timer); jk.timer=null; }
+  document.getElementById('jkRunBtn').disabled=false; document.getElementById('jkStopBtn').disabled=true;
+}
+function renderJenkinsResults(results){
+  const el=document.getElementById('jkResults'); if(!results.length){ el.style.display='none'; return; }
+  const fmt=(v,suf)=> v===null||v===undefined ? '—' : v+suf;
+  el.innerHTML=results.map(r=>`
+    <div style="display:flex;align-items:center;gap:8px;margin:6px 0"><b>${esc(r.test)}</b>
+      <span class="pill ${r.verdict==='pass'?'pass':r.verdict==='fail'?'fail':'na'}">${esc(r.verdict.toUpperCase())}</span></div>
+    <div class="tiles">
+      <div class="tile"><div class="v">${r.requests}</div><div class="l">Requests</div></div>
+      <div class="tile"><div class="v">${r.rps}</div><div class="l">Req/sec</div></div>
+      <div class="tile"><div class="v">${(r.error_rate*100).toFixed(2)}%</div><div class="l">Error rate</div></div>
+      <div class="tile"><div class="v">${fmt(r.avg_ms,' ms')}</div><div class="l">Avg</div></div>
+      <div class="tile"><div class="v">${fmt(r.p95_ms,' ms')}</div><div class="l">p95</div></div>
+      <div class="tile"><div class="v">${fmt(r.max_ms,' ms')}</div><div class="l">Max</div></div>
+    </div>
+    ${r.thresholds.length?'<table><thead><tr><th>Metric</th><th>Threshold</th><th>Result</th></tr></thead><tbody>'+
+      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed?'pass':'fail'}">${t.passed?'passed':'failed'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
+  el.style.display='block';
+}
+async function jenkinsStop(){
+  if(!jk.build) return;
+  const st=document.getElementById('jkStatus');
+  try{ await gitPost('/api/jenkins/stop', {...jkAuth(), build_number:jk.build}); st.className='statusline'; st.textContent=`Stopping build #${jk.build}…`; }
+  catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+(async()=>{ try{ const j=await (await fetch('/api/jenkins/settings')).json();
+  if(j.allowed_hosts&&j.allowed_hosts.length) document.getElementById('jkHint').textContent+=' Allowed Jenkins hosts: '+j.allowed_hosts.join(', ')+'.'; }catch(e){} })();
+
+/* ---------- save to Git ---------- */
+function setGitExport(enabled, reason){
+  document.getElementById('gitBtn').disabled=!enabled;
+  document.getElementById('gitZipBtn').disabled=!enabled;
+  const st=document.getElementById('gitStatus');
+  st.className='statusline'; st.textContent=reason||'';
+}
+async function loadExportSettings(){
+  try{ const j=await (await fetch('/api/export/settings')).json();
+    if(j.allowed_hosts&&j.allowed_hosts.length)
+      document.getElementById('gitHint').textContent+=' Allowed Git hosts: '+j.allowed_hosts.join(', ')+'.';
+  }catch(e){}
+}
+function exportBody(){
+  return {
+    framework_name:document.getElementById('gitFw').value.trim(),
+    test_name:document.getElementById('gitTest').value.trim(),
+    repo_url:document.getElementById('gitRepo').value.trim(),
+    branch:document.getElementById('gitBranch').value.trim()||'main',
+    ci:[...document.querySelectorAll('.gitCi:checked')].map(c=>c.value),
+    include_data:document.getElementById('gitData').checked,
+    data_file_id:currentDataFileId||null,
+  };
+}
+function exportReady(st){
+  const b=exportBody();
+  if(!currentScriptId){ st.className='statusline err'; st.textContent='Generate a k6 script first.'; return null; }
+  if(!b.framework_name||!b.test_name){ st.className='statusline err'; st.textContent='Enter a framework name and a test name.'; return null; }
+  return b;
+}
+function secretsNote(list){ return list&&list.length ? ' Add these as CI secrets: '+list.join(', ')+'.' : ''; }
+async function exportGit(){
+  const st=document.getElementById('gitStatus'); const b=exportReady(st); if(!b) return;
+  if(!b.repo_url){ st.className='statusline err'; st.textContent='Enter the Git repository URL.'; return; }
+  const token=document.getElementById('gitToken').value.trim();
+  if(b.repo_url.startsWith('https://')&&!token){ st.className='statusline err'; st.textContent='Enter an access token that can push to this repository.'; return; }
+  b.git_token=token||null;
+  st.className='statusline'; st.textContent='Pushing to Git…';
+  const btn=document.getElementById('gitBtn'); btn.disabled=true;
+  try{
+    const r=await fetch(`/api/scripts/${currentScriptId}/export/git`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'export failed');
+    applyIntegrations(currentPlanId);
+    st.className='statusline ok';
+    st.textContent=(j.changed ? `Committed ${j.commit.slice(0,8)} to ${j.branch}: ${j.framework}/tests/${j.test}.` : `No changes — ${j.framework}/tests/${j.test} is already up to date on ${j.branch}.`)
+      + secretsNote(j.required_secrets) + (j.warnings.length ? ' Note: '+j.warnings.join(' ') : '');
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+  finally{ btn.disabled=false; }
+}
+async function exportZip(){
+  const st=document.getElementById('gitStatus'); const b=exportReady(st); if(!b) return;
+  st.className='statusline'; st.textContent='Building framework…';
+  try{
+    const r=await fetch(`/api/scripts/${currentScriptId}/export/zip`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    if(!r.ok){ const j=await r.json(); throw new Error(j.detail||'export failed'); }
+    const blob=await r.blob(); const a=document.createElement('a');
+    const name=(r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
+    a.href=URL.createObjectURL(blob); a.download=name?name[1]:'framework.zip'; a.click(); URL.revokeObjectURL(a.href);
+    const sec=(r.headers.get('X-Required-Secrets')||'').split(',').filter(Boolean);
+    st.className='statusline ok'; st.textContent='Framework downloaded.'+secretsNote(sec);
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+loadExportSettings();
+
+/* ---------- import from Git ---------- */
+let gitScan=null, gitViewed=null;
+function toggleGitImport(){
+  const panel=document.getElementById('gitImportPanel'), body=document.getElementById('gitImportBody');
+  const open=body.style.display==='none'; body.style.display=open?'block':'none'; panel.classList.toggle('open',open);
+}
+function gitSource(){
+  const s={repo_url:document.getElementById('impRepo').value.trim(),
+           branch:document.getElementById('impBranch').value.trim()||'main'};
+  const t=document.getElementById('impToken').value.trim(); if(t) s.git_token=t;
+  return s;
+}
+async function gitPost(url, body){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json(); if(!r.ok) throw new Error(j.detail||'request failed'); return j;
+}
+async function gitBrowse(){
+  const st=document.getElementById('impStatus'), out=document.getElementById('impResults');
+  const src=gitSource();
+  if(!src.repo_url){ st.className='statusline err'; st.textContent='Enter the Git repository URL.'; return; }
+  st.className='statusline'; st.textContent='Reading repository…'; out.innerHTML='';
+  document.getElementById('impScriptView').style.display='none';
+  const btn=document.getElementById('impBrowseBtn'); btn.disabled=true;
+  try{
+    gitScan=await gitPost('/api/git/scan', src);
+    const nTests=gitScan.frameworks.reduce((a,f)=>a+f.tests.length,0);
+    st.className='statusline ok';
+    st.textContent=`Commit ${gitScan.commit.slice(0,8)} on ${gitScan.branch}: ${gitScan.frameworks.length} PerfAgent framework(s), ${nTests} test(s), ${gitScan.other_scripts.length} other script(s).`
+      +(gitScan.truncated?' Large repository: only part of it was scanned.':'');
+    renderGitScan();
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+  finally{ btn.disabled=false; }
+}
+function renderGitScan(){
+  const out=document.getElementById('impResults'); let h='';
+  gitScan.frameworks.forEach((f,fi)=>{
+    h+=`<h3 style="margin:16px 0 4px;font-size:14px">${esc(f.name)} <span class="pill ghost">${esc(f.tool)}</span> ${f.path!==f.name?`<span class="muted" style="font-weight:400">${esc(f.path)}</span>`:''}</h3>
+      <table><thead><tr><th>Test</th><th>Target</th><th>Load</th><th>Needs</th><th>Status</th><th></th></tr></thead><tbody>`;
+    f.tests.forEach((t,ti)=>{
+      const load=t.error?'':`${esc(t.profile)} · ${t.peak_users} users · ${t.duration_seconds}s`;
+      const needs=[...(t.required_secrets||[]).map(x=>'🔑 '+esc(x)), t.data_file?('📁 '+esc(t.data_file)+(t.data_committed?'':' (not in Git)')):''].filter(Boolean).join('<br>')||'—';
+      const status=t.error?`<span class="pill fail">invalid</span>`:(t.edited_in_git?`<span class="pill na" title="loadtest.js was changed by hand in Git">edited in Git</span>`:`<span class="pill pass">ok</span>`);
+      const action=t.error?`<span class="muted">${esc(t.error)}</span>`:`<button class="btn ghost sm" onclick="gitImportStart(${fi},${ti})">Import</button>`;
+      h+=`<tr class="histrow"><td><b>${esc(t.test)}</b></td><td>${esc(t.target_base_url||'')}</td><td>${load}</td><td>${needs}</td><td>${status}</td><td>${action}</td></tr>
+          <tr id="impRow_${fi}_${ti}" style="display:none"><td colspan="6"></td></tr>`;
+    });
+    h+='</tbody></table>';
+  });
+  if(gitScan.other_scripts.length){
+    h+=`<h3 style="margin:16px 0 4px;font-size:14px">Other load-test scripts</h3>
+      <table><thead><tr><th>Path</th><th>Tool</th><th>Size</th><th></th></tr></thead><tbody>`+
+      gitScan.other_scripts.map((o,i)=>`<tr class="histrow"><td><code class="k">${esc(o.path)}</code></td><td>${esc(o.tool)}</td><td>${(o.size/1024).toFixed(1)} KB</td>
+        <td><button class="btn ghost sm" onclick="gitViewScript(${i})">View</button></td></tr>`).join('')+'</tbody></table>';
+  }
+  if(!gitScan.frameworks.length && !gitScan.other_scripts.length)
+    h='<div class="note info">No PerfAgent frameworks or load-test scripts were found on this branch.</div>';
+  out.innerHTML=h;
+}
+function gitImportStart(fi,ti){
+  const t=gitScan.frameworks[fi].tests[ti];
+  const row=document.getElementById(`impRow_${fi}_${ti}`); const cell=row.firstElementChild;
+  const secrets=(t.required_secrets||[]).map(x=>`<div class="field"><label>${esc(x)}</label>
+      <input type="password" class="impSecret" data-name="${esc(x)}" placeholder="Value for this secret (optional now)" autocomplete="new-password"/></div>`).join('');
+  cell.innerHTML=`<div style="padding:8px 0">${secrets?'<p class="hint">This test needs secrets that were never stored in Git. Enter them now, or add them later under Custom headers.</p>'+secrets:''}
+     ${t.edited_in_git?'<div class="note warn">loadtest.js was edited directly in Git. PerfAgent rebuilds the script from the plan, so those hand edits will not be imported.</div>':''}
+     ${t.data_file&&!t.data_committed?`<div class="note warn">Test data '${esc(t.data_file)}' is not in Git; upload it in Step 1 before generating.</div>`:''}
+     <div class="btnrow"><button class="btn sm" onclick="gitImport(${fi},${ti})">Import as plan →</button>
+     <button class="btn ghost sm" onclick="this.closest('tr').style.display='none'">Cancel</button></div></div>`;
+  row.style.display='';
+}
+async function gitImport(fi,ti){
+  const f=gitScan.frameworks[fi], t=f.tests[ti];
+  const row=document.getElementById(`impRow_${fi}_${ti}`), st=document.getElementById('impStatus');
+  const secrets={}; row.querySelectorAll('.impSecret').forEach(i=>{ if(i.value.trim()) secrets[i.dataset.name]=i.value.trim(); });
+  st.className='statusline'; st.textContent=`Importing ${f.name}/${t.test}…`;
+  try{
+    const j=await gitPost('/api/git/import',{...gitSource(), framework_path:f.path, test:t.test, secrets, expected_commit:gitScan.commit});
+    currentPlanId=j.plan_id; planModel=j.load_model; planRationale=''; currentScriptId=null;
+    const toolSel=document.getElementById('tool'); if([...toolSel.options].some(o=>o.value==='k6')) toolSel.value='k6';
+    document.getElementById('headersList').innerHTML='';
+    Object.entries(j.load_model.headers||{}).forEach(([k,v])=>addHeader(k,v));
+    currentDataFileId=null;
+    if(j.data_file_id){
+      currentDataFileId=j.data_file_id; dataColumns=j.data_fields||[];
+      const di=document.getElementById('dataInfo'); di.style.display='flex'; di.className='note ok';
+      di.innerHTML=`📁 Test data from Git: <b>${esc(j.load_model.data_file.filename)}</b> · columns ${dataColumns.map(c=>'<code class="k">'+esc(c)+'</code>').join(' ')}`;
+    }
+    applyIntegrations(j.plan_id);
+    renderPlanForm(); renderRawFromModel();
+    document.getElementById('guardrailBadge').style.display='none';
+    document.getElementById('planEval').style.display='none';
+    const meta=document.getElementById('planMeta'); meta.style.display='inline-flex';
+    meta.textContent=`imported from Git · ${j.framework}/${j.test} @ ${j.commit.slice(0,8)}`;
+    const note=document.getElementById('importNote');
+    if(j.warnings.length){ note.className='note warn'; note.innerHTML=j.warnings.map(esc).join('<br>'); }
+    else{ note.className='note ok'; note.textContent='Imported from Git. Review the plan, then approve and generate.'; }
+    note.style.display='flex';
+    st.className='statusline ok'; st.textContent=`Imported ${j.framework}/${j.test}.`;
+    loadPlans();
+    goStep(2);
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+async function gitViewScript(i){
+  const o=gitScan.other_scripts[i], st=document.getElementById('impStatus');
+  st.className='statusline'; st.textContent=`Loading ${o.path}…`;
+  try{
+    const j=await gitPost('/api/git/script',{...gitSource(), path:o.path});
+    gitViewed=j;
+    document.getElementById('impScriptTitle').textContent=j.path;
+    document.getElementById('impScriptTool').textContent=j.tool;
+    document.getElementById('impScriptBody').textContent=j.content;
+    document.getElementById('impUseRow').style.display = j.tool==='k6' ? 'block' : 'none';
+    document.getElementById('impViewOnly').style.display = j.tool==='k6' ? 'none' : 'block';
+    document.getElementById('impScriptView').style.display='block';
+    st.className='statusline'; st.textContent='';
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+async function gitUseScript(){
+  if(!gitViewed||gitViewed.tool!=='k6') return;
+  const st=document.getElementById('impStatus');
+  st.className='statusline'; st.textContent='Loading script…';
+  try{
+    const body={filename:gitViewed.path.split('/').pop()||'loadtest.js', content:gitViewed.content,
+                target_base_url:document.getElementById('impUseTarget').value.trim(), tool:'k6'};
+    const j=await gitPost('/api/scripts/upload', body);
+    currentScriptId=j.script_id; currentPlanId=j.plan_id; currentDataFileId=null;
+    applyIntegrations(j.plan_id);
+    document.getElementById('scriptOut').textContent=j.content;
+    document.getElementById('dlBtn').disabled=false;
+    document.getElementById('runBtn').disabled=(j.tool!=='k6');
+    document.getElementById('preflightBtn').disabled=true;
+    document.getElementById('validateBtn').disabled=false;
+    document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — from Git: ${gitViewed.path} @ ${gitScan.commit.slice(0,8)}`;
+    const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
+    setGitExport(false, 'Scripts loaded as-is from Git are run directly and can\'t be pushed back from here.');
+    st.className='statusline ok'; st.textContent=`Loaded ${gitViewed.path}.`;
+    goStep(3);
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
 
 /* ---------- run ---------- */
 
@@ -1295,7 +1788,7 @@ async function runScript(){
   goStep(4);
   const rs=document.getElementById('runStatus'); rs.className='statusline'; rs.textContent='Starting run…';
   try{ const av=await (await fetch('/api/run/available')).json();
-    if(!av.k6){ rs.className='statusline err'; rs.textContent='k6 is not installed or not on PATH. Install k6 to run.'; return; } }catch(e){}
+    if(!av.k6){ rs.className='statusline err'; rs.textContent='The load engine is not available on this platform. Ask your administrator to set PERFAGENT_K6_PATH.'; return; } }catch(e){}
   try{
     const r=await fetch(`/api/scripts/${currentScriptId}/run`,{method:'POST'}); const j=await r.json();
     if(!r.ok) throw new Error(j.detail||'run failed');
@@ -1324,11 +1817,12 @@ async function pollRun(){
     if(logs.length){
       const pre=document.getElementById('runLogs');
       const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
-      pre.textContent=logs.join('\\n');
+      pre.textContent=logs.join('\n');
       document.getElementById('logCount').textContent='('+logs.length+' lines)';
       if(atBottom) pre.scrollTop=pre.scrollHeight;   // autoscroll unless user scrolled up
     }
-    if(j.status==='running'){ rs.className='statusline'; rs.textContent='Running against '+j.target+' …'; }
+    if(j.status==='starting'||j.status==='preparing'){ rs.className='statusline'; rs.textContent=j.message||'Starting…'; }
+    else if(j.status==='running'){ rs.className='statusline'; rs.textContent='Running against '+j.target+' …'; }
     else{
       clearInterval(pollTimer); pollTimer=null;
       document.getElementById('runBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
@@ -1578,6 +2072,8 @@ async function loadPlans(){
      <td><button class="btn ghost sm" onclick="openPlan('${p.plan_id}')">Open</button></td></tr>`).join('');
 }
 async function openPlan(id){
+  document.getElementById('importNote').style.display='none';
+  applyIntegrations(id);
   const j=await (await fetch(`/api/plans/${id}`)).json();
   currentPlanId=id; planModel=j.load_model; planRationale=''; renderPlanForm(); renderRawFromModel();
   document.getElementById('guardrailBadge').style.display='none';
@@ -1599,6 +2095,7 @@ async function openPlan(id){
       document.getElementById('runBtn').disabled=(latest.tool!=='k6');
       document.getElementById('validateBtn').disabled=false;
       document.getElementById('preflightBtn').disabled=false;
+      setGitExport(latest.tool==='k6' && !String(j.goal||'').startsWith('Uploaded script'), String(j.goal||'').startsWith('Uploaded script')?'Uploaded scripts can\'t be saved to Git yet — only scripts generated from a plan.':'');
       document.getElementById('scriptMeta').textContent=`${latest.filename} (${latest.tool}) — from saved plan ${id.slice(0,8)}`;
       const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=latest.tool;
     }catch(e){ /* fall back to review step */ }
@@ -1681,10 +2178,12 @@ async function uploadExisting(){
     const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'upload failed');
     currentScriptId=j.script_id; currentPlanId=j.plan_id; currentDataFileId=null;
+    applyIntegrations(j.plan_id);
     document.getElementById('scriptOut').textContent=j.content;
     document.getElementById('dlBtn').disabled=false;
     document.getElementById('runBtn').disabled=(j.tool!=='k6');
     document.getElementById('preflightBtn').disabled=true;   // no plan endpoints to pre-flight
+    setGitExport(false, 'Uploaded scripts can\'t be saved to Git yet — only scripts generated from a plan.');
     document.getElementById('validateBtn').disabled=false;
     document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — uploaded`;
     const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
@@ -1696,7 +2195,7 @@ async function uploadExisting(){
 /* ---------- validate script (1 VU / 1 iteration) ---------- */
 async function doValidate(){
   const el=document.getElementById('validateResult'); el.style.display='flex'; el.className='note info';
-  el.textContent='Validating: running the script once (1 user, 1 iteration)…';
+  el.textContent='Validating the script… (the very first time, this also sets up the load engine and can take a little longer)';
   try{
     await ensureScriptId();
     const r=await fetch(`/api/scripts/${currentScriptId}/validate`,{method:'POST'});

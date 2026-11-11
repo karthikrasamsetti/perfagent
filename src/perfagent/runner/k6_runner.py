@@ -12,14 +12,14 @@ Design (matches the trust boundary):
     crossings, the checks summary) goes to STDERR; we capture those lines into
     run.logs for the "Live run logs" panel.
 
-k6 must be installed and on PATH. If it isn't, the run is marked 'error' with a
-clear message rather than crashing the server.
+k6 does NOT need to be installed by the customer: k6_binary.ensure_k6() finds a
+bundled/cached copy or downloads the pinned, checksum-verified release on first run.
+If that fails (e.g. offline), the run is marked 'error' with a clear message.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from perfagent.runner.k6_binary import K6Unavailable, ensure_k6, find_k6, k6_ready_or_provisionable
 from perfagent.stats import Aggregator
 
 _MAX_LOG_LINES = 1000   # keep the log buffer bounded
@@ -38,7 +39,7 @@ class RunState:
     script_id: str
     tool: str
     target: str
-    status: str = "starting"  # starting | running | finished | error | stopped
+    status: str = "starting"  # starting | preparing | running | finished | error | stopped
     started_at: float = field(default_factory=time.time)
     ended_at: float | None = None
     message: str = ""
@@ -69,7 +70,8 @@ def list_runs() -> list[RunState]:
 
 
 def k6_available() -> bool:
-    return shutil.which("k6") is not None
+    """True if k6 is present, or can be fetched automatically on first run."""
+    return k6_ready_or_provisionable()
 
 
 def stop_run(run_id: str) -> bool:
@@ -106,12 +108,6 @@ def start_run(
         run.ended_at = time.time()
         return run
 
-    if not k6_available():
-        run.status = "error"
-        run.message = "k6 is not installed or not on PATH. Install k6 to run tests."
-        run.ended_at = time.time()
-        return run
-
     thread = threading.Thread(target=_run_worker, args=(run, content), daemon=True)
     thread.start()
     return run
@@ -138,6 +134,21 @@ def _pump_stderr(run: RunState, proc: subprocess.Popen) -> None:
 
 
 def _run_worker(run: RunState, content: str) -> None:
+    try:
+        if find_k6() is None:
+            run.status = "preparing"
+            run.message = "Setting up the load engine (first run only)..."
+        k6_path = ensure_k6()
+    except K6Unavailable as e:
+        run.status = "error"
+        run.message = str(e)
+        run.ended_at = time.time()
+        return
+    run.message = ""
+    # Measure from when k6 actually starts, not from when the run was requested,
+    # so a first-run download doesn't drag down the reported RPS.
+    run._agg = Aggregator()
+
     tmpdir = tempfile.mkdtemp(prefix="perfagent_run_")
     run._tmpdir = tmpdir
     script_path = Path(tmpdir) / "loadtest.js"
@@ -149,7 +160,7 @@ def _run_worker(run: RunState, content: str) -> None:
         (Path(tmpdir) / run.data_filename).write_text(run.data_content, encoding="utf-8")
 
     # k6 --out json=- streams one JSON object per line to stdout.
-    cmd = ["k6", "run", "--out", "json=-", "--quiet", str(script_path)]
+    cmd = [k6_path, "run", "--out", "json=-", "--quiet", str(script_path)]
 
     try:
         proc = subprocess.Popen(
