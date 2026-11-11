@@ -27,10 +27,13 @@ against your last run and is saved to a browsable history.
 - [The 5-step workflow](#the-5-step-workflow)
 - [Feature highlights](#feature-highlights)
 - [Dynamic test data — the three sources](#dynamic-test-data--the-three-sources)
+- [Validating the response — assertions & suggested checks](#validating-the-response--assertions--suggested-checks)
 - [Quick start](#quick-start)
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
 - [Running the app](#running-the-app)
+- [Save tests to Git and import them back](#save-tests-to-git-and-import-them-back)
+- [Run in Jenkins](#run-in-jenkins-step-3)
 - [Running the tests](#running-the-tests)
 - [How it works](#how-it-works)
 - [Data guardrails](#data-guardrails)
@@ -62,7 +65,9 @@ anything that must be exact.
 | "Is it worse than last time?" — unknown | Automatic **baseline comparison** flags regressions |
 | Reports lost after the run | Every run's report is **saved** and reopenable |
 | Status-code-only checks | **Assertions** validate the response body, not just 2xx |
+| No visibility into why a check failed | A **response-checks panel** + live/saved **run logs** show exactly what failed |
 | One load tool | Generate for **k6, Locust, JMeter, Gatling** from one plan |
+| Scripts stuck in the tool | **Save to Git** as a CI-ready framework; **run in Jenkins** and follow it live |
 
 ---
 
@@ -73,7 +78,7 @@ Step 1 offers a toggle between two modes:
 - **💬 Chat — describe it:** type what you want in plain English ("load test login and
   checkout, 100 users, make each signup email unique"). The AI drafts a plan you review.
 - **⚙️ Manual — fill a form:** full control — endpoints, import, data files, headers, test
-  type, a body editor with one-click **dynamic data**, and "run an existing script."
+  type, environment, a body editor with one-click **dynamic data**, and "run an existing script."
 
 Both produce the same structured plan you review and approve. Inline **ℹ️ tooltips** explain
 every concept, so a QA engineer can use it without a walkthrough.
@@ -85,15 +90,16 @@ every concept, so a QA engineer can use it without a walkthrough.
 ```
   1 ─ Describe ──▶ 2 ─ Review & Approve ──▶ 3 ─ Generate ──▶ 4 ─ Run & Monitor ──▶ 5 ─ Report
   chat or form,       editable form,          k6 script         validate, pre-flight,  dashboard +
-  import a spec       plain-English summary   (deterministic)   live metrics + chart   diagnosis +
-                      + grounding + guardrail                                          vs. last run (saved)
+  import a spec       plain-English summary   (deterministic,   live metrics, chart,   diagnosis +
+                      + grounding + guardrail  editable)         live logs              vs. last run,
+                                                                                        checks + logs (saved)
 ```
 
-1. **Describe** — chat or form; type/import endpoints, add a data file, custom headers, test type.
-2. **Review & approve** — edit the plan in a form (weight sliders, think-times, thresholds), with a plain-English summary of what it does and why.
-3. **Generate** — a deterministic renderer produces a runnable **k6** script. No LLM touches it.
-4. **Run & monitor** — **validate** the script and **pre-flight** the endpoints, then launch k6 with live tiles + chart.
-5. **Report** — a **dashboard**: PASS/FAIL/INCONCLUSIVE verdict, KPI tiles, automatic **diagnosis**, a **comparison to your last run**, and an AI narrative whose figures are verified. Saved to the **Runs & reports** history so you can reopen it anytime.
+1. **Describe** — chat or form; type/import endpoints, add a data file, custom headers, test type, environment.
+2. **Review & approve** — edit the plan in a form (weight sliders, think-times, thresholds, **response checks**), with a plain-English summary of what it does and why.
+3. **Generate** — a deterministic renderer produces a runnable **k6** script. No LLM touches it. You can **edit it** to add custom debugging before running, and **Save to Git** for CI/CD.
+4. **Run & monitor** — **validate** the script and **pre-flight** the endpoints, then launch k6 with live tiles, a chart, and **live run logs**.
+5. **Report** — a **dashboard**: PASS/FAIL/INCONCLUSIVE verdict, KPI tiles, automatic **diagnosis**, a **comparison to your last run**, a **response-checks panel**, the **run logs**, and an AI narrative whose figures are verified. Saved to the **Runs & reports** history so you can reopen it anytime.
 
 ---
 
@@ -102,17 +108,25 @@ every concept, so a QA engineer can use it without a walkthrough.
 ### 🧭 Discover & import
 - **OpenAPI / Swagger** (JSON **or YAML**), **Postman collections** (incl. nested folders),
   **HAR captures** — endpoints, sample bodies, and target URL imported automatically.
+- **Import from Git** — pull a test PerfAgent previously saved back as an editable plan, or
+  pick up another k6 script from a repository.
 
 ### 🔐 Real-world auth & data
 - **Correlation** — capture a value from a response (**JSON field, header, cookie, or
   regex**, incl. array indices like `data[0].id`) and reuse it later as `${var}`. Auto-set-up for login flows.
-- **Assertions** — validate the response, not just the status: a JSON field equals/contains,
-  a numeric field in range, or the body contains text. A failed assertion counts as an error.
+- **Assertions** — validate the response, not just the status: body **contains** / **does NOT
+  contain** text, **status code is** N, a **JSON field compares** (eq/ne/gt/lt/contains), or
+  **response time under** N ms. A failed assertion counts as an error and fails the run.
+- **✨ Suggest checks from a response** — paste a real API response and the AI proposes the
+  right checks (which elements must be present, which errors to guard against, which numbers
+  should be positive); the response is redacted before it's sent, and you keep only the checks you want.
 - **Custom headers** — global `Authorization` / API-key headers; values can use captured vars.
 - **Dynamic test data** — three sources per field (see below), assigned by the AI with one click.
 
 ### ⏱ Realistic load
 - **Test types** — ramp, spike, soak, stress, each a genuinely different load shape.
+- **Environment & TLS** — tag a run with an environment name (dev/staging/prod), and for test
+  or dev hosts optionally **skip TLS certificate verification** (never against production).
 - **Protocols** — REST/HTTP and **GraphQL** (a step can send a `{query, variables}` request).
 - **Multi-tool** — generate scripts for **k6** (primary, with a live runner), **Locust**,
   **JMeter** (`.jmx`), and **Gatling** (`.scala`) from the same plan.
@@ -125,17 +139,32 @@ every concept, so a QA engineer can use it without a walkthrough.
 
 ### 🔎 Run & diagnose
 - **Pre-flight check**, **script validation** (`k6 inspect`), **live monitoring + chart**,
-  a **diagnosis engine** (bottlenecks, latency tail, concurrency), and **baseline/regression**.
+  **live run logs** (k6's output streamed as it runs — threshold crossings, the checks
+  summary, and your script's own `console.*` messages), a **diagnosis engine** (bottlenecks,
+  latency tail, concurrency), and **baseline/regression**.
+- **Editable script** — tweak the generated k6 before running (e.g. add custom `console.log`
+  debugging, or your own validation); **Regenerate** restores the deterministic version.
 
 ### 📊 Report & history
 - **Report dashboard** — verdict hero, KPI tiles, diagnosis + baseline cards, executive summary.
+- **Response checks panel** — each assertion with its pass/fail count, so you can see exactly
+  which checks failed and why the run passed or failed.
+- **Run logs** — the full k6 output for the run is shown on the report, **saved with it**, and
+  **downloadable as a `.txt`** — reopen a run from history and its logs are still there.
 - **Time-series + trend charts** — latency/RPS/errors over the run, and p95/error trends across recent runs.
 - **SLA profiles** — save reusable threshold sets (e.g. "p95<300ms, errors<1%") and apply to any plan.
 - **Runs & reports history** — every finished run saved; click to reopen its full report.
 - **Downloadable HTML report** for stakeholders.
 
+### 🚀 Ship to CI/CD
+- **Save to Git** — export the test into a named k6 framework with ready-made **GitHub
+  Actions, Jenkins, Azure DevOps and GitLab** pipelines; secrets are never committed.
+- **Run in Jenkins** — trigger the pipeline for a saved test and follow it live in PerfAgent
+  (queued → running → finished, console log streaming, archived k6 results and verdict).
+
 ### 🧰 Convenience
-- **Run an existing script**, **saved plans** (reopen & re-run), **token-usage** visibility.
+- **Run an existing script**, **saved plans** (reopen & re-run), **token-usage** visibility,
+  and **saved (non-secret) Git/Jenkins details** so you don't retype them.
 
 ---
 
@@ -158,6 +187,34 @@ Built-in generators include: `uuid`, `randomEmail`, `randomFullName`, `randomCom
 `{{var}}` / `{{$randomX}}` syntax is also accepted and converted automatically. The realistic
 generators emit **self-contained helper functions** — no external faker dependency, so the
 script runs on any standard k6.
+
+---
+
+## Validating the response — assertions & suggested checks
+
+A load test that only checks the HTTP status can **pass while the API is returning errors** —
+many APIs answer `200 OK` with an error payload in the body. Assertions close that gap.
+
+**Assertion kinds** (added per step, in plain English):
+
+| Check | Passes when | Example |
+|---|---|---|
+| **Response body contains** | the body includes the text | contains `<Rate>` |
+| **Response body does NOT contain** | the body is free of the text | does NOT contain `Invalid Parameters` |
+| **Status code is** | the status equals N | status is `200` |
+| **JSON field compares** | a field eq/ne/gt/lt/contains a value | `data.total` **gt** `0` |
+| **Response time under (ms)** | the request finished in time | under `2000` ms |
+
+A failed assertion is counted as an **error** (not just a failed k6 check), so it raises the
+error rate and can **fail the run** — assertions are enforced, not decorative. The
+**response-checks panel** on the report shows each check's pass/fail count.
+
+**✨ Suggest checks from a response** — rather than hand-writing every check, paste a **real
+response** you captured (from Postman or curl) and the AI proposes a layered set: the
+structural elements that should always be present, the error strings to guard against, and
+the numeric fields that should be positive. You review the list and keep what you want. The
+pasted response is **redacted** (secrets/PII removed) before it is sent to the AI — only the
+structure is shared.
 
 ---
 
@@ -204,7 +261,7 @@ uv run python -m perfagent.sample_target.app
 <summary><b>Option A — uv (recommended)</b></summary>
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/karthikrasamsetti/perfagent.git
 cd perfagent
 uv sync
 ```
@@ -214,7 +271,7 @@ uv sync
 <summary><b>Option B — pip + venv</b></summary>
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/karthikrasamsetti/perfagent.git
 cd perfagent
 python -m venv .venv
 .venv\Scripts\activate          # Windows  (source .venv/bin/activate on mac/linux)
@@ -269,6 +326,11 @@ The first run shows "Setting up the load engine (first run only)…" while this 
 without internet access, use option 1 or 2. In Docker, install k6 in the image and set
 `PERFAGENT_K6_PATH` so nothing is downloaded at runtime.
 
+> [!NOTE]
+> k6 prints Unicode (box-drawing and ✓/✗ characters) in its summary. PerfAgent decodes k6's
+> output as UTF-8 so the **run logs** render those characters correctly on every platform,
+> including Windows.
+
 ## Save tests to Git and import them back
 
 ### Save to Git (Step 3)
@@ -276,7 +338,10 @@ without internet access, use option 1 or 2. In Docker, install k6 in the image a
 After generating a k6 script, the **Save to Git for CI/CD** card exports it into a named
 framework and pushes it. Enter a framework name, a test name, the repository URL, branch
 and an access token with push rights (not needed for SSH URLs). The token is used for that
-push only and is never stored; no user name is needed.
+push only and is never stored; no user name is needed. The exported script is built by the
+**same deterministic generator** used in the app, so it carries your assertions, correlation,
+dynamic data, GraphQL and TLS settings — with secret header values swapped for CI-provided
+environment variables.
 
 ```
 <framework>/
@@ -342,7 +407,7 @@ Admins can restrict which Jenkins servers may be called with `JENKINS_ALLOWED_HO
 
 API: `POST /api/jenkins/trigger`, `/api/jenkins/status`, `/api/jenkins/stop`, `/api/jenkins/setup-job`.
 
-## Saved Git and Jenkins details
+### Saved Git and Jenkins details
 
 PerfAgent remembers the **non-secret** details you used, per plan, so you don't retype them:
 the Git repository, branch, framework, test and pipelines; the Jenkins URL, user name, job,
@@ -367,6 +432,17 @@ The suite mocks the LLM — **no API key, no paid calls, no k6 required**:
 uv run pytest -q
 ```
 
+For a faster local run, execute the suite in parallel (the Git/Jenkins tests shell out to
+real `git`, which is slower on Windows):
+
+```bash
+uv run pytest -q -n auto            # needs pytest-xdist
+uv run pytest -q -k "not git"       # skip the slow Git integration tests
+```
+
+A few tests exercise POSIX-only behaviour (symlinks, `sh`) and are **skipped on Windows**;
+they run in full on Linux/macOS CI.
+
 Lint: `uv run ruff check src/ tests/`
 
 ---
@@ -384,11 +460,12 @@ A concrete trace — you draft a plan:
    **restores your real request bodies** (the model only ever saw redacted ones).
 4. The API returns the plan + a **grounding score** + the **redaction summary** + token usage.
 5. You approve → the k6 script is rendered deterministically (data + headers + correlation +
-   dynamic generators).
-6. You run → k6 launches, the aggregator computes metrics, the browser polls live.
+   dynamic generators + assertions + TLS). You can edit it before running.
+6. You run → k6 launches, the aggregator computes metrics (counting failed assertions as
+   errors), the browser polls live metrics and **run logs**.
 7. On finish → the API computes the **verdict**, **diagnosis**, and **baseline comparison**,
-   writes a **citation-checked** narrative, and **saves the full report**. Every consequential
-   action (and its token cost) is audited.
+   writes a **citation-checked** narrative, and **saves the full report** (checks + logs
+   included). Every consequential action (and its token cost) is audited.
 
 ---
 
@@ -405,9 +482,10 @@ the fixed system prompt is left intact.
 | URL hostnames, internal hosts, private IPs | reversible (restored in reports) |
 | `${placeholder}` / `{{var}}` template references | preserved (not treated as secrets) |
 
-Only redaction **counts** are surfaced — never raw values. A standalone `verify_guardrails.py`
-script and a `GUARDRAIL_DEBUG=1` mode (logs the *redacted* prompt) let you confirm nothing
-sensitive reaches the AI before testing real endpoints.
+The same guardrail protects **✨ Suggest checks from a response**: the pasted response is
+redacted before the AI sees it. Only redaction **counts** are surfaced — never raw values. A
+standalone `verify_guardrails.py` script and a `GUARDRAIL_DEBUG=1` mode (logs the *redacted*
+prompt) let you confirm nothing sensitive reaches the AI before testing real endpoints.
 
 ---
 
@@ -424,13 +502,15 @@ sensitive reaches the AI before testing real endpoints.
 
 - **Structured logging** (structlog) — readable on the console, JSON in `logs/perfagent.log`;
   records workflow steps and counts, never secrets or bodies.
+- **Run logs** — k6's own output (threshold crossings, the checks summary, and your script's
+  `console.*` messages) is streamed live during a run and **saved with the report** for later.
 - **Audit trail** — a durable record of consequential actions (plan created/approved, script
-  generated, **run started** with target + peak VUs, **run finished** with verdict), shown as
-  an **Activity log** in the UI and at `GET /api/audit`.
+  generated, **run started** with target + peak VUs, **run finished** with verdict, Git push,
+  Git import), shown as an **Activity log** in the UI and at `GET /api/audit`.
 - **Token usage** — every AI call's tokens + rough cost are captured, shown as a **session
   total chip** in the top bar and **per-action** in the activity log.
-- **AI-call tracing** — each LLM call recorded with step · model · tokens · **latency** · status,
-  shown in a **Traces** view (`GET /api/traces`) for debugging the AI steps.
+- **AI-call tracing** — each real LLM call recorded with step · model · tokens · **latency** ·
+  status, shown in a **Traces** view (`GET /api/traces`) for debugging the AI steps.
 
 ---
 
@@ -442,20 +522,20 @@ code, and a human approves before any load is fired.
 
 ```mermaid
 flowchart TD
-    IN([Inputs: chat · form · import OpenAPI/Postman/HAR])
+    IN([Inputs: chat · form · import OpenAPI/Postman/HAR · import from Git])
     PLAN["1 · Plan — AI drafts<br/><small>journeys · weights · correlation · dynamic data</small>"]
-    LM["LoadModel — the contract<br/><small>scenarios · headers · extracts · thresholds · data</small>"]
+    LM["LoadModel — the contract<br/><small>scenarios · headers · extracts · assertions · thresholds · data</small>"]
     APPROVE["2 · Approve — human gate<br/><small>editable form · plain-English summary · nothing runs yet</small>"]
-    GEN["3 · Generate — deterministic<br/><small>k6 script: data + headers + correlation + generators</small>"]
-    RUN["4 · Run + monitor<br/><small>validate · pre-flight · k6 · live metrics + chart</small>"]
-    REPORT["5 · Report — dashboard<br/><small>verdict · KPIs · diagnosis · vs. last run · saved</small>"]
-    OUT([Live dashboard + saved report history])
+    GEN["3 · Generate — deterministic<br/><small>k6 script: data + headers + correlation + generators + assertions · editable · Save to Git</small>"]
+    RUN["4 · Run + monitor<br/><small>validate · pre-flight · k6 · live metrics + chart + logs</small>"]
+    REPORT["5 · Report — dashboard<br/><small>verdict · KPIs · diagnosis · checks · logs · vs. last run · saved</small>"]
+    OUT([Live dashboard + saved report history · CI/CD via Git & Jenkins])
 
     IN --> PLAN --> LM --> APPROVE --> GEN --> RUN --> REPORT --> OUT
 
     GUARD["Guardrails<br/><small>redact before AI · scrub output</small>"]
     EVAL["AI evaluation<br/><small>plan grounding · report citation</small>"]
-    OBS["Logging · audit · tokens<br/><small>every action recorded</small>"]
+    OBS["Logging · audit · tokens · traces<br/><small>every action recorded</small>"]
     GUARD -. protects .-> PLAN
     GUARD -. protects .-> REPORT
     EVAL -. checks .-> PLAN
@@ -476,7 +556,7 @@ flowchart TD
 
 | Owner | Responsible for |
 |---|---|
-| 🟣 **AI** | Journeys, weights, dynamic-data assignment, the report narrative |
+| 🟣 **AI** | Journeys, weights, dynamic-data assignment, suggested checks, the report narrative |
 | 🟢 **Code** | Load shape, the generated script, every metric, verdict, diagnosis, baseline |
 | 🟡 **Human** | Approving the plan before any load is fired |
 | 🟡 **Guardrails** | Redacting sensitive data before the AI sees it |
@@ -487,32 +567,39 @@ flowchart TD
 
 | Path | Responsibility |
 |---|---|
-| `config.py` | Settings + secrets from `.env` (incl. `log_level`, `guardrail_debug`). |
-| `contracts/load_model.py` | Core model: `LoadModel`, `Scenario`, `Step`, `Extract`, `LoadProfile`, `Threshold`, `DataFile`, `headers`. |
+| `config.py` | Settings + secrets from `.env` (incl. `log_level`, `guardrail_debug`, Git/Jenkins allow-lists). |
+| `contracts/load_model.py` | Core model: `LoadModel`, `Scenario`, `Step`, `Extract`, `Assertion`, `LoadProfile`, `Threshold`, `DataFile`, `headers`, `environment`, `insecure_tls`. |
 | `chat_intent.py` | Chat → structured plan intent (plain-English describe). |
 | `dynamize.py` | AI "add dynamic data" — assign generators/CSV columns to a body's fields. |
+| `check_suggest.py` | AI "suggest checks from a response" — propose assertions from a pasted response. |
 | `importers/endpoints.py` | Import endpoints from OpenAPI/Swagger (JSON+YAML), Postman, HAR. |
 | `guardrails/` | Redaction engine + output scrubbing around every LLM call. |
 | `evaluation/` | Plan-grounding and report-citation checks. |
-| `usage.py` | Token-usage extraction + rough cost estimate. |
+| `usage.py` · `tracing.py` | Token-usage extraction + rough cost estimate; per-AI-call traces. |
 | `providers/` | OpenAI / Anthropic behind one interface (Instructor), wrapped by guardrails. |
 | `planner/` | Endpoints → AI-drafted LoadModel; deterministic controls (target, profile, sanity, auto-correlation, real-body restore). |
-| `generator/k6_renderer.py` · `k6_data.py` · `k6_corr.py` · `generators.py` · `templates/` | LoadModel → k6 script (data, headers, correlation, dynamic generators). |
+| `generator/k6_renderer.py` · `k6_data.py` · `k6_corr.py` · `generators.py` · `templates/` | LoadModel → k6 script (data, headers, correlation, dynamic generators, assertions, logging). |
 | `generator/locust_renderer.py` · `jmeter_renderer.py` · `gatling_renderer.py` | Locust, JMeter (.jmx), and Gatling (.scala) renderers. |
+| `gitexport/` | Build a CI-ready k6 framework (`framework.py`), publish to Git (`publisher.py`), import back (`importer.py`), file templates (`templates.py`). |
+| `ci/jenkins.py` | Jenkins trigger / status / stop / job set-up. |
+| `integrations.py` | Saved (non-secret) Git & Jenkins details per plan. |
 | `preflight.py` | One request per endpoint → status report (no load). |
-| `runner/k6_runner.py` · `runner/validator.py` · `runner/k6_binary.py` | Launch & stream k6; validate a script via `k6 inspect`; find or auto-download k6. |
-| `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS). |
+| `runner/k6_runner.py` · `runner/validator.py` · `runner/k6_binary.py` | Launch & stream k6 (metrics + logs); validate a script via `k6 inspect`; find or auto-download k6. |
+| `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS; failed checks count as errors). |
 | `analyzer/verdict.py` · `diagnostics.py` · `baseline.py` · `narrator.py` · `report.py` | Verdict (fail-closed), diagnosis, regression compare, AI narrative, HTML report. |
-| `logging_config.py` · `audit.py` · `tracing.py` | Structured logging, audit trail, and per-AI-call traces. |
-| `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports), audit, SLA profiles, traces. |
-| `api/app.py` | FastAPI app: REST API + serves the UI. |
-| `web/index.html` | The guided wizard UI (chat + manual modes, report dashboard, single file). |
+| `logging_config.py` · `audit.py` | Structured logging and the audit trail. |
+| `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports & logs), audit, SLA profiles, traces, integration settings. |
+| `api/app.py` + `api/*_routes.py` | FastAPI app: REST API + serves the UI; export / git-import / integration / jenkins routes. |
+| `web/index.html` | The guided wizard UI (chat + manual modes, report dashboard, git/Jenkins panels, single file). |
 | `sample_target/app.py` | A mock website to test against safely. |
 
 **Tests** cover the schema, generators (incl. realistic + Postman syntax), planner & profiles
 & body-restore, runner/stats/validator, analyzer (fail-closed verdict, diagnostics, baseline),
 API, guardrails (URL + placeholder), evaluation, data, importers, headers/pre-flight,
-correlation (JSON/header/cookie/regex/array), assertions, chat intent, dynamize, audit, token usage, SLA profiles, trend, JMeter/Gatling, tracing, and GraphQL.
+correlation (JSON/header/cookie/regex/array), assertions (incl. failed checks counting as
+errors), suggested checks & environment/TLS, chat intent, dynamize, console logging, audit,
+token usage, SLA profiles, trend, JMeter/Gatling, tracing, GraphQL, k6 auto-provisioning, and
+the Git export / import / Jenkins / integrations features.
 
 ---
 
@@ -526,6 +613,7 @@ correlation (JSON/header/cookie/regex/array), assertions, chat intent, dynamize,
 - Start with low user counts and short durations on any new target, then scale up.
 - Sensitive data is redacted before it reaches the LLM; extend detectors in
   `guardrails/redaction.py` for your environment before pointing at production-adjacent data.
+- **Skip TLS verification** is for test/dev hosts only — never enable it against production.
 
 ---
 
@@ -533,6 +621,8 @@ correlation (JSON/header/cookie/regex/array), assertions, chat intent, dynamize,
 
 | Symptom | Fix |
 |---|---|
+| Run logs show garbled characters (`â–ˆ`, `âœ"`) | Update to the current runner — k6 output is now decoded as UTF-8. |
+| A run PASSes even though the API returned an error payload | Add an assertion (e.g. **does NOT contain** the error string, or a **JSON field** check). Failed assertions count as errors. |
 | Save to Git: "folder already exists and was not created by PerfAgent" | Choose a new framework name; PerfAgent never writes into folders it didn't create. |
 | Save to Git / Import: "git ... failed: Authentication failed" | Check the token has access to that repository (push rights for Save to Git). |
 | Jenkins log: `Cannot run program "sh"` | The job ran an old Jenkinsfile on a Windows agent. Push the test again with **Save to Git** (the new Jenkinsfile supports Windows), then run again. |
@@ -554,14 +644,18 @@ correlation (JSON/header/cookie/regex/array), assertions, chat intent, dynamize,
 ## Roadmap
 
 **✅ Working today**
-Chat or form input · import (OpenAPI/Swagger JSON+YAML, Postman, HAR) · AI planning with an
-editable form & plain-English summary · guardrails (+ verify script & debug mode) · AI
-evaluation · correlation (JSON/header/cookie, auto-set-up) · **dynamic data (generators + CSV
-+ AI "add dynamic data", Postman `{{var}}` syntax)** · custom headers · test types
-(ramp/spike/soak/stress) · pre-flight · script validation · live monitoring + chart ·
-diagnosis engine · fail-closed verdict · baseline/regression · **report dashboard + saved
-runs history** · run-an-existing-script · logging, audit & token usage · modern UI with inline
-guidance.
+Chat or form input · import (OpenAPI/Swagger JSON+YAML, Postman, HAR, **and from Git**) · AI
+planning with an editable form & plain-English summary · guardrails (+ verify script & debug
+mode) · AI evaluation · correlation (JSON/header/cookie/regex/array, auto-set-up) ·
+**assertions (contains / not-contains / status / JSON compare / response-time) with ✨
+suggest-checks-from-a-response** · **dynamic data (generators + CSV + AI "add dynamic data",
+Postman `{{var}}` syntax)** · custom headers · **environment & TLS options** · test types
+(ramp/spike/soak/stress) · **GraphQL** · multi-tool generation (k6/Locust/JMeter/Gatling) ·
+pre-flight · script validation · **editable script** · live monitoring + chart + **run logs** ·
+diagnosis engine · fail-closed verdict · baseline/regression · **report dashboard + response
+checks + saved runs & logs history** · **Save to Git (GitHub/Jenkins/Azure/GitLab pipelines) ·
+Import from Git · Run in Jenkins** · run-an-existing-script · logging, audit, token usage &
+AI traces · modern UI with inline guidance.
 
 **🔭 Planned next**
 - **More protocols** — gRPC (needs the k6 gRPC extension + `.proto`) and WebSocket streaming.
