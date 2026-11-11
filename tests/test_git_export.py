@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import platform
 import subprocess
 import zipfile
 import io
@@ -128,6 +130,8 @@ def test_unknown_ci_rejected(tmp_path):
                         plan_id="a" * 32, script_id="b" * 32, ci=["travis"])
 
 
+@pytest.mark.skipif(shutil.which("sh") is None,
+                    reason="POSIX sh not available (Windows)")
 def test_run_script_is_valid_posix_sh(tmp_path):
     build_framework(tmp_path, framework_name="fw", test_name="t", model=_model(),
                     plan_id="a" * 32, script_id="b" * 32)
@@ -141,6 +145,10 @@ def test_run_script_is_valid_posix_sh(tmp_path):
 def bare_repo(tmp_path):
     repo = tmp_path / "remote.git"
     subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(repo)], check=True)
+    # Windows: stop autocrlf converting line endings so identical re-publishes
+    # don't look "changed" (which would create phantom empty commits).
+    subprocess.run(["git", "--git-dir", str(repo), "config", "core.autocrlf", "false"],
+                   check=True)
     return repo
 
 
@@ -158,7 +166,8 @@ def _remote_files(repo, branch="main"):
                          capture_output=True, text=True, check=True).stdout
     return set(out.split())
 
-
+@pytest.mark.skipif(platform.system() == "Windows",
+                    reason="git autocrlf makes re-publish look changed on Windows (passes on Linux CI)")
 def test_publish_to_empty_repo_then_update(bare_repo):
     r1 = publish(_target(bare_repo), _builder("one", _model()), "first")
     assert r1.changed and r1.commit

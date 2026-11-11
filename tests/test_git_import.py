@@ -47,7 +47,10 @@ def _commit_files(remote: Path, files: dict[str, str], tmp: Path, symlinks: dict
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
     for rel, dest in (symlinks or {}).items():
-        os.symlink(dest, work / rel)
+        try:
+            os.symlink(dest, work / rel)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlink creation needs admin privileges on Windows")
     _git("add", "-A", cwd=work)
     _git("commit", "-qm", "manual", cwd=work)
     _git("push", "-q", "origin", "HEAD:main", cwd=work)

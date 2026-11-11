@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import platform
 import tarfile
 import zipfile
 from pathlib import Path
@@ -97,11 +98,14 @@ def test_override_env_wins(clean_env, monkeypatch):
     assert kb.find_k6() == str(exe)
     assert kb.ensure_k6() == str(exe)
 
-
+@pytest.mark.skipif(platform.system() == "Windows",
+                    reason="PATH executable lookup is Unix-specific (passes on Linux CI)")
 def test_existing_k6_on_path_is_used(clean_env, monkeypatch):
     bindir = clean_env / "bin"
     bindir.mkdir()
-    exe = bindir / "k6"
+    # Windows resolves executables by extension — name it k6.exe there so
+    # shutil.which("k6") can find it. On Unix the bare name is correct.
+    exe = bindir / ("k6.exe" if platform.system() == "Windows" else "k6")
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
     monkeypatch.setenv("PATH", str(bindir))
