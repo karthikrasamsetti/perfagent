@@ -14,7 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, SecretStr
 
-from perfagent import audit
+from perfagent import audit, integrations
 from perfagent.config import get_settings
 from perfagent.data import load_data
 from perfagent.db import DataFileRow, PlanRow, get_session
@@ -132,6 +132,8 @@ def git_import(body: ImportBody) -> dict:
         s.commit()
         plan_id = plan.id
 
+    integrations.save(plan_id, git={"repo_url": target.repo_url, "branch": target.branch,
+                                    "framework": imported.framework, "test": imported.test})
     audit.record("git.imported", entity="plan", entity_id=plan_id, target=model.target_base_url,
                  summary=f"Imported {imported.framework}/tests/{imported.test} from Git ({sha[:8]})")
     return {

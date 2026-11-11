@@ -117,6 +117,24 @@ class AuditRow(Base):
     cost_usd: Mapped[float] = mapped_column(default=0.0)  # rough cost estimate
 
 
+class IntegrationSettingsRow(Base):
+    """Saved, NON-secret Git and Jenkins details, so users don't retype them.
+
+    One row per plan (plan_id = the plan's id) plus one row with plan_id "__last__"
+    holding the most recently used values, used as defaults for new plans.
+    Tokens, API keys and test secrets are never stored here (see perfagent.integrations).
+    Its own table, so existing databases just gain it on start-up — no migration.
+    """
+
+    __tablename__ = "integration_settings"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    plan_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
+    git_json: Mapped[str] = mapped_column(Text, default="{}")       # repo, branch, framework, ...
+    jenkins_json: Mapped[str] = mapped_column(Text, default="{}")   # url, user name, job, ...
+
+
 _engine = None
 
 

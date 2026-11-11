@@ -49,10 +49,14 @@ from perfagent.providers import build_provider
 from perfagent.runner import get_run, k6_available, start_run, stop_run
 from perfagent.api.export_routes import router as export_router
 from perfagent.api.git_import_routes import router as git_import_router
+from perfagent.api.jenkins_routes import router as jenkins_router
+from perfagent.api.integration_routes import router as integration_router
 
 app = FastAPI(title="AI Performance Testing Agent")
 app.include_router(export_router)
 app.include_router(git_import_router)
+app.include_router(jenkins_router)
+app.include_router(integration_router)
 _configure_logging()
 _log = get_logger("perfagent.api")
 

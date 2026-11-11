@@ -118,7 +118,10 @@ param(
   [string]$Test = "all",
   [string]$Environment = "dev"
 )
-$ErrorActionPreference = "Stop"
+# "Continue", not "Stop": Windows PowerShell 5.1 can turn a native program's stderr
+# (k6 logs warnings there) into a terminating error under "Stop", e.g. inside Jenkins.
+# Every failure below is checked explicitly and ends with an exit code instead.
+$ErrorActionPreference = "Continue"
 Set-Location (Join-Path $PSScriptRoot "..")
 
 if ("$Test$Environment" -match '[\\/]|\.\.') { Write-Error "Invalid test or environment name"; exit 2 }
@@ -228,23 +231,64 @@ jobs:
 
 
 def jenkins(ctx: dict) -> str:
-    install = _sub(_INSTALL_K6, **ctx) + (
-        '\nmkdir -p "$WORKSPACE/.bin" && mv /tmp/@@K6_DIR@@/k6 "$WORKSPACE/.bin/k6"'
+    """Jenkinsfile that works on Linux/macOS agents (sh) and Windows agents (PowerShell).
+
+    k6 is downloaded once per workspace into .bin/k6-<version>/ and checked against the
+    pinned SHA-256; later builds reuse it. No backslashes are used anywhere, so Groovy
+    string escaping can't change the commands."""
+    ver = ctx["k6_version"]
+    k6_dir = f".bin/k6-{ver}"
+    lin_dir = ctx["k6_tar"].removesuffix(".tar.gz")
+    win_dir = ctx["k6_win_zip"].removesuffix(".zip")
+    unix_install = f"""\
+if [ -x "$WORKSPACE/{k6_dir}/k6" ]; then "$WORKSPACE/{k6_dir}/k6" version; exit 0; fi
+TMP="$WORKSPACE/.k6tmp"
+rm -rf "$TMP" && mkdir -p "$TMP" "$WORKSPACE/{k6_dir}"
+curl -fsSL -o "$TMP/k6.tgz" https://github.com/grafana/k6/releases/download/{ver}/{ctx["k6_tar"]}
+echo "{ctx["k6_sha"]}  $TMP/k6.tgz" | sha256sum -c -
+tar -xzf "$TMP/k6.tgz" -C "$TMP"
+mv "$TMP/{lin_dir}/k6" "$WORKSPACE/{k6_dir}/k6"
+rm -rf "$TMP"
+"$WORKSPACE/{k6_dir}/k6" version"""
+    win_install = f"""\
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$bin = Join-Path $env:WORKSPACE '{k6_dir}'
+$exe = Join-Path $bin 'k6.exe'
+if (Test-Path $exe) {{ & $exe version; exit 0 }}
+$tmp = Join-Path $env:WORKSPACE '.k6tmp'
+if (Test-Path $tmp) {{ Remove-Item -Recurse -Force $tmp }}
+New-Item -ItemType Directory -Force -Path $tmp, $bin | Out-Null
+$zip = Join-Path $tmp 'k6.zip'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/grafana/k6/releases/download/{ver}/{ctx["k6_win_zip"]}' -OutFile $zip
+$hash = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
+if ($hash -ne '{ctx["k6_win_sha"]}') {{ throw "k6 download failed its checksum check ($hash)" }}
+Expand-Archive -Path $zip -DestinationPath $tmp -Force
+Copy-Item -Force (Join-Path $tmp '{win_dir}/k6.exe') $exe
+Remove-Item -Recurse -Force $tmp
+& $exe version"""
+    unix_run = f"""sh 'PATH="$WORKSPACE/{k6_dir}:$PATH" sh scripts/run-tests.sh "$TEST" "$PERF_ENV"'"""
+    win_run = (f"""powershell '$env:PATH = (Join-Path $env:WORKSPACE "{k6_dir}") + ";" + $env:PATH; """
+               """& ./scripts/run-tests.ps1 -Test $env:TEST -Environment $env:PERF_ENV; exit $LASTEXITCODE'""")
+    run_steps = (
+        "script {\n"
+        "  if (isUnix()) {\n"
+        f"    {unix_run}\n"
+        "  } else {\n"
+        f"    {win_run}\n"
+        "  }\n"
+        "}"
     )
-    run = 'sh \'PATH="$WORKSPACE/.bin:$PATH" sh scripts/run-tests.sh "$TEST" "$PERF_ENV"\''
     if ctx["secrets"]:
-        creds = ",\n".join(
-            f"              string(credentialsId: '{s}', variable: '{s}')" for s in ctx["secrets"]
-        )
-        run_block = (
-            "            withCredentials([\n" + creds + "\n            ]) {\n"
-            f"              {run}\n            }}"
-        )
+        creds = ",\n".join(f"  string(credentialsId: '{s}', variable: '{s}')" for s in ctx["secrets"])
+        run_block = "withCredentials([\n" + creds + "\n]) {\n" + _indent(run_steps, 2) + "\n}"
     else:
-        run_block = f"            {run}"
+        run_block = run_steps
     body = """\
 // Managed by PerfAgent - regenerated on every export of the '@@FW@@' framework.
 // In your Jenkins job set "Script Path" to: @@FW@@/ci/Jenkinsfile
+// Works on Linux/macOS agents (sh) and Windows agents (PowerShell).
 // Create a "Secret text" credential for each secret below (ID = variable name).
 pipeline {
   agent any
@@ -256,9 +300,17 @@ pipeline {
   stages {
     stage('Install k6') {
       steps {
-        sh '''
-@@INSTALL@@
+        script {
+          if (isUnix()) {
+            sh '''
+@@UNIX_INSTALL@@
 '''
+          } else {
+            powershell '''
+@@WIN_INSTALL@@
+'''
+          }
+        }
       }
     }
     stage('Performance tests') {
@@ -276,8 +328,10 @@ pipeline {
   }
 }
 """
-    out = body.replace("@@INSTALL@@", _indent(install, 10)).replace("@@RUN@@", run_block)
-    return _sub(out, fw=ctx["fw"], k6_dir=ctx["k6_tar"].removesuffix(".tar.gz"))
+    out = (body.replace("@@UNIX_INSTALL@@", _indent(unix_install, 12))
+               .replace("@@WIN_INSTALL@@", _indent(win_install, 12))
+               .replace("@@RUN@@", _indent(run_block, 10)))
+    return _sub(out, fw=ctx["fw"])
 
 
 def azure(ctx: dict) -> str:

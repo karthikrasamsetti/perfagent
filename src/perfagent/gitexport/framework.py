@@ -279,8 +279,9 @@ def build_framework(
     _write(repo_root, f"{fw_rel}scripts/run-tests.ps1", templates.RUN_PS1, result)
 
     k6_tar, k6_sha = _ARCHIVES[("linux", "amd64")]
+    k6_win_zip, k6_win_sha = _ARCHIVES[("windows", "amd64")]
     ctx = {"fw": fw, "secrets": all_secrets, "k6_version": K6_VERSION,
-           "k6_tar": k6_tar, "k6_sha": k6_sha}
+           "k6_tar": k6_tar, "k6_sha": k6_sha, "k6_win_zip": k6_win_zip, "k6_win_sha": k6_win_sha}
     if "github" in ci_set:
         _write(repo_root, f".github/workflows/perf-{fw}.yml", templates.github(ctx), result)
     if "jenkins" in ci_set:

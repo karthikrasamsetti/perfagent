@@ -379,3 +379,17 @@ def test_api_push_is_audited(api, bare_repo):
     pushed = [e for e in events if e["action"] == "git.pushed"]
     assert pushed and "fw/tests/t" in pushed[0]["summary"]
     assert SECRET not in str(events)
+
+
+def test_jenkinsfile_supports_windows_and_linux_agents(tmp_path):
+    from perfagent.runner.k6_binary import _ARCHIVES
+    build_framework(tmp_path, framework_name="fw", test_name="t", model=_model(),
+                    plan_id="a" * 32, script_id="b" * 32)
+    jf = (tmp_path / "fw/ci/Jenkinsfile").read_text()
+    assert "if (isUnix())" in jf and "powershell '''" in jf and "sh '''" in jf
+    assert _ARCHIVES[("windows", "amd64")][1] in jf and _ARCHIVES[("linux", "amd64")][1] in jf
+    assert "./scripts/run-tests.ps1 -Test $env:TEST -Environment $env:PERF_ENV; exit $LASTEXITCODE" in jf
+    assert "\\" not in jf          # no backslashes: Groovy string escaping can't alter commands
+    assert jf.count("credentialsId: 'PERF_HEADER_AUTHORIZATION'") == 1
+    ps1 = (tmp_path / "fw/scripts/run-tests.ps1").read_text()
+    assert '$ErrorActionPreference = "Continue"' in ps1

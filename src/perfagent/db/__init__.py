@@ -2,6 +2,7 @@ from perfagent.db.models import (
     AuditRow,
     Base,
     DataFileRow,
+    IntegrationSettingsRow,
     PlanRow,
     RunResultRow,
     ScriptRow,
@@ -10,4 +11,5 @@ from perfagent.db.models import (
 )
 
 __all__ = ["Base", "PlanRow", "ScriptRow", "DataFileRow", "RunResultRow", "AuditRow",
+           "IntegrationSettingsRow",
            "get_engine", "get_session"]

@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     # Allow file:// and local paths as repositories (tests / local demos only).
     git_allow_local: bool = Field(default=False)
 
+    # ---- Jenkins ---------------------------------------------------------------
+    # Users enter the Jenkins URL, user name and API token in the UI for each action;
+    # nothing is stored. Comma-separated Jenkins hosts users may call, e.g.
+    # "jenkins.mycorp.com". Empty = any host. Recommended when hosted.
+    jenkins_allowed_hosts: str = Field(default="")
+
 
 @lru_cache
 def get_settings() -> Settings:

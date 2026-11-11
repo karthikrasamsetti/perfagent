@@ -490,7 +490,10 @@
     </div>
 
     <div class="card" id="gitCard">
-      <h2 style="margin:0">Save to Git for CI/CD</h2>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">Save to Git for CI/CD</h2>
+        <span class="muted" id="gitSaved" style="font-size:12px;display:none"></span>
+      </div>
       <p class="hint">Saves this test into a named k6 framework with ready-made pipelines. Secrets (auth headers) are never committed; CI provides them.</p>
       <div class="grid2">
         <div class="field"><label>Framework name</label><input id="gitFw" placeholder="e.g. payments-perf" /></div>
@@ -518,6 +521,51 @@
         <button class="btn" id="gitBtn" onclick="exportGit()" disabled>⇪ Push to Git</button>
       </div>
       <div class="statusline" id="gitStatus"></div>
+    </div>
+
+    <div class="card" id="jenkinsCard">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="margin:0">Run in Jenkins</h2>
+        <span class="pill ghost" id="jkPill" style="display:none"></span>
+        <a id="jkLink" href="#" target="_blank" rel="noopener" style="display:none;font-size:12.5px">Open build in Jenkins ↗</a>
+        <span class="muted" id="jkSaved" style="font-size:12px;display:none"></span>
+      </div>
+      <p class="hint">Triggers the Jenkins pipeline for a test you saved to Git and follows it here. Jenkins runs the version in Git — push your latest changes first.</p>
+      <div class="grid3">
+        <div class="field"><label>Jenkins URL</label><input id="jkUrl" placeholder="https://jenkins.mycompany.com" autocomplete="off" /></div>
+        <div class="field"><label>Jenkins user name</label><input id="jkUser" autocomplete="off" /></div>
+        <div class="field"><label>API token</label><input id="jkToken" type="password" placeholder="Jenkins → your name → Security → API Token" autocomplete="new-password" spellcheck="false" /></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>Job name</label><input id="jkJob" placeholder="e.g. demo-perf  (folders: perf/demo-perf)" autocomplete="off" /></div>
+        <div class="field"><label>Test</label><input id="jkTest" placeholder="test name, or all" autocomplete="off" /></div>
+        <div class="field"><label>Environment</label><input id="jkEnv" value="dev" autocomplete="off" /></div>
+      </div>
+      <p class="hint" id="jkHint" style="margin:-6px 0 12px">The API token is used only for these calls and is never saved. The job needs Jenkins credentials for the test's secrets (e.g. PERF_HEADER_AUTHORIZATION).</p>
+
+      <div id="jkSetup" style="display:none;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px">
+        <b style="font-size:13px">Set up the Jenkins job</b>
+        <p class="hint" style="margin:4px 0 10px">Creates the Pipeline job (or updates it if it exists) so it builds <code class="k">&lt;framework&gt;/ci/Jenkinsfile</code> from your repository, with the Test and Environment parameters ready — no manual first build. Needs the Job/Create permission.</p>
+        <div class="grid2">
+          <div class="field"><label>Repository URL</label><input id="jkRepo" placeholder="https://github.com/org/perf-tests.git" autocomplete="off" /></div>
+          <div class="field"><label>Branch</label><input id="jkBranch" value="main" autocomplete="off" /></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Framework name</label><input id="jkFw" placeholder="e.g. demo-perf" autocomplete="off" /></div>
+          <div class="field"><label>Git credentials ID in Jenkins (private repositories)</label><input id="jkGitCred" placeholder="optional, e.g. github-pat" autocomplete="off" /></div>
+        </div>
+        <div class="btnrow" style="margin-top:4px"><button class="btn ghost sm" onclick="jenkinsSetup()">Create / update job</button></div>
+      </div>
+
+      <div class="btnrow">
+        <button class="btn ghost sm" onclick="toggleJenkinsSetup()">⚙ Set up Jenkins job</button>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="jkStopBtn" onclick="jenkinsStop()" disabled>■ Stop</button>
+        <button class="btn" id="jkRunBtn" onclick="jenkinsRun()">▶ Run in Jenkins</button>
+      </div>
+      <div class="statusline" id="jkStatus"></div>
+      <div id="jkResults" style="display:none;margin-top:12px"></div>
+      <pre id="jkLog" style="display:none;max-height:260px;margin-top:12px;font-size:11.5px"></pre>
     </div>
   </div>
 
@@ -647,6 +695,7 @@ async function doChatPlan(){
     // got a plan -> load it into the review step, exactly like doPlan()
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
     document.getElementById('importNote').style.display='none';
+    applyIntegrations(j.plan_id);
     renderPlanForm(); renderRawFromModel();
     showGuardrail(j.guardrail); showPlanEval(j.evaluation); showUsage(j.usage); refreshUsage();
     document.getElementById('planMeta').style.display='inline-flex';
@@ -831,6 +880,7 @@ async function doPlan(){
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
     document.getElementById('importNote').style.display='none';
+    applyIntegrations(j.plan_id);
     renderPlanForm(); renderRawFromModel();
     showGuardrail(j.guardrail); showPlanEval(j.evaluation); showUsage(j.usage); refreshUsage();
     document.getElementById('planMeta').style.display='inline-flex';
@@ -1068,6 +1118,165 @@ async function doGenerate(){
 }
 function download(){ if(currentScriptId) location=`/api/scripts/${currentScriptId}/download`; }
 
+/* ---------- saved (non-secret) Git & Jenkins details ---------- */
+const GIT_FIELDS={repo_url:'gitRepo', branch:'gitBranch', framework:'gitFw', test:'gitTest'};
+const JK_FIELDS={url:'jkUrl', username:'jkUser', job:'jkJob', test:'jkTest', environment:'jkEnv',
+                 repo_url:'jkRepo', branch:'jkBranch', framework:'jkFw', git_credentials_id:'jkGitCred'};
+const FIELD_DEFAULTS={gitBranch:'main', jkBranch:'main', jkEnv:'dev'};
+let integrationsSeq=0;
+function setFields(map, values){
+  Object.entries(map).forEach(([key,id])=>{
+    const el=document.getElementById(id); if(!el) return;
+    el.value = values[key] ?? FIELD_DEFAULTS[id] ?? '';
+  });
+}
+async function applyIntegrations(planId){
+  const seq=++integrationsSeq;
+  try{
+    const j=await (await fetch('/api/integrations'+(planId?`?plan_id=${encodeURIComponent(planId)}`:''))).json();
+    if(seq!==integrationsSeq) return;            // a newer plan was opened meanwhile
+    setFields(GIT_FIELDS, j.git||{});
+    if(j.git && Array.isArray(j.git.ci) && j.git.ci.length)
+      document.querySelectorAll('.gitCi').forEach(c=>{ c.checked=j.git.ci.includes(c.value); });
+    const jv={...(j.jenkins||{})};
+    if(!jv.repo_url && j.git && j.git.repo_url) jv.repo_url=j.git.repo_url;
+    if(!jv.framework && j.git && j.git.framework) jv.framework=j.git.framework;
+    if(!jv.job && j.git && j.git.framework) jv.job=j.git.framework;
+    if(!jv.test && j.git && j.git.test) jv.test=j.git.test;
+    setFields(JK_FIELDS, jv);
+    showSaved('gitSaved', (j.saved||[]).includes('git'), 'git');
+    showSaved('jkSaved', (j.saved||[]).includes('jenkins'), 'jenkins');
+  }catch(e){ /* saved details are a convenience; never block the page */ }
+}
+function showSaved(id, saved, section){
+  const el=document.getElementById(id);
+  if(!saved){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='inline';
+  el.innerHTML=`· saved details loaded — just enter your token · <a href="#" onclick="forgetIntegrations('${section}');return false">Forget saved details</a>`;
+}
+async function forgetIntegrations(section){
+  if(!confirm(`Forget the saved ${section==='git'?'Git':'Jenkins'} details for this plan (and the last-used defaults)? Tokens were never saved.`)) return;
+  try{
+    await fetch(`/api/integrations?section=${section}`+(currentPlanId?`&plan_id=${encodeURIComponent(currentPlanId)}`:''),{method:'DELETE'});
+    applyIntegrations(currentPlanId);
+  }catch(e){}
+}
+applyIntegrations(null);
+
+/* ---------- run in Jenkins ---------- */
+let jk={queueId:null, build:null, logNext:0, timer:null, errors:0};
+function jkVal(id){ return document.getElementById(id).value.trim(); }
+function fillIfEmpty(id, v){ const el=document.getElementById(id); if(!el.value.trim() && v) el.value=v; }
+function syncJenkinsDefaults(){
+  fillIfEmpty('jkJob', jkVal('gitFw')); fillIfEmpty('jkTest', jkVal('gitTest'));
+  fillIfEmpty('jkRepo', jkVal('gitRepo')); fillIfEmpty('jkFw', jkVal('gitFw'));
+  if(jkVal('gitBranch') && jkVal('jkBranch')==='main') document.getElementById('jkBranch').value=jkVal('gitBranch');
+}
+function jkAuth(){
+  return {jenkins_url:jkVal('jkUrl'), username:jkVal('jkUser'), api_token:jkVal('jkToken'), job:jkVal('jkJob'), plan_id:currentPlanId||null};
+}
+function jkCheck(st){
+  const a=jkAuth();
+  if(!a.jenkins_url||!a.username||!a.api_token){ st.className='statusline err'; st.textContent='Enter the Jenkins URL, user name and API token.'; return null; }
+  if(!a.job){ st.className='statusline err'; st.textContent='Enter the Jenkins job name.'; return null; }
+  return a;
+}
+function toggleJenkinsSetup(){
+  syncJenkinsDefaults();
+  const el=document.getElementById('jkSetup'); el.style.display = el.style.display==='none' ? 'block' : 'none';
+}
+function jkSetPill(text, cls){
+  const p=document.getElementById('jkPill'); p.style.display='inline-flex'; p.textContent=text; p.className='pill '+cls;
+}
+async function jenkinsSetup(){
+  const st=document.getElementById('jkStatus'); const a=jkCheck(st); if(!a) return;
+  const body={...a, repo_url:jkVal('jkRepo'), branch:jkVal('jkBranch')||'main', framework:jkVal('jkFw'), git_credentials_id:jkVal('jkGitCred')};
+  if(!body.repo_url||!body.framework){ st.className='statusline err'; st.textContent='Enter the repository URL and framework name for the job.'; return; }
+  st.className='statusline'; st.textContent='Setting up the Jenkins job…';
+  try{
+    const j=await gitPost('/api/jenkins/setup-job', body);
+    st.className='statusline ok';
+    applyIntegrations(currentPlanId);
+    st.textContent=`Job '${j.job}' ${j.action}. It builds ${body.framework}/ci/Jenkinsfile from ${body.branch}.`+(j.warnings.length?' Note: '+j.warnings.join(' '):'');
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+async function jenkinsRun(){
+  syncJenkinsDefaults();
+  const st=document.getElementById('jkStatus'); const a=jkCheck(st); if(!a) return;
+  if(jk.timer){ clearInterval(jk.timer); jk.timer=null; }
+  jk={queueId:null, build:null, logNext:0, timer:null, errors:0};
+  const log=document.getElementById('jkLog'); log.textContent=''; log.style.display='none';
+  document.getElementById('jkResults').style.display='none';
+  document.getElementById('jkLink').style.display='none';
+  st.className='statusline'; st.textContent='Triggering Jenkins…';
+  document.getElementById('jkRunBtn').disabled=true;
+  try{
+    const j=await gitPost('/api/jenkins/trigger', {...a, test:jkVal('jkTest')||'all', environment:jkVal('jkEnv')||'dev'});
+    jk.queueId=j.queue_id; jkSetPill('queued','ghost'); applyIntegrations(currentPlanId);
+    st.textContent=`Triggered job '${j.job}'. Waiting for Jenkins…`+(j.warnings.length?' Note: '+j.warnings.join(' '):'');
+    jk.timer=setInterval(jenkinsPoll, 3000); jenkinsPoll();
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; document.getElementById('jkRunBtn').disabled=false; }
+}
+async function jenkinsPoll(){
+  if(jk.polling) return; jk.polling=true;
+  const st=document.getElementById('jkStatus'), log=document.getElementById('jkLog');
+  try{
+    const body={...jkAuth(), log_start:jk.logNext};
+    if(jk.build) body.build_number=jk.build; else body.queue_id=jk.queueId;
+    const j=await gitPost('/api/jenkins/status', body); jk.errors=0;
+    if(j.build_number && !jk.build){ jk.build=j.build_number; document.getElementById('jkStopBtn').disabled=false; }
+    if(j.build_url){ const l=document.getElementById('jkLink'); l.href=j.build_url; l.style.display='inline'; }
+    if(j.log){ log.style.display='block'; const atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;
+      log.textContent+=j.log; if(atEnd) log.scrollTop=log.scrollHeight; }
+    jk.logNext=j.log_next;
+    if(j.state==='queued'){ jkSetPill('queued','ghost'); st.className='statusline'; st.textContent='Queued in Jenkins: '+(j.why||'waiting'); }
+    else if(j.state==='running'){ jkSetPill('running','pass'); st.className='statusline'; st.textContent=`Build #${j.build_number} is running…`; }
+    else if(j.state==='cancelled'){ jenkinsDone(); jkSetPill('cancelled','na'); st.className='statusline err'; st.textContent=j.why||'Cancelled.'; }
+    else if(j.state==='finished' && !j.log_more){
+      jenkinsDone();
+      const v=j.verdict, res=j.result||'';
+      jkSetPill(v?v.toUpperCase():res, v==='pass'?'pass':v==='fail'?'fail':(res==='SUCCESS'?'pass':res==='ABORTED'?'na':'fail'));
+      st.className='statusline '+((v==='pass'||(!v&&res==='SUCCESS'))?'ok':'err');
+      st.textContent=`Build #${j.build_number} finished: ${res}`+(j.duration_ms?` in ${Math.round(j.duration_ms/1000)}s`:'')
+        +(v?` · verdict ${v.toUpperCase()}`:(res==='SUCCESS'?'':' · no k6 results were archived (see the console log)'));
+      renderJenkinsResults(j.results||[]);
+    }
+  }catch(e){
+    jk.errors++;
+    if(jk.errors>=3){ jenkinsDone(); st.className='statusline err'; st.textContent='Stopped following the build: '+e.message; }
+  }finally{ jk.polling=false; }
+}
+function jenkinsDone(){
+  if(jk.timer){ clearInterval(jk.timer); jk.timer=null; }
+  document.getElementById('jkRunBtn').disabled=false; document.getElementById('jkStopBtn').disabled=true;
+}
+function renderJenkinsResults(results){
+  const el=document.getElementById('jkResults'); if(!results.length){ el.style.display='none'; return; }
+  const fmt=(v,suf)=> v===null||v===undefined ? '—' : v+suf;
+  el.innerHTML=results.map(r=>`
+    <div style="display:flex;align-items:center;gap:8px;margin:6px 0"><b>${esc(r.test)}</b>
+      <span class="pill ${r.verdict==='pass'?'pass':r.verdict==='fail'?'fail':'na'}">${esc(r.verdict.toUpperCase())}</span></div>
+    <div class="tiles">
+      <div class="tile"><div class="v">${r.requests}</div><div class="l">Requests</div></div>
+      <div class="tile"><div class="v">${r.rps}</div><div class="l">Req/sec</div></div>
+      <div class="tile"><div class="v">${(r.error_rate*100).toFixed(2)}%</div><div class="l">Error rate</div></div>
+      <div class="tile"><div class="v">${fmt(r.avg_ms,' ms')}</div><div class="l">Avg</div></div>
+      <div class="tile"><div class="v">${fmt(r.p95_ms,' ms')}</div><div class="l">p95</div></div>
+      <div class="tile"><div class="v">${fmt(r.max_ms,' ms')}</div><div class="l">Max</div></div>
+    </div>
+    ${r.thresholds.length?'<table><thead><tr><th>Metric</th><th>Threshold</th><th>Result</th></tr></thead><tbody>'+
+      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed?'pass':'fail'}">${t.passed?'passed':'failed'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
+  el.style.display='block';
+}
+async function jenkinsStop(){
+  if(!jk.build) return;
+  const st=document.getElementById('jkStatus');
+  try{ await gitPost('/api/jenkins/stop', {...jkAuth(), build_number:jk.build}); st.className='statusline'; st.textContent=`Stopping build #${jk.build}…`; }
+  catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+(async()=>{ try{ const j=await (await fetch('/api/jenkins/settings')).json();
+  if(j.allowed_hosts&&j.allowed_hosts.length) document.getElementById('jkHint').textContent+=' Allowed Jenkins hosts: '+j.allowed_hosts.join(', ')+'.'; }catch(e){} })();
+
 /* ---------- save to Git ---------- */
 function setGitExport(enabled, reason){
   document.getElementById('gitBtn').disabled=!enabled;
@@ -1110,6 +1319,7 @@ async function exportGit(){
   try{
     const r=await fetch(`/api/scripts/${currentScriptId}/export/git`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'export failed');
+    applyIntegrations(currentPlanId);
     st.className='statusline ok';
     st.textContent=(j.changed ? `Committed ${j.commit.slice(0,8)} to ${j.branch}: ${j.framework}/tests/${j.test}.` : `No changes — ${j.framework}/tests/${j.test} is already up to date on ${j.branch}.`)
       + secretsNote(j.required_secrets) + (j.warnings.length ? ' Note: '+j.warnings.join(' ') : '');
@@ -1218,9 +1428,7 @@ async function gitImport(fi,ti){
       const di=document.getElementById('dataInfo'); di.style.display='flex'; di.className='note ok';
       di.innerHTML=`📁 Test data from Git: <b>${esc(j.load_model.data_file.filename)}</b> · columns ${dataColumns.map(c=>'<code class="k">'+esc(c)+'</code>').join(' ')}`;
     }
-    document.getElementById('gitRepo').value=document.getElementById('impRepo').value;
-    document.getElementById('gitBranch').value=document.getElementById('impBranch').value||'main';
-    document.getElementById('gitFw').value=j.framework; document.getElementById('gitTest').value=j.test;
+    applyIntegrations(j.plan_id);
     renderPlanForm(); renderRawFromModel();
     document.getElementById('guardrailBadge').style.display='none';
     document.getElementById('planEval').style.display='none';
@@ -1259,6 +1467,7 @@ async function gitUseScript(){
                 target_base_url:document.getElementById('impUseTarget').value.trim(), tool:'k6'};
     const j=await gitPost('/api/scripts/upload', body);
     currentScriptId=j.script_id; currentPlanId=j.plan_id; currentDataFileId=null;
+    applyIntegrations(j.plan_id);
     document.getElementById('scriptOut').textContent=j.content;
     document.getElementById('dlBtn').disabled=false;
     document.getElementById('runBtn').disabled=(j.tool!=='k6');
@@ -1405,6 +1614,7 @@ async function loadPlans(){
 }
 async function openPlan(id){
   document.getElementById('importNote').style.display='none';
+  applyIntegrations(id);
   const j=await (await fetch(`/api/plans/${id}`)).json();
   currentPlanId=id; planModel=j.load_model; planRationale=''; renderPlanForm(); renderRawFromModel();
   document.getElementById('guardrailBadge').style.display='none';
@@ -1509,6 +1719,7 @@ async function uploadExisting(){
     const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'upload failed');
     currentScriptId=j.script_id; currentPlanId=j.plan_id; currentDataFileId=null;
+    applyIntegrations(j.plan_id);
     document.getElementById('scriptOut').textContent=j.content;
     document.getElementById('dlBtn').disabled=false;
     document.getElementById('runBtn').disabled=(j.tool!=='k6');

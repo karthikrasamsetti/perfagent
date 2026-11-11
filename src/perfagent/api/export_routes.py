@@ -17,7 +17,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import select
 
-from perfagent import audit
+from perfagent import audit, integrations
 from perfagent.config import get_settings
 from perfagent.contracts.load_model import LoadModel
 from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
@@ -153,6 +153,8 @@ def export_git(script_id: str, body: ExportBody) -> dict:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     res = built["result"]
+    integrations.save(plan_id, git={"repo_url": pub.repo_url, "branch": pub.branch,
+                                    "framework": res.framework, "test": res.test, "ci": body.ci})
     audit.record(
         "git.pushed" if pub.changed else "git.push_unchanged", entity="script", entity_id=script_id,
         target=model.target_base_url,
