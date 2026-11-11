@@ -168,6 +168,8 @@ def _run_worker(run: RunState, content: str) -> None:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",      # k6 prints Unicode (█ ✓ µ); decode as UTF-8, not the
+            errors="replace",      # OS default (cp1252 on Windows) which garbles them
             bufsize=1,
             cwd=tmpdir,
         )
