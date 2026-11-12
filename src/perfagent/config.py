@@ -64,6 +64,21 @@ class Settings(BaseSettings):
     # "jenkins.mycorp.com". Empty = any host. Recommended when hosted.
     jenkins_allowed_hosts: str = Field(default="")
 
+    # ---- Conversational chat (LangGraph) ---------------------------------------
+    # The multi-turn "Conversation" mode on the Describe step. Turn off to hide it
+    # and fall back to the single-shot describe box.
+    chat_conversation_enabled: bool = Field(default=True)
+    # Where conversation state is checkpointed so a chat survives a refresh or a
+    # restart. A SQLite file path, or ":memory:" to keep conversations in memory only.
+    chat_checkpoint_db: str = Field(default="perfagent_chat.db")
+    # Upper bound on user turns in one conversation (cost + context control).
+    chat_max_turns: int = Field(default=40, gt=0)
+    # How many recent messages are replayed to the model each turn. The structured
+    # draft carries the rest, so this can stay small.
+    chat_history_window: int = Field(default=12, gt=0)
+    # Largest single chat message accepted, in characters.
+    chat_max_message_chars: int = Field(default=8000, gt=0)
+
 
 @lru_cache
 def get_settings() -> Settings:

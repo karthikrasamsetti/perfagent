@@ -150,6 +150,40 @@
   .modebtn{border:none;background:transparent;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;
            color:#6b7280;cursor:pointer;transition:.12s;font-family:inherit}
   .modebtn.active{background:#fff;color:#0a5343;box-shadow:0 1px 2px rgba(20,30,26,.08)}
+
+  /* ---- conversation mode (multi-turn planning chat) ---- */
+  .conv{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(250px,1fr);gap:16px;align-items:start}
+  .conv-main{border:1px solid var(--line);border-radius:12px;background:#fff;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .conv-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .conv-head select{width:auto;max-width:230px;padding:6px 9px;font-size:12.5px}
+  .conv-log{height:380px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;background:#fafbfa}
+  .msg{max-width:86%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+  .msg.user{align-self:flex-end;background:var(--teal);color:#fff;border-bottom-right-radius:4px}
+  .msg.assistant{align-self:flex-start;background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}
+  .msg.assistant.error{background:var(--red-l);color:var(--red);border-color:#f0c8c3}
+  .msg.assistant.plan{background:var(--teal-l);color:var(--teal-d);border-color:var(--teal-ring)}
+  .msg.user.attachment{background:#eef0ee;color:var(--muted);font-size:12px;padding:5px 11px}
+  .msg.typing{color:var(--muted);font-style:italic}
+  .conv-empty{margin:auto;text-align:center;color:var(--muted);max-width:440px;font-size:13px}
+  .conv-empty b{display:block;color:var(--ink);font-size:14.5px;margin-bottom:4px}
+  .conv-chip{display:block;width:100%;text-align:left;margin-top:8px;padding:8px 12px;border:1px solid var(--teal-ring);
+        border-radius:10px;background:var(--teal-l);color:var(--teal-d);font:inherit;font-size:12.5px;cursor:pointer}
+  .conv-chip:hover{background:#dcf0e8}
+  .conv-compose{padding:12px 14px;border-top:1px solid var(--line)}
+  .conv-compose textarea{min-height:58px;resize:vertical}
+  .conv-draft{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff;position:sticky;top:12px}
+  .conv-draft-title{font-weight:650;font-size:13.5px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .drow{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+  .drow .dk{color:var(--muted);flex:none}
+  .drow .dv{font-weight:600;text-align:right;overflow-wrap:anywhere}
+  .drow .dv.todo{color:var(--amber);font-weight:600}
+  .dtag{font-size:10.5px;font-weight:600;color:var(--muted);background:#eef0ee;border-radius:999px;padding:1px 7px;margin-left:5px}
+  .dep{display:flex;gap:7px;align-items:baseline;font-size:12px;padding:3px 0;font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+  .dep .m{font-weight:700;color:var(--blue);flex:none;min-width:44px}
+  .dsec{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px}
+  .dlist{margin:0;padding-left:18px;font-size:12.5px}
+  .dlist li{margin:2px 0}
+  @media(max-width:860px){.conv{grid-template-columns:1fr}.conv-draft{position:static}.conv-log{height:320px}}
   .endpoint{grid-template-columns:86px 1fr 1.3fr 32px 32px !important}
   .gbtn{background:#eef4f1;color:#0a5343;font-size:14px}
   .gbtn:hover{background:#dcefe8}
@@ -327,8 +361,51 @@
 
       <!-- MODE TOGGLE -->
       <div class="modeswitch">
-        <button class="modebtn active" id="modeChatBtn" onclick="setMode('chat')">💬 Chat — describe it</button>
+        <button class="modebtn" id="modeConvBtn" onclick="setMode('conv')" style="display:none">💬 Conversation — talk it through</button>
+        <button class="modebtn active" id="modeChatBtn" onclick="setMode('chat')">✨ Quick — one message</button>
         <button class="modebtn" id="modeManualBtn" onclick="setMode('manual')">⚙️ Manual — fill a form</button>
+      </div>
+
+      <!-- ===== CONVERSATION MODE (multi-turn; shown when /api/chat/config says enabled) ===== -->
+      <div id="modeConv" style="display:none">
+        <div class="conv">
+          <div class="conv-main">
+            <div class="conv-head">
+              <b style="color:var(--teal-d)">Plan it in a conversation</b>
+              <span class="pill ghost" id="convStatus">new</span>
+              <div class="spacer"></div>
+              <select id="convHistory" onchange="convPick(this.value)" aria-label="Recent conversations">
+                <option value="">Recent conversations…</option>
+              </select>
+              <button class="btn ghost sm" onclick="convNew()">＋ New</button>
+            </div>
+            <div class="conv-log" id="convLog" aria-live="polite"></div>
+            <div class="conv-compose">
+              <textarea id="convInput" placeholder="Say what you want to test, answer a question, or ask for a change…" aria-label="Message"></textarea>
+              <details style="margin-top:6px">
+                <summary style="cursor:pointer;font-size:12.5px;color:var(--teal-d)">+ attach a Postman / OpenAPI / HAR collection to this message (optional)</summary>
+                <textarea id="convCollection" style="min-height:90px;margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px" placeholder="Paste collection JSON here (optional)"></textarea>
+              </details>
+              <div class="btnrow">
+                <button class="btn" id="convSendBtn" onclick="convSend()">Send</button>
+                <span class="muted" style="font-size:12px" id="convHint">Enter to send · Shift+Enter for a new line</span>
+                <div class="spacer"></div>
+                <button class="btn danger sm" id="convDeleteBtn" onclick="convDelete()" style="display:none">Delete conversation</button>
+              </div>
+              <div class="note err" id="convError" style="display:none"></div>
+            </div>
+          </div>
+
+          <aside class="conv-draft">
+            <div class="conv-draft-title">📝 Draft so far</div>
+            <div id="convDraft"></div>
+            <div class="note ok" id="convGuard" style="display:none"></div>
+            <div class="btnrow" style="margin-top:12px">
+              <button class="btn" id="convBuildBtn" onclick="convBuild()" disabled>Build plan &rarr;</button>
+            </div>
+            <p class="hint" style="margin:8px 0 0">Builds a plan for you to review and edit. Nothing is generated or run until you approve it.</p>
+          </aside>
+        </div>
       </div>
 
       <!-- ===== CHAT MODE ===== -->
@@ -775,11 +852,224 @@ document.querySelectorAll('.step').forEach(s=>s.addEventListener('click',()=>{
 
 /* ---------- step 1 mode toggle (chat / manual) ---------- */
 function setMode(m){
-  const chat=m==='chat';
-  document.getElementById('modeChat').style.display = chat?'block':'none';
-  document.getElementById('modeManual').style.display = chat?'none':'block';
-  document.getElementById('modeChatBtn').classList.toggle('active', chat);
-  document.getElementById('modeManualBtn').classList.toggle('active', !chat);
+  const ids={conv:'modeConv', chat:'modeChat', manual:'modeManual'};
+  const btns={conv:'modeConvBtn', chat:'modeChatBtn', manual:'modeManualBtn'};
+  for(const k in ids){
+    document.getElementById(ids[k]).style.display = (k===m)?'block':'none';
+    document.getElementById(btns[k]).classList.toggle('active', k===m);
+  }
+}
+
+/* ---------- conversation mode (multi-turn planning chat) ----------
+   Talks to /api/chat/sessions. The server keeps the conversation (LangGraph,
+   checkpointed), so a refresh or restart resumes it. The chat only builds the
+   draft; "Build plan" hands it to the normal Review step. */
+let convId=null, convView=null, convBusy=false;
+const CONV_KEY='perfagent.conversation';
+const CONV_EXAMPLES=[
+  'Load test login and products at http://127.0.0.1:8000 with 10 users for 20 seconds',
+  'Stress test POST /checkout on https://staging.example.com — each order needs a unique id',
+  'I want to soak test my API for 10 minutes. What do you need from me?'
+];
+
+async function convApi(path, opts){
+  const r=await fetch('/api/chat'+path, opts||{});
+  let j={}; try{ j=await r.json(); }catch(e){}
+  if(!r.ok){ const err=new Error(j.detail||('request failed ('+r.status+')')); err.status=r.status; throw err; }
+  return j;
+}
+function convRemember(id){ try{ if(id) localStorage.setItem(CONV_KEY,id); else localStorage.removeItem(CONV_KEY); }catch(e){} }
+function convRecall(){ try{ return localStorage.getItem(CONV_KEY); }catch(e){ return null; } }
+
+async function initConversation(){
+  let cfg; try{ cfg=await convApi('/config'); }catch(e){ return; }
+  if(!cfg.enabled) return;                       // switched off -> Quick/Manual only
+  document.getElementById('modeConvBtn').style.display='';
+  document.getElementById('convInput').addEventListener('keydown', e=>{
+    if(e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); convSend(); }
+  });
+  const saved=convRecall();                      // read before the empty render clears it
+  setMode('conv');
+  convRender(null);
+  convLoadHistory();
+  if(saved) convOpen(saved, true);
+}
+
+async function convLoadHistory(){
+  try{
+    const j=await convApi('/sessions?limit=20');
+    const sel=document.getElementById('convHistory');
+    const label={collecting:'gathering',ready:'ready',planned:'plan built'};
+    sel.innerHTML='<option value="">Recent conversations…</option>'+j.sessions.map(x=>{
+      const t=(x.title||'Untitled').slice(0,48)+((x.title||'').length>48?'…':'');
+      return '<option value="'+esc(x.session_id)+'">'+esc(t)+' · '+(label[x.status]||x.status)+'</option>';
+    }).join('');
+    sel.value='';
+  }catch(e){}
+}
+function convPick(id){ if(id) convOpen(id,false); document.getElementById('convHistory').value=''; }
+
+async function convOpen(id, quiet){
+  try{ convRender(await convApi('/sessions/'+encodeURIComponent(id))); }
+  catch(e){
+    if(e.status===404){ convRemember(null); convRender(null); }
+    if(!quiet) convShowError(e.status===404?'That conversation no longer exists.':e.message);
+  }
+}
+function convNew(){ convRemember(null); convShowError(''); convRender(null); document.getElementById('convInput').focus(); }
+
+async function convDelete(){
+  if(!convId || convBusy) return;
+  if(!confirm('Delete this conversation? Plans already built from it are kept.')) return;
+  try{ await convApi('/sessions/'+encodeURIComponent(convId),{method:'DELETE'}); }
+  catch(e){ if(e.status!==404){ convShowError(e.message); return; } }
+  convNew(); convLoadHistory();
+}
+
+function convShowError(msg){
+  const el=document.getElementById('convError');
+  el.style.display=msg?'flex':'none'; el.textContent=msg||'';
+}
+function convSetBusy(b){
+  convBusy=b;
+  document.getElementById('convSendBtn').disabled=b;
+  document.getElementById('convBuildBtn').disabled=b || !(convView&&convView.ready);
+}
+function convBubble(role, kind, text){
+  const d=document.createElement('div');
+  d.className='msg '+(role==='user'?'user':'assistant')+(kind&&kind!=='text'?(' '+kind):'');
+  d.textContent=text;                               // textContent: never interpreted as HTML
+  return d;
+}
+function convScroll(){ const log=document.getElementById('convLog'); log.scrollTop=log.scrollHeight; }
+
+function convRender(v){
+  convView=v; convId=v?v.session_id:null; convRemember(convId);
+  const log=document.getElementById('convLog'); log.innerHTML='';
+  if(!v){
+    const e=document.createElement('div'); e.className='conv-empty';
+    e.innerHTML='<b>What would you like to load test?</b>Describe it in your own words. I\'ll ask for anything I still need, and you can keep refining before a plan is built.';
+    CONV_EXAMPLES.forEach(t=>{
+      const b=document.createElement('button'); b.type='button'; b.className='conv-chip'; b.textContent=t;
+      b.onclick=()=>{ const i=document.getElementById('convInput'); i.value=t; i.focus(); };
+      e.appendChild(b);
+    });
+    log.appendChild(e);
+  } else {
+    v.messages.forEach(m=>log.appendChild(convBubble(m.role, m.kind, m.content)));
+  }
+  const st=document.getElementById('convStatus');
+  const names={collecting:['gathering details','pill na'],ready:['ready to build','pill pass'],planned:['plan built','pill pass']};
+  const n=v?names[v.status]:null;
+  st.textContent=n?n[0]:'new'; st.className=n?n[1]:'pill ghost';
+  document.getElementById('convDeleteBtn').style.display=v?'':'none';
+  document.getElementById('convHint').textContent=(v && v.turns_left<=3)
+    ? (v.turns_left+' message'+(v.turns_left===1?'':'s')+' left in this conversation')
+    : 'Enter to send · Shift+Enter for a new line';
+  convRenderDraft(v);
+  convSetBusy(convBusy);
+  convScroll();
+}
+
+function convRenderDraft(v){
+  const el=document.getElementById('convDraft');
+  const guard=document.getElementById('convGuard');
+  const btn=document.getElementById('convBuildBtn');
+  if(!v){
+    el.innerHTML='<p class="muted" style="margin:0;font-size:12.5px">The target, endpoints and load size appear here as we talk, so you can see exactly what the plan will be built from.</p>';
+    guard.style.display='none'; btn.innerHTML='Build plan &rarr;'; return;
+  }
+  const d=v.draft, miss=v.missing||[];
+  const dur=s=>s>=60 ? (Math.floor(s/60)+' min'+(s%60?(' '+(s%60)+' s'):'')) : (s+' s');
+  const tag=a=>a?'<span class="dtag" title="You didn\'t say, so this default will be used">default</span>':'';
+  let h='';
+  h+='<div class="drow"><span class="dk">Target</span>'+(d.target_base_url
+      ? '<span class="dv">'+esc(d.target_base_url)+'</span>'
+      : '<span class="dv todo">needed</span>')+'</div>';
+  h+='<div class="drow"><span class="dk">Test type</span><span class="dv">'+esc(d.profile_type)+'</span></div>';
+  h+='<div class="drow"><span class="dk">Peak users</span><span class="dv">'+d.max_users+tag(d.assumed.max_users)+'</span></div>';
+  h+='<div class="drow"><span class="dk">Duration</span><span class="dv">'+dur(d.duration_seconds)+tag(d.assumed.duration_seconds)+'</span></div>';
+  h+='<div class="dsec">Endpoints</div>';
+  if(d.endpoints.length){
+    h+=d.endpoints.map(e=>'<div class="dep"><span class="m">'+esc(e.method)+'</span><span>'+esc(e.path)+
+        (e.example_body?' <span class="dtag">body</span>':'')+'</span></div>').join('');
+  } else { h+='<div class="drow" style="border:0"><span class="dv todo">needed</span></div>'; }
+  const open=(v.questions||[]);
+  if(open.length){
+    h+='<div class="dsec">'+(miss.length?'Still needed':'Open questions')+'</div><ul class="dlist">'+
+       open.map(q=>'<li>'+esc(q)+'</li>').join('')+'</ul>';
+  }
+  if(d.notes){ h+='<div class="dsec">Assumptions</div><div style="font-size:12.5px">'+esc(d.notes)+'</div>'; }
+  if(d.secrets_masked){
+    h+='<div class="note warn" style="margin-top:10px">🔒 A secret value was masked before the AI saw it. Set the real value in the review step, or use a data file.</div>';
+  }
+  el.innerHTML=h;
+  const g=v.guardrail;
+  if(g && g.total>0){ guard.style.display='flex';
+    guard.innerHTML='🛡 <span><b>'+g.total+' sensitive value'+(g.total!==1?'s':'')+'</b> masked before the AI saw them ('+esc(g.detail)+')</span>'; }
+  else guard.style.display='none';
+  btn.innerHTML = v.plan_current ? 'Open plan in review &rarr;' : (v.plan ? 'Rebuild plan &rarr;' : 'Build plan &rarr;');
+}
+
+async function convSend(){
+  if(convBusy) return;
+  const input=document.getElementById('convInput'), coll=document.getElementById('convCollection');
+  const text=input.value.trim(); if(!text){ input.focus(); return; }
+  convShowError('');
+  const log=document.getElementById('convLog');
+  if(!convId) log.innerHTML='';
+  log.appendChild(convBubble('user','text',text));           // show it straight away
+  const typing=convBubble('assistant','typing','Thinking…'); log.appendChild(typing); convScroll();
+  convSetBusy(true);
+  const hadPlan=!!(convView&&convView.plan_current);
+  const starting=!convId;
+  try{
+    const body=JSON.stringify({message:text, collection_text:coll.value.trim()});
+    const opts={method:'POST',headers:{'Content-Type':'application/json'},body};
+    const v=await convApi(starting?'/sessions':('/sessions/'+encodeURIComponent(convId)+'/messages'), opts);
+    input.value=''; coll.value='';
+    convBusy=false; convRender(v); refreshUsage();
+    if(starting) convLoadHistory();
+    // "go ahead" in chat built a fresh plan -> take the user to review it
+    if(v.plan_current && !hadPlan) convOpenPlan(v.plan);
+  }catch(e){
+    typing.remove(); convBusy=false; convSetBusy(false);
+    if(convView) convRender(convView); else if(starting) convRender(null);
+    input.value=text;                                          // keep what they typed
+    convShowError(e.message);
+  }
+  input.focus();
+}
+
+async function convBuild(){
+  if(convBusy || !convView || !convView.ready) return;
+  if(convView.plan_current){ convOpenPlan(convView.plan); return; }   // already built, nothing changed
+  convShowError('');
+  const log=document.getElementById('convLog');
+  const typing=convBubble('assistant','typing','Drafting the plan…'); log.appendChild(typing); convScroll();
+  convSetBusy(true);
+  try{
+    const v=await convApi('/sessions/'+encodeURIComponent(convId)+'/build',{method:'POST'});
+    convBusy=false; convRender(v); refreshUsage(); convLoadHistory();
+    if(v.plan_current) convOpenPlan(v.plan);
+    else if(v.error) convShowError('The plan could not be drafted. Try again in a moment.');
+  }catch(e){ typing.remove(); convBusy=false; convSetBusy(false); convShowError(e.message); }
+}
+
+/* Hand a conversation-built plan to the Review step — same as the other two modes. */
+function convOpenPlan(p){
+  if(!p) return;
+  if(currentPlanId!==p.plan_id){                    // don't overwrite edits made in review
+    currentPlanId=p.plan_id; planModel=p.load_model; planRationale=p.rationale||'';
+    document.getElementById('importNote').style.display='none';
+    applyIntegrations(p.plan_id);
+    renderPlanForm(); renderRawFromModel();
+    showGuardrail(p.guardrail); showPlanEval(p.evaluation); showUsage(p.usage);
+    document.getElementById('planMeta').style.display='inline-flex';
+    document.getElementById('planMeta').textContent='drafted by '+p.provider+' (from conversation)';
+    loadPlans();
+  }
+  goStep(2);
 }
 
 /* ---------- chat-to-plan ---------- */
@@ -2270,6 +2560,7 @@ loadPlans();
 loadRuns();
 loadAudit();
 refreshUsage();
+initConversation();
 loadSlaProfiles();
 loadTraces();
 goStep(1);

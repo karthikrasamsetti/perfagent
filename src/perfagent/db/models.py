@@ -8,6 +8,7 @@ by filename in the plan's LoadModel) so lineage is queryable.
 
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import datetime, timezone
 
@@ -167,14 +168,43 @@ class IntegrationSettingsRow(Base):
     jenkins_json: Mapped[str] = mapped_column(Text, default="{}")   # url, user name, job, ...
 
 
+class ChatSessionRow(Base):
+    """One planning conversation — the index row for the Conversation mode.
+
+    The conversation itself (messages, the structured draft, the last plan) lives in
+    the LangGraph checkpoint store, keyed by this row's id (the thread id). This row
+    only holds what the "recent conversations" list needs. Message text is stored
+    with one-way secrets already masked. Its own table, so existing databases just
+    gain it on start-up — no migration.
+    """
+
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now, index=True)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    # collecting | ready | planned
+    status: Mapped[str] = mapped_column(String(20), default="collecting")
+    turns: Mapped[int] = mapped_column(default=0)                # user turns so far
+    plan_id: Mapped[str] = mapped_column(String(32), default="")  # last plan built from it
+
+
 _engine = None
+_engine_lock = threading.Lock()
 
 
 def get_engine(db_url: str = "sqlite:///perfagent.db"):
     global _engine
     if _engine is None:
-        _engine = create_engine(db_url, echo=False)
-        Base.metadata.create_all(_engine)
+        # The page fires several API calls at once on load; without the lock two of
+        # them could both create the tables on a brand-new database and one would
+        # fail with "table ... already exists".
+        with _engine_lock:
+            if _engine is None:
+                engine = create_engine(db_url, echo=False)
+                Base.metadata.create_all(engine)
+                _engine = engine
     return _engine
 
 
