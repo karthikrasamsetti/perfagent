@@ -23,7 +23,8 @@ against your last run and is saved to a browsable history.
 ## Table of contents
 
 - [Why this exists](#why-this-exists)
-- [Two ways to build a test](#two-ways-to-build-a-test)
+- [Three ways to build a test](#three-ways-to-build-a-test)
+- [Conversation mode](#conversation-mode)
 - [The 5-step workflow](#the-5-step-workflow)
 - [Feature highlights](#feature-highlights)
 - [Dynamic test data — the three sources](#dynamic-test-data--the-three-sources)
@@ -71,17 +72,60 @@ anything that must be exact.
 
 ---
 
-## Two ways to build a test
+## Three ways to build a test
 
-Step 1 offers a toggle between two modes:
+Step 1 offers a toggle between three modes:
 
-- **💬 Chat — describe it:** type what you want in plain English ("load test login and
+- **💬 Conversation — talk it through:** a real back-and-forth. Say what you want, answer
+  what the agent still needs, keep refining ("make it 200 users", "drop /checkout"), and
+  build the plan when the draft looks right. See [Conversation mode](#conversation-mode).
+- **✨ Quick — one message:** type what you want in plain English ("load test login and
   checkout, 100 users, make each signup email unique"). The AI drafts a plan you review.
 - **⚙️ Manual — fill a form:** full control — endpoints, import, data files, headers, test
   type, environment, a body editor with one-click **dynamic data**, and "run an existing script."
 
-Both produce the same structured plan you review and approve. Inline **ℹ️ tooltips** explain
+All three produce the same structured plan you review and approve. Inline **ℹ️ tooltips** explain
 every concept, so a QA engineer can use it without a walkthrough.
+
+---
+
+## Conversation mode
+
+A multi-turn chat that builds the plan with you. A **Draft so far** panel beside the chat
+shows the target, endpoints and load size as they firm up, so the plan is never a surprise.
+
+- **The draft is the source of truth, not the chat text.** Each turn the AI returns a
+  schema-validated update; code merges it into the draft, so a later message can't silently
+  drop something you said earlier.
+- **Code decides when it's ready.** A plan can be built once there is a target URL and at
+  least one endpoint. Users and duration fall back to 20 users / 60 s and are marked
+  *default* until you state them.
+- **Build when you're happy** — press **Build plan**, or just say "go ahead". The plan opens
+  in Step 2 like any other. Come back and keep chatting to refine it; the button becomes
+  **Rebuild plan** when the draft has changed.
+- **It only plans.** The conversation never generates a script or fires load — you still
+  review and approve in Step 2.
+- **Conversations are saved.** A refresh or an app restart resumes where you left off, and
+  recent conversations can be reopened from the drop-down.
+- **Secrets are masked before they are stored or sent.** Passwords, tokens and emails typed
+  into the chat are replaced with placeholders before the message is saved and before the AI
+  sees it; set real values in the review step or use a data file.
+
+Under the hood it is a small **LangGraph** graph — `understand → await_user → build_plan` —
+checkpointed per conversation in `perfagent_chat.db`. The wait for your reply is a LangGraph
+*interrupt*, the same mechanism the approval gate will use when the run steps join the graph.
+
+| Setting (`.env`) | Default | Meaning |
+|---|---|---|
+| `CHAT_CONVERSATION_ENABLED` | `true` | Turn the mode off to fall back to Quick + Manual. |
+| `CHAT_CHECKPOINT_DB` | `perfagent_chat.db` | Where conversations are saved; `:memory:` keeps them in memory only. |
+| `CHAT_MAX_TURNS` | `40` | Most user messages in one conversation. |
+| `CHAT_HISTORY_WINDOW` | `12` | Recent messages replayed to the AI each turn (the draft carries the rest). |
+| `CHAT_MAX_MESSAGE_CHARS` | `8000` | Largest single message. |
+
+API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
+`POST /api/chat/sessions/{id}/build`, `GET /api/chat/sessions[/{id}]`,
+`DELETE /api/chat/sessions/{id}`. The single-shot `POST /api/chat-plan` is unchanged.
 
 ---
 
@@ -570,6 +614,8 @@ flowchart TD
 | `config.py` | Settings + secrets from `.env` (incl. `log_level`, `guardrail_debug`, Git/Jenkins allow-lists). |
 | `contracts/load_model.py` | Core model: `LoadModel`, `Scenario`, `Step`, `Extract`, `Assertion`, `LoadProfile`, `Threshold`, `DataFile`, `headers`, `environment`, `insecure_tls`. |
 | `chat_intent.py` | Chat → structured plan intent (plain-English describe). |
+| `chat/` | Conversation mode: `draft.py` (per-turn schema, deterministic merge + readiness), `prompts.py`, `graph.py` (the LangGraph graph), `planning.py` (hand-off to the planner), `service.py` (sessions, secret masking, checkpointing). |
+| `plan_summary.py` | Shared plan rationale / guardrail / token-usage summaries. |
 | `dynamize.py` | AI "add dynamic data" — assign generators/CSV columns to a body's fields. |
 | `check_suggest.py` | AI "suggest checks from a response" — propose assertions from a pasted response. |
 | `importers/endpoints.py` | Import endpoints from OpenAPI/Swagger (JSON+YAML), Postman, HAR. |
@@ -588,9 +634,9 @@ flowchart TD
 | `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS; failed checks count as errors). |
 | `analyzer/verdict.py` · `diagnostics.py` · `baseline.py` · `narrator.py` · `report.py` | Verdict (fail-closed), diagnosis, regression compare, AI narrative, HTML report. |
 | `logging_config.py` · `audit.py` | Structured logging and the audit trail. |
-| `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports & logs), audit, SLA profiles, traces, integration settings. |
-| `api/app.py` + `api/*_routes.py` | FastAPI app: REST API + serves the UI; export / git-import / integration / jenkins routes. |
-| `web/index.html` | The guided wizard UI (chat + manual modes, report dashboard, git/Jenkins panels, single file). |
+| `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports & logs), audit, SLA profiles, traces, integration settings, chat sessions. |
+| `api/app.py` + `api/*_routes.py` | FastAPI app: REST API + serves the UI; export / git-import / integration / jenkins / chat routes. |
+| `web/index.html` | The guided wizard UI (conversation + quick + manual modes, report dashboard, git/Jenkins panels, single file). |
 | `sample_target/app.py` | A mock website to test against safely. |
 
 **Tests** cover the schema, generators (incl. realistic + Postman syntax), planner & profiles
@@ -633,7 +679,8 @@ the Git export / import / Jenkins / integrations features.
 | "no prebuilt k6 for this platform" | Unusual OS/CPU — install k6 manually and set `PERFAGENT_K6_PATH`. |
 | "OPENAI_API_KEY is not set" | Fill the key in `.env` and restart the app. |
 | Run shows 0 requests / "Run error" | The target isn't running, or the URL is wrong. Start the target and retry. |
-| Chat asks clarifying questions | Expected — add the answers to your description and draft again, or use Manual mode. |
+| Quick mode asks clarifying questions | Expected — add the answers to your description and draft again, or use Conversation mode to answer them in place. |
+| Conversation tab is missing | `CHAT_CONVERSATION_ENABLED` is `false`, or dependencies are stale — run `uv sync`. |
 | Imported a spec but no endpoints | Confirm it's valid OpenAPI (JSON/YAML), a Postman collection, or a `.har`. |
 | `/me` (or a protected call) is 401 in pre-flight | Expected — pre-flight hits endpoints alone; correlation flows the token only in a full run. |
 | `table ... already exists` on startup | Delete the SQLite DB once (new tables/columns were added) and restart. |
@@ -644,7 +691,7 @@ the Git export / import / Jenkins / integrations features.
 ## Roadmap
 
 **✅ Working today**
-Chat or form input · import (OpenAPI/Swagger JSON+YAML, Postman, HAR, **and from Git**) · AI
+**Conversational chat (multi-turn, saved, LangGraph)** · quick describe or form input · import (OpenAPI/Swagger JSON+YAML, Postman, HAR, **and from Git**) · AI
 planning with an editable form & plain-English summary · guardrails (+ verify script & debug
 mode) · AI evaluation · correlation (JSON/header/cookie/regex/array, auto-set-up) ·
 **assertions (contains / not-contains / status / JSON compare / response-time) with ✨
@@ -660,12 +707,12 @@ AI traces · modern UI with inline guidance.
 **🔭 Planned next**
 - **More protocols** — gRPC (needs the k6 gRPC extension + `.proto`) and WebSocket streaming.
 - **Live runners for JMeter / Gatling** (scripts generate today; a live runner is k6-only).
-- **Conversational chat** — a true back-and-forth chat interface (replacing the single-shot describe).
+- **Autonomy** — extend the conversation graph so the agent sequences generate → run → diagnose → report itself, with approval as an interrupt.
 - **Scheduled & CI-triggered runs**; trend alerting on regression.
 - **Reliability for the hub** — durable/concurrent run state, load workers, target allow-list & VU caps.
 
 ---
 
 <div align="center">
-<sub>Built with FastAPI · k6 · Pydantic · Instructor · OpenAI / Anthropic · SQLAlchemy · structlog</sub>
+<sub>Built with FastAPI · k6 · Pydantic · Instructor · LangGraph · OpenAI / Anthropic · SQLAlchemy · structlog</sub>
 </div>

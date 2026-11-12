@@ -13,6 +13,7 @@ Endpoints:
   GET  /api/runs/{id}             -> live status + metrics
   POST /api/runs/{id}/stop        -> stop a run
   GET  /api/runs/{id}/report      -> verdict + narrative
+  /api/chat/sessions...           -> conversational planning (see api/chat_routes.py)
 
 Start with:  uv run uvicorn perfagent.api.app:app --reload
 Then open:   http://127.0.0.1:8080
@@ -53,12 +54,19 @@ from perfagent.api.export_routes import router as export_router
 from perfagent.api.git_import_routes import router as git_import_router
 from perfagent.api.jenkins_routes import router as jenkins_router
 from perfagent.api.integration_routes import router as integration_router
+from perfagent.api.chat_routes import router as chat_router
+from perfagent.plan_summary import (
+    plan_rationale as _plan_rationale,
+    summarize_redactions as _summarize_redactions,
+    usage_summary as _usage_summary,
+)
 
 app = FastAPI(title="AI Performance Testing Agent")
 app.include_router(export_router)
 app.include_router(git_import_router)
 app.include_router(jenkins_router)
 app.include_router(integration_router)
+app.include_router(chat_router)
 _configure_logging()
 _log = get_logger("perfagent.api")
 
@@ -77,42 +85,8 @@ class GenerateBody(BaseModel):
     headers: dict[str, str] | None = None
 
 
-# ---------- guardrail reporting ----------
-
-_REDACTION_LABELS = {
-    "EMAIL": "email",
-    "JWT": "auth token",
-    "APIKEY": "API key",
-    "CARD": "card number",
-    "SSN": "SSN",
-    "HOST": "internal host",
-    "PRIVATE_IP": "private IP",
-    "INLINE_SECRET": "secret",
-    "FIELD": "secret field",
-    "URL_HOST": "URL host",
-    "QUERY_SECRET": "URL secret",
-}
-
-
-
-def _usage_summary(provider) -> dict:
-    """Token usage of the provider's last call, for the UI + audit."""
-    u = getattr(provider, "last_usage", None)
-    try:
-        return u.summary() if u else {}
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-def _summarize_redactions(counts: dict) -> dict:
-    """Turn raw redaction counts into a UI-friendly summary. No raw values, ever."""
-    total = sum(counts.values()) if counts else 0
-    parts = []
-    for key, n in sorted(counts.items()):
-        label = _REDACTION_LABELS.get(key, key.lower())
-        parts.append(f"{n} {label}{'s' if n != 1 else ''}")
-    return {"total": total, "detail": ", ".join(parts)}
-
+# ---------- guardrail / usage / rationale summaries ----------
+# Shared with the conversational chat — see perfagent/plan_summary.py.
 
 # ---------- UI ----------
 
@@ -309,32 +283,6 @@ async def import_endpoints_api(file: UploadFile) -> dict:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return result.to_dict()
 
-
-
-def _plan_rationale(model) -> str:
-    """A short, always-accurate explanation of the plan's main choices."""
-    scs = model.scenarios or []
-    if not scs:
-        return ""
-    weights = model.normalised_weights()
-    # the heaviest journey
-    top_i = max(range(len(scs)), key=lambda i: weights[i])
-    top = scs[top_i]
-    bits = []
-    bits.append(
-        f"'{top.name}' is weighted highest ({round(weights[top_i]*100)}%) because it's "
-        f"treated as the most common user action"
-    )
-    # correlation note
-    has_auth = any(k.lower() == "authorization" for k in (model.headers or {}))
-    if has_auth:
-        bits.append("the journey logs in first and reuses the token on protected steps")
-    # profile note
-    bits.append(
-        f"load ramps up, holds, then ramps down over {model.load_profile.total_seconds}s "
-        "so the system is tested gradually rather than all at once"
-    )
-    return "; ".join(bits) + "."
 
 
 @app.post("/api/plan")
