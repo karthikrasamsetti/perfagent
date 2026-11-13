@@ -19,6 +19,9 @@ dependencies = [
     "structlog>=26.1.0",
     "langgraph>=0.4,<2",
     "langgraph-checkpoint-sqlite>=2.0,<4",
+    "psycopg[binary,pool]>=3.2",
+    "alembic>=1.13",
+    "langgraph-checkpoint-postgres>=2.0,<4",
 ]
 
 [dependency-groups]

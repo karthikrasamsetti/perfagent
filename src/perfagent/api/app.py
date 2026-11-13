@@ -14,6 +14,7 @@ Endpoints:
   POST /api/runs/{id}/stop        -> stop a run
   GET  /api/runs/{id}/report      -> verdict + narrative
   /api/chat/sessions...           -> conversational planning (see api/chat_routes.py)
+  GET  /api/health                -> app + database status (which database is in use)
 
 Start with:  uv run uvicorn perfagent.api.app:app --reload
 Then open:   http://127.0.0.1:8080
@@ -87,6 +88,39 @@ class GenerateBody(BaseModel):
 
 # ---------- guardrail / usage / rationale summaries ----------
 # Shared with the conversational chat — see perfagent/plan_summary.py.
+
+# ---------- health ----------
+
+@app.get("/api/health")
+def health() -> dict:
+    """Is the app up and can it reach its database? Also says WHICH database is in
+    use (SQLite or Postgres) and whether its schema is current — handy after
+    switching DATABASE_URL, and usable as a container health check."""
+    from sqlalchemy import text
+
+    from perfagent.db import models as dbmodels
+    from perfagent.db.migrate import current_revision, head_revision
+
+    try:
+        engine = dbmodels.get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        revision = current_revision(engine)
+    except Exception as e:  # noqa: BLE001
+        _log.error("health.database_unavailable", error=f"{type(e).__name__}: {e}"[:300])
+        raise HTTPException(status_code=503, detail="database unavailable") from e
+    url = engine.url
+    return {
+        "status": "ok",
+        "database": {
+            "backend": engine.dialect.name,                 # 'sqlite' | 'postgresql'
+            "host": url.host or "",
+            "name": url.database or "",
+            "schema_revision": revision,
+            "schema_up_to_date": revision == head_revision(),
+        },
+    }
+
 
 # ---------- UI ----------
 

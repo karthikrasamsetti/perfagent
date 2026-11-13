@@ -1,7 +1,10 @@
 """Database — persists plans, scripts, and uploaded data files, with lineage.
 
-Phase 3 uses SQLite by default (a file on disk) so there's nothing to install.
-Swapping to Postgres later is a one-line URL change. Each script row points back to
+SQLite by default (a file on disk) so there's nothing to install; Postgres when
+DATABASE_URL points at one (see db/connection.py). The models below are the same
+for both. Schema changes go through Alembic migrations (db/migrate.py).
+
+Each script row points back to
 the plan row it came from; a data-file row is standalone (uploaded once, referenced
 by filename in the plan's LoadModel) so lineage is queryable.
 """
@@ -12,8 +15,10 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, String, Text, create_engine
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
+
+from perfagent.db.connection import build_engine, install_sanitiser, safe_url
 
 
 def _new_id() -> str:
@@ -190,20 +195,44 @@ class ChatSessionRow(Base):
     plan_id: Mapped[str] = mapped_column(String(32), default="")  # last plan built from it
 
 
+install_sanitiser(Base)
+
 _engine = None
 _engine_lock = threading.Lock()
 
 
-def get_engine(db_url: str = "sqlite:///perfagent.db"):
+def get_engine(db_url: str | None = None):
+    """The app's database engine, created on first use.
+
+    The URL comes from the DATABASE_URL setting (SQLite file by default, Postgres
+    when set). On first use the schema is brought up to date — see db/migrate.py.
+    """
     global _engine
     if _engine is None:
-        # The page fires several API calls at once on load; without the lock two of
-        # them could both create the tables on a brand-new database and one would
-        # fail with "table ... already exists".
+        # The page fires several API calls at once on load; the lock makes sure only
+        # one of them sets the database up.
         with _engine_lock:
             if _engine is None:
-                engine = create_engine(db_url, echo=False)
-                Base.metadata.create_all(engine)
+                from perfagent.config import get_settings
+                from perfagent.db.migrate import prepare_database
+                from perfagent.logging_config import get_logger
+
+                settings = get_settings()
+                url = db_url or settings.database_url
+                engine = build_engine(url, pool_size=settings.database_pool_size)
+                try:
+                    prepare_database(engine)
+                except Exception as e:
+                    engine.dispose()
+                    get_logger("perfagent.db").error(
+                        "db.unavailable", database=safe_url(url),
+                        error=f"{type(e).__name__}: {e}"[:400])
+                    raise RuntimeError(
+                        f"Could not open the database at {safe_url(url)}. Check "
+                        f"DATABASE_URL and that the database is running and reachable. "
+                        f"({type(e).__name__})") from e
+                get_logger("perfagent.db").info(
+                    "db.ready", backend=engine.url.get_backend_name(), database=safe_url(url))
                 _engine = engine
     return _engine
 

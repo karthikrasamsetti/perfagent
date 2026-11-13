@@ -35,6 +35,7 @@ against your last run and is saved to a browsable history.
 - [Running the app](#running-the-app)
 - [Save tests to Git and import them back](#save-tests-to-git-and-import-them-back)
 - [Run in Jenkins](#run-in-jenkins-step-3)
+- [Database — SQLite or Postgres](#database--sqlite-or-postgres)
 - [Running the tests](#running-the-tests)
 - [How it works](#how-it-works)
 - [Data guardrails](#data-guardrails)
@@ -468,6 +469,68 @@ table, which is added automatically to existing databases.
 
 API: `GET /api/integrations?plan_id=…`, `DELETE /api/integrations?plan_id=…&section=git|jenkins|all`.
 
+## Database — SQLite or Postgres
+
+One setting decides where everything is stored (plans, scripts, runs, reports, audit,
+traces, saved integrations and chat conversations):
+
+| `DATABASE_URL` in `.env` | Result |
+|---|---|
+| *(not set)* | SQLite — a local file `perfagent.db` (plus `perfagent_chat.db` for conversations). Nothing to install. |
+| `postgresql://user:password@host:5432/perfagent` | Postgres — a shared database server, for hosting. |
+
+**Switching to Postgres**
+
+1. Create an empty database and a user that owns it (psql or pgAdmin):
+   ```sql
+   CREATE USER perfagent WITH PASSWORD 'choose-a-password';
+   CREATE DATABASE perfagent OWNER perfagent;
+   ```
+2. Add the URL to `.env` (URL-encode special characters in the password, e.g. `@` → `%40`):
+   ```
+   DATABASE_URL=postgresql://perfagent:choose-a-password@localhost:5432/perfagent
+   ```
+3. Run `uv sync`, then start the app. It creates every table on first start — there is
+   nothing to run by hand. Postgres starts empty; data in an existing `perfagent.db` is not copied.
+4. Check it: open `/api/health` — it shows `"backend": "postgresql"` and
+   `"schema_up_to_date": true`.
+
+To go back to SQLite, remove `DATABASE_URL`.
+
+**What is handled for you on Postgres**
+
+- Timestamps are stored as UTC whatever the server's time zone is.
+- Text longer than its column is trimmed instead of failing the request (Postgres enforces
+  lengths; SQLite never did), and NUL bytes are removed.
+- Connections are pooled (`DATABASE_POOL_SIZE`, default 5) and checked before use, so a
+  database restart does not break the app.
+- Chat conversations are stored in the same Postgres database (LangGraph's own tables).
+  `CHAT_CHECKPOINT_DB` overrides where they go.
+- The password is never logged or shown.
+
+**Changing the schema (developers)**
+
+Tables are managed by Alembic migrations in `src/perfagent/db/migrations/`. The app applies
+them on start-up; a database created before migrations existed is adopted as it is.
+When you change a model in `db/models.py`, write the migration:
+
+```bash
+uv run alembic revision --autogenerate -m "add X to Y"
+```
+
+Review the generated file and commit it. A test fails if the models and migrations disagree.
+
+**Running the test suite against Postgres**
+
+```bash
+# PowerShell:  $env:PERFAGENT_TEST_DATABASE_URL="postgresql://user:password@localhost:5432/perfagent_test"
+PERFAGENT_TEST_DATABASE_URL=postgresql://user:password@localhost:5432/perfagent_test uv run pytest -q -n auto
+```
+
+Use a separate, empty database for this. Each test gets its own schema, removed at the end.
+
+---
+
 ## Running the tests
 
 The suite mocks the LLM — **no API key, no paid calls, no k6 required**:
@@ -634,6 +697,7 @@ flowchart TD
 | `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS; failed checks count as errors). |
 | `analyzer/verdict.py` · `diagnostics.py` · `baseline.py` · `narrator.py` · `report.py` | Verdict (fail-closed), diagnosis, regression compare, AI narrative, HTML report. |
 | `logging_config.py` · `audit.py` | Structured logging and the audit trail. |
+| `db/connection.py` · `db/migrate.py` · `db/migrations/` | Database URL handling (SQLite / Postgres), write-time safety, and Alembic migrations applied on start-up. |
 | `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports & logs), audit, SLA profiles, traces, integration settings, chat sessions. |
 | `api/app.py` + `api/*_routes.py` | FastAPI app: REST API + serves the UI; export / git-import / integration / jenkins / chat routes. |
 | `web/index.html` | The guided wizard UI (conversation + quick + manual modes, report dashboard, git/Jenkins panels, single file). |

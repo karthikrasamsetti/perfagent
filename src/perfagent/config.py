@@ -64,13 +64,24 @@ class Settings(BaseSettings):
     # "jenkins.mycorp.com". Empty = any host. Recommended when hosted.
     jenkins_allowed_hosts: str = Field(default="")
 
+    # ---- Database -----------------------------------------------------------------
+    # Where plans, scripts, runs, audit and the rest are stored.
+    #   sqlite:///perfagent.db                               a local file (default)
+    #   postgresql://user:password@host:5432/perfagent       a shared Postgres database
+    # Special characters in the password must be URL-encoded (e.g. "@" -> "%40").
+    database_url: str = Field(default="sqlite:///perfagent.db")
+    # Connections kept open to Postgres (ignored for SQLite).
+    database_pool_size: int = Field(default=5, gt=0)
+
     # ---- Conversational chat (LangGraph) ---------------------------------------
     # The multi-turn "Conversation" mode on the Describe step. Turn off to hide it
     # and fall back to the single-shot describe box.
     chat_conversation_enabled: bool = Field(default=True)
     # Where conversation state is checkpointed so a chat survives a refresh or a
-    # restart. A SQLite file path, or ":memory:" to keep conversations in memory only.
-    chat_checkpoint_db: str = Field(default="perfagent_chat.db")
+    # restart. Empty (default) = follow the main database: the same Postgres database
+    # when DATABASE_URL is Postgres, otherwise the file perfagent_chat.db. Or set it
+    # explicitly: a SQLite file path, a postgresql:// URL, or ":memory:".
+    chat_checkpoint_db: str = Field(default="")
     # Upper bound on user turns in one conversation (cost + context control).
     chat_max_turns: int = Field(default=40, gt=0)
     # How many recent messages are replayed to the model each turn. The structured

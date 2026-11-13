@@ -28,6 +28,7 @@ from perfagent.chat.prompts import MAX_COLLECTION_CHARS
 from perfagent.chat_intent import ChatIntent
 from perfagent.config import Settings, get_settings
 from perfagent.db import ChatSessionRow, get_session
+from perfagent.db.connection import is_postgres, libpq_url
 from perfagent.guardrails.redaction import redact, restore
 from perfagent.logging_config import get_logger
 from perfagent.plan_summary import summarize_redactions
@@ -72,19 +73,46 @@ class ProviderUnavailable(ChatError):
 
 # ---------- checkpointer ----------
 
-def make_checkpointer(path: str) -> tuple[Any, Callable[[], None]]:
+def make_checkpointer(path: str = "", database_url: str = "") -> tuple[Any, Callable[[], None]]:
     """Build the checkpoint store. Returns (saver, close).
 
-    ":memory:" (or empty) keeps conversations in memory only. Anything else is a
-    SQLite file, so conversations survive a restart. Swapping to Postgres later is
-    a change here only (langgraph-checkpoint-postgres' PostgresSaver).
+    ``path`` is the CHAT_CHECKPOINT_DB setting:
+      ""            follow the main database: the same Postgres database when
+                    ``database_url`` is Postgres, otherwise the file perfagent_chat.db
+      ":memory:"    keep conversations in memory only
+      postgresql://…  a Postgres database (LangGraph creates its own tables there)
+      anything else a SQLite file
+
+    On Postgres the conversations live beside the app's tables, so every app instance
+    sees them and a backup of the database includes them.
     """
-    if not path or path == ":memory:":
+    path = (path or "").strip()
+    if path == ":memory:":
         return InMemorySaver(), (lambda: None)
+
+    pg_url = ""
+    if path.startswith(("postgresql://", "postgres://", "postgresql+")):
+        pg_url = libpq_url(path)
+    elif not path and database_url and is_postgres(database_url):
+        pg_url = libpq_url(database_url)
+
+    if pg_url:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+
+        pool = ConnectionPool(
+            pg_url, min_size=1, max_size=5, open=True,
+            # What the saver requires of its connections.
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        )
+        saver = PostgresSaver(pool)
+        saver.setup()                       # creates/updates LangGraph's own tables
+        return saver, pool.close
 
     from langgraph.checkpoint.sqlite import SqliteSaver
 
-    conn = sqlite3.connect(path, check_same_thread=False)
+    conn = sqlite3.connect(path or "perfagent_chat.db", check_same_thread=False)
     saver = SqliteSaver(conn)
     saver.setup()
     return saver, conn.close
@@ -104,7 +132,8 @@ class ChatService:
         self._settings = settings or get_settings()
         self._provider_factory = provider_factory
         if checkpointer is None:
-            checkpointer, self._close = make_checkpointer(self._settings.chat_checkpoint_db)
+            checkpointer, self._close = make_checkpointer(
+                self._settings.chat_checkpoint_db, self._settings.database_url)
         else:
             self._close = lambda: None
         self._checkpointer = checkpointer
