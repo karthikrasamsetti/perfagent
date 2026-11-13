@@ -18,9 +18,9 @@ from perfagent.generator.k6_renderer import render_k6
 from perfagent.preflight import preflight
 
 
-def _model(headers=None):
+def _model(headers=None, port=8799):
     return LoadModel(
-        target_base_url="http://127.0.0.1:8799",
+        target_base_url=f"http://127.0.0.1:{port}",
         scenarios=[Scenario(name="s", steps=[
             Step(name="list", method="GET", path="/products"),
             Step(name="login", method="POST", path="/login", body={"u": "demo"}),
@@ -62,33 +62,44 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _serve():
-    srv = ThreadingHTTPServer(("127.0.0.1", 8799), _Handler)
+    """Start the stub target on a free port chosen by the OS.
+
+    A fixed port made these tests flaky under `pytest -n auto`: two workers could run
+    them at the same moment, share the port (Windows allows that), and one test would
+    shut the server down while the other was still sending requests to it.
+    """
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     time.sleep(0.2)
     return srv
 
 
+def _stop(srv):
+    srv.shutdown()
+    srv.server_close()
+
+
 def test_preflight_reports_status():
     srv = _serve()
     try:
-        r = preflight(_model())
+        r = preflight(_model(port=srv.server_port))
         by = {x["path"]: x for x in r["results"]}
         assert by["/products"]["status"] == 200 and by["/products"]["ok"]
         assert by["/login"]["status"] == 200 and by["/login"]["ok"]
         assert r["all_ok"] is True
         assert r["ok"] == 2 and r["total"] == 2
     finally:
-        srv.shutdown()
+        _stop(srv)
 
 
 def test_preflight_flags_bad_endpoint():
     srv = _serve()
     try:
-        m = _model()
+        m = _model(port=srv.server_port)
         m.scenarios[0].steps.append(Step(name="missing", method="GET", path="/nope"))
         r = preflight(m)
         by = {x["path"]: x for x in r["results"]}
         assert by["/nope"]["status"] == 404 and not by["/nope"]["ok"]
         assert r["all_ok"] is False
     finally:
-        srv.shutdown()
+        _stop(srv)
