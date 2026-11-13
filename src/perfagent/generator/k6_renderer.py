@@ -29,7 +29,13 @@ from perfagent.generator.k6_corr import (
     uses_correlation,
 )
 from perfagent.generator.generators import FAKER_HELPERS, UUID_IMPORT, needs_faker, needs_uuid_import
-from perfagent.generator.k6_data import k6_data_loader, uses_data
+from perfagent.generator.k6_data import (
+    EXEC_IMPORT,
+    k6_data_loader,
+    k6_row_pick,
+    needs_exec_import,
+    uses_data,
+)
 
 _env = Environment(
     loader=PackageLoader("perfagent.generator", "templates"),
@@ -145,13 +151,14 @@ def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEAD
     return "\n".join(lines)
 
 
-def _scenario_js(sc, si, cap, data_on, corr_on, has_headers, dynamic) -> str:
+def _scenario_js(sc, si, cap, data_on, corr_on, has_headers, dynamic,
+                 row_mode="random", scenario_count=1) -> str:
     fn = _func_name(sc.name, si)
     out = [f"export function {fn}() {{"]
     if corr_on:
         out.append("  let vars = {};")
     if data_on:
-        out.append("  const row = DATA[Math.floor(Math.random() * DATA.length)];")
+        out.append(k6_row_pick(row_mode, si, scenario_count))
     out.append(f"  group({json.dumps(sc.name)}, function () {{")
     think = round(sc.think_time.max_seconds - sc.think_time.min_seconds, 3)
     lo = sc.think_time.min_seconds
@@ -180,12 +187,17 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
             "func_name": _func_name(sc.name, i),
             "stages": _scale_stages(model, frac),
         })
-        scenario_funcs.append(_scenario_js(sc, i, cap, data_on, corr_on, has_headers, dynamic))
+        scenario_funcs.append(_scenario_js(
+            sc, i, cap, data_on, corr_on, has_headers, dynamic,
+            row_mode=model.data_file.row_mode if data_on else "random",
+            scenario_count=len(model.scenarios)))
 
     # extra imports (uuid generator) + headers declarations.
     # Build as a list and join, so the uuid import is never overwritten by the
     # header declaration (that was a bug: a reassignment wiped the import).
     decl_parts = []
+    if needs_exec_import(model):
+        decl_parts.append(EXEC_IMPORT)
     if needs_uuid_import(model):
         decl_parts.append(UUID_IMPORT)
     if needs_faker(model):

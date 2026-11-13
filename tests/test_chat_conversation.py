@@ -475,7 +475,7 @@ def test_api_can_be_switched_off(client):
     assert client.get("/api/chat/sessions").status_code == 404
 
 
-def test_single_shot_chat_plan_is_untouched(client):
-    """The old one-shot endpoint still exists alongside the conversation."""
+def test_quick_one_shot_endpoint_is_gone(client):
+    """Conversation mode replaced the single-message describe box."""
     paths = client.app.openapi()["paths"]
-    assert "/api/chat-plan" in paths and "/api/chat/sessions" in paths
+    assert "/api/chat-plan" not in paths and "/api/chat/sessions" in paths

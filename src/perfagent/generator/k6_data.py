@@ -100,6 +100,39 @@ def k6_data_loader(model) -> str:
     )
 
 
-def k6_row_pick() -> str:
-    """JS line that picks a per-iteration row (random, so VUs vary)."""
+def k6_row_pick(row_mode: str = "random", scenario_index: int = 0,
+                scenario_count: int = 1) -> str:
+    """JS that picks the data row for one iteration of a journey.
+
+      random      any row — rows can repeat (the long-standing default).
+      sequential  rows in file order, shared by all virtual users of the journey,
+                  starting again at the top when the file runs out.
+      unique      every row is used at most once in the whole test. Journeys take
+                  interleaved rows (journey 0: rows 0, n, 2n…; journey 1: rows 1,
+                  n+1…) so two journeys never share a row. When the rows run out
+                  the test is stopped with a clear message rather than reusing data.
+
+    `exec.scenario.iterationInTest` is k6's counter of iterations of a scenario
+    across ALL its virtual users, so no two iterations get the same number.
+    """
+    if row_mode == "sequential":
+        return "  const row = DATA[exec.scenario.iterationInTest % DATA.length];"
+    if row_mode == "unique":
+        n, i = max(1, scenario_count), scenario_index
+        return (
+            f"  const _rowIndex = exec.scenario.iterationInTest * {n} + {i};\n"
+            "  if (_rowIndex >= DATA.length) {\n"
+            "    exec.test.abort('Data file exhausted: every one of its ' + DATA.length +\n"
+            "      ' rows has been used once. Add rows, or let rows repeat.');\n"
+            "  }\n"
+            "  const row = DATA[_rowIndex];"
+        )
     return "  const row = DATA[Math.floor(Math.random() * DATA.length)];"
+
+
+def needs_exec_import(model) -> bool:
+    """True when row selection needs k6's execution module."""
+    return uses_data(model) and model.data_file.row_mode in ("sequential", "unique")
+
+
+EXEC_IMPORT = "import exec from 'k6/execution';"

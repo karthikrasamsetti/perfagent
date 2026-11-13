@@ -12,16 +12,17 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from perfagent import audit, integrations
+from perfagent.api.docs import doc
 
 router = APIRouter()
 
 
-@router.get("/api/integrations")
+@router.get("/api/integrations", **doc("GET", "/api/integrations"))
 def get_integrations(plan_id: str | None = None) -> dict:
     return integrations.get(plan_id)
 
 
-@router.delete("/api/integrations")
+@router.delete("/api/integrations", **doc("DELETE", "/api/integrations"))
 def forget_integrations(section: str, plan_id: str | None = None) -> dict:
     try:
         integrations.forget(plan_id, section)

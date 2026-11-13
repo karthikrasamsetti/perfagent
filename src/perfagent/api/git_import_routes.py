@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, SecretStr
 
 from perfagent import audit, integrations
+from perfagent.api.docs import doc
 from perfagent.config import get_settings
 from perfagent.data import load_data
 from perfagent.db import DataFileRow, PlanRow, get_session
@@ -71,7 +72,7 @@ def _errors(fn):
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
-@router.post("/api/git/scan")
+@router.post("/api/git/scan", **doc("POST", "/api/git/scan"))
 def git_scan(body: GitSource) -> dict:
     target = _target(body)
 
@@ -94,7 +95,7 @@ def git_scan(body: GitSource) -> dict:
     return _errors(run)
 
 
-@router.post("/api/git/import")
+@router.post("/api/git/import", **doc("POST", "/api/git/import"))
 def git_import(body: ImportBody) -> dict:
     target = _target(body)
     if not body.test:
@@ -151,7 +152,7 @@ def git_import(body: ImportBody) -> dict:
     }
 
 
-@router.post("/api/git/script")
+@router.post("/api/git/script", **doc("POST", "/api/git/script"))
 def git_script(body: ScriptBody) -> dict:
     target = _target(body)
     if not body.path:

@@ -30,6 +30,9 @@ from pathlib import Path
 from perfagent.runner.k6_binary import K6Unavailable, ensure_k6, find_k6, k6_ready_or_provisionable
 from perfagent.stats import Aggregator
 
+# k6's exit code when the script itself calls exec.test.abort().
+_K6_SCRIPT_ABORTED = 108
+
 _MAX_LOG_LINES = 1000   # keep the log buffer bounded
 
 
@@ -213,9 +216,22 @@ def _run_worker(run: RunState, content: str) -> None:
     stderr_thread.join(timeout=2)
     run.snapshot = run._agg.snapshot()
     if run.status != "stopped":
-        run.status = "finished" if proc.returncode in (0, 99) else "error"
-        # k6 exits 99 when a threshold fails — that's a completed run, not a crash.
-        if proc.returncode not in (0, 99):
+        if proc.returncode in (0, 99):
+            # k6 exits 99 when a threshold fails — that's a completed run, not a crash.
+            run.status = "finished"
+        elif proc.returncode == _K6_SCRIPT_ABORTED:
+            # The script ended the test on purpose (exec.test.abort) — e.g. a data
+            # file set to "use each row once" ran out of rows. The metrics up to that
+            # point are real, so this is a stopped run, not a crash.
+            run.status = "stopped"
+            reason = next((ln for ln in reversed(run.logs) if "Data file exhausted" in ln), "")
+            run.message = (
+                "The test stopped early: the data file ran out of rows (each row is "
+                "used once). Add rows, or let rows repeat."
+                if reason else
+                "The script stopped the test early. See the run logs for the reason.")
+        else:
+            run.status = "error"
             run.message = f"k6 exited {proc.returncode}. See the run logs for details."
     _append_log(run, f"— k6 exited {proc.returncode} —")
     run.ended_at = time.time()
