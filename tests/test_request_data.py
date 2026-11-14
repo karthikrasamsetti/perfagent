@@ -77,7 +77,8 @@ def test_generator_samples_have_the_right_shape():
     assert rd.sample_generator("randomFrom(a,b,c)", rng) in ("a", "b", "c")
     assert rd.sample_generator("randomFrom(1,2,3)", rng) in (1, 2, 3)
     assert rd.sample_generator("dateOffset(3,'days')", rng).endswith("Z")
-    assert rd.sample_generator("sequential", index=0) != rd.sample_generator("sequential", index=1)
+    assert rd.sample_generator("sequential", index=0) != rd.sample_generator(
+        "sequential", index=1)
 
 
 # ------------------------------------------------------------- classifying ----
@@ -127,8 +128,9 @@ def test_preflight_sends_real_values_not_placeholder_text():
     from perfagent.preflight import _fill_body, _fill_placeholders
     body = _fill_body({"email": "${randomEmail}", "u": "${username}"}, {"username": "amy"})
     assert body["u"] == "amy" and "${" not in body["email"]
-    assert _fill_placeholders("/orders/${branch}/${uuid}", {"branch": "B1"}).startswith("/orders/B1/")
-    assert "${" not in _fill_placeholders("/orders/${branch}/${uuid}", {"branch": "B1"})
+    filled = _fill_placeholders("/orders/${branch}/${uuid}", {"branch": "B1"})
+    assert filled.startswith("/orders/B1/")
+    assert "${" not in filled
 
 
 # ------------------------------------------------------------------- rows ----

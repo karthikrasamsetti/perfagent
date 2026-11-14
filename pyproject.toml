@@ -1,6 +1,6 @@
 [project]
 name = "perfagent"
-version = "0.3.0"
+version = "0.4.0"
 description = "AI Performance Testing Agent — k6-first, with web UI (plan -> approve -> generate)"
 readme = "README.md"
 requires-python = ">=3.11"

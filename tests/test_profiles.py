@@ -42,3 +42,15 @@ def test_all_four_are_distinct():
         for t in LoadProfileType
     }
     assert len(set(shapes.values())) == 4
+
+
+def test_duration_is_exactly_what_was_asked():
+    """Rounded stage shares used to drift (a 30s spike lasted 32s)."""
+
+    for profile_type in LoadProfileType:
+        for total in (7, 20, 30, 45, 60, 61, 90, 600, 3600):
+            p = build_profile(profile_type, 40, total)
+            assert p.total_seconds == total, (profile_type, total)
+            assert all(s.duration_seconds >= 1 for s in p.stages)
+    # fewer seconds than stages: each stage keeps its 1-second minimum
+    assert build_profile(LoadProfileType.STRESS, 10, 3).total_seconds == 6

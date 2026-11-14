@@ -60,4 +60,25 @@ def build_profile(profile_type: LoadProfileType, peak_users: int,
             Stage(duration_seconds=_secs(0.2, total), target_users=0),       # ramp down
         ]
 
-    return LoadProfile(type=t, stages=stages)
+    return LoadProfile(type=t, stages=_fit_total(stages, total))
+
+
+def _fit_total(stages: list[Stage], total: int) -> list[Stage]:
+    """Make the stage durations add up to exactly ``total`` seconds.
+
+    Each stage is a rounded share of the total, so the sum could be a second or two
+    off (a 30-second spike came out as 32). The difference is taken from, or given
+    to, the longest stage — the shape is unchanged and the test lasts what was asked.
+    When there are fewer seconds than stages, every stage keeps its 1-second minimum.
+    """
+    diff = total - sum(s.duration_seconds for s in stages)
+    while diff != 0:
+        longest = max(range(len(stages)), key=lambda i: stages[i].duration_seconds)
+        step = 1 if diff > 0 else -1
+        if stages[longest].duration_seconds + step < 1:
+            break                                  # nothing left to trim
+        stages[longest] = Stage(
+            duration_seconds=stages[longest].duration_seconds + step,
+            target_users=stages[longest].target_users)
+        diff -= step
+    return stages
