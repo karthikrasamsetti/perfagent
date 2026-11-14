@@ -15,9 +15,19 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, SecretStr
 
 from perfagent import audit, integrations
+from perfagent.api.docs import doc
 from perfagent.ci.jenkins import (
-    JenkinsClient, JenkinsError, JenkinsTarget, build_status, console_chunk, k6_results,
-    queue_status, setup_job, stop_build, trigger, validate,
+    JenkinsClient,
+    JenkinsError,
+    JenkinsTarget,
+    build_status,
+    console_chunk,
+    k6_results,
+    queue_status,
+    setup_job,
+    stop_build,
+    trigger,
+    validate,
 )
 from perfagent.config import get_settings
 
@@ -80,13 +90,13 @@ def _call(fn):
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
-@router.get("/api/jenkins/settings")
+@router.get("/api/jenkins/settings", **doc("GET", "/api/jenkins/settings"))
 def jenkins_settings() -> dict:
     hosts = [h.strip() for h in get_settings().jenkins_allowed_hosts.split(",") if h.strip()]
     return {"allowed_hosts": hosts}
 
 
-@router.post("/api/jenkins/trigger")
+@router.post("/api/jenkins/trigger", **doc("POST", "/api/jenkins/trigger"))
 def jenkins_trigger(body: TriggerBody) -> dict:
     client, warnings = _client(body)
     params = {"TEST": (body.test or "all").strip(), "PERF_ENV": (body.environment or "dev").strip()}
@@ -104,7 +114,7 @@ def jenkins_trigger(body: TriggerBody) -> dict:
     return {"queue_id": queue_id, "job": client.t.job, "warnings": warnings}
 
 
-@router.post("/api/jenkins/status")
+@router.post("/api/jenkins/status", **doc("POST", "/api/jenkins/status"))
 def jenkins_status(body: StatusBody) -> dict:
     client, _w = _client(body)
 
@@ -142,7 +152,7 @@ def jenkins_status(body: StatusBody) -> dict:
     return _call(run)
 
 
-@router.post("/api/jenkins/stop")
+@router.post("/api/jenkins/stop", **doc("POST", "/api/jenkins/stop"))
 def jenkins_stop(body: StopBody) -> dict:
     client, _w = _client(body)
     if body.build_number <= 0:
@@ -153,7 +163,7 @@ def jenkins_stop(body: StopBody) -> dict:
     return {"stopped": True}
 
 
-@router.post("/api/jenkins/setup-job")
+@router.post("/api/jenkins/setup-job", **doc("POST", "/api/jenkins/setup-job"))
 def jenkins_setup_job(body: SetupBody) -> dict:
     client, warnings = _client(body)
     try:

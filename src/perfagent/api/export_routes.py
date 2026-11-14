@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import select
 
 from perfagent import audit, integrations
+from perfagent.api.docs import doc
 from perfagent.config import get_settings
 from perfagent.contracts.load_model import LoadModel
 from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
@@ -106,14 +107,14 @@ def _display_repo(url: str) -> str:
     return url.split("@")[-1] if url.startswith("https://") else url
 
 
-@router.get("/api/export/settings")
+@router.get("/api/export/settings", **doc("GET", "/api/export/settings"))
 def export_settings() -> dict:
     st = get_settings()
     hosts = [h.strip() for h in st.git_allowed_hosts.split(",") if h.strip()]
     return {"allowed_hosts": hosts, "ci_options": list(ALL_CI)}
 
 
-@router.post("/api/scripts/{script_id}/export/git")
+@router.post("/api/scripts/{script_id}/export/git", **doc("POST", "/api/scripts/{script_id}/export/git"))
 def export_git(script_id: str, body: ExportBody) -> dict:
     st = get_settings()
     try:
@@ -174,7 +175,7 @@ def export_git(script_id: str, body: ExportBody) -> dict:
     }
 
 
-@router.post("/api/scripts/{script_id}/export/zip")
+@router.post("/api/scripts/{script_id}/export/zip", **doc("POST", "/api/scripts/{script_id}/export/zip"))
 def export_zip(script_id: str, body: ExportBody) -> Response:
     try:
         slugify(body.framework_name, "framework name"), slugify(body.test_name, "test name")

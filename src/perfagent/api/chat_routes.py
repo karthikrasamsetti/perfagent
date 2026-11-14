@@ -10,7 +10,6 @@
 
 Every route returns the same "view": the transcript, the structured draft, what is
 still missing, and (once built) the plan in the shape the Review step already uses.
-The single-shot POST /api/chat-plan is unchanged.
 """
 
 from __future__ import annotations
@@ -21,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from perfagent import audit
+from perfagent.api.docs import doc
 from perfagent.chat import (
     ChatService,
     EmptyMessage,
@@ -87,7 +87,7 @@ class ChatMessageBody(BaseModel):
     collection_text: str = ""
 
 
-@router.get("/api/chat/config")
+@router.get("/api/chat/config", **doc("GET", "/api/chat/config"))
 def chat_config() -> dict:
     s = get_settings()
     return {
@@ -97,7 +97,7 @@ def chat_config() -> dict:
     }
 
 
-@router.post("/api/chat/sessions")
+@router.post("/api/chat/sessions", **doc("POST", "/api/chat/sessions"))
 def start_session(body: ChatMessageBody) -> dict:
     view = _call(_enabled_service().start, body.message, body.collection_text)
     audit.record("chat.started", entity="chat", entity_id=view["session_id"],
@@ -106,27 +106,27 @@ def start_session(body: ChatMessageBody) -> dict:
     return view
 
 
-@router.get("/api/chat/sessions")
+@router.get("/api/chat/sessions", **doc("GET", "/api/chat/sessions"))
 def list_sessions(limit: int = 20) -> dict:
     return {"sessions": _enabled_service().list(limit)}
 
 
-@router.get("/api/chat/sessions/{session_id}")
+@router.get("/api/chat/sessions/{session_id}", **doc("GET", "/api/chat/sessions/{session_id}"))
 def get_session_view(session_id: str) -> dict:
     return _call(_enabled_service().get, session_id)
 
 
-@router.post("/api/chat/sessions/{session_id}/messages")
+@router.post("/api/chat/sessions/{session_id}/messages", **doc("POST", "/api/chat/sessions/{session_id}/messages"))
 def send_message(session_id: str, body: ChatMessageBody) -> dict:
     return _call(_enabled_service().send, session_id, body.message, body.collection_text)
 
 
-@router.post("/api/chat/sessions/{session_id}/build")
+@router.post("/api/chat/sessions/{session_id}/build", **doc("POST", "/api/chat/sessions/{session_id}/build"))
 def build_plan(session_id: str) -> dict:
     return _call(_enabled_service().build, session_id)
 
 
-@router.delete("/api/chat/sessions/{session_id}")
+@router.delete("/api/chat/sessions/{session_id}", **doc("DELETE", "/api/chat/sessions/{session_id}"))
 def delete_session(session_id: str) -> dict:
     _call(_enabled_service().delete, session_id)
     audit.record("chat.deleted", entity="chat", entity_id=session_id[:32],

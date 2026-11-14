@@ -16,27 +16,23 @@ import json
 import httpx
 
 from perfagent.contracts.load_model import LoadModel
+from perfagent.request_data import resolve, resolve_text
 
 
 def _fill_placeholders(text: str, row: dict | None) -> str:
-    """Replace ${field} with a sample row value (or leave as-is if no data)."""
-    if not row:
-        return text
-    out = text
-    for k, v in row.items():
-        out = out.replace("${" + k + "}", str(v))
-    return out
+    """Fill ${...} in a path: data-row values and sample generated values.
+
+    Values only known during a run (captured from an earlier response) stay as-is.
+    """
+    return str(resolve_text(text, row))
 
 
 def _fill_body(body: dict | None, row: dict | None) -> dict | None:
+    """Fill ${...} in a body the same way, so the request looks like a real one
+    (a literal "${uuid}" would make many APIs reject it)."""
     if not body:
         return body
-    raw = json.dumps(body)
-    raw = _fill_placeholders(raw, row)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return body
+    return resolve(body, row)
 
 
 def preflight(model: LoadModel, sample_row: dict | None = None,

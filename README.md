@@ -23,7 +23,8 @@ against your last run and is saved to a browsable history.
 ## Table of contents
 
 - [Why this exists](#why-this-exists)
-- [Three ways to build a test](#three-ways-to-build-a-test)
+- [Four ways to start](#four-ways-to-start)
+- [Reviewing the plan](#reviewing-the-plan)
 - [Conversation mode](#conversation-mode)
 - [The 5-step workflow](#the-5-step-workflow)
 - [Feature highlights](#feature-highlights)
@@ -36,6 +37,7 @@ against your last run and is saved to a browsable history.
 - [Save tests to Git and import them back](#save-tests-to-git-and-import-them-back)
 - [Run in Jenkins](#run-in-jenkins-step-3)
 - [Database — SQLite or Postgres](#database--sqlite-or-postgres)
+- [API reference](#api-reference)
 - [Running the tests](#running-the-tests)
 - [How it works](#how-it-works)
 - [Data guardrails](#data-guardrails)
@@ -73,20 +75,42 @@ anything that must be exact.
 
 ---
 
-## Three ways to build a test
+## Four ways to start
 
-Step 1 offers a toggle between three modes:
+Step 1 is one row of tabs — pick how you want to begin:
 
-- **💬 Conversation — talk it through:** a real back-and-forth. Say what you want, answer
-  what the agent still needs, keep refining ("make it 200 users", "drop /checkout"), and
-  build the plan when the draft looks right. See [Conversation mode](#conversation-mode).
-- **✨ Quick — one message:** type what you want in plain English ("load test login and
-  checkout, 100 users, make each signup email unique"). The AI drafts a plan you review.
-- **⚙️ Manual — fill a form:** full control — endpoints, import, data files, headers, test
-  type, environment, a body editor with one-click **dynamic data**, and "run an existing script."
+| Tab | What it does |
+|---|---|
+| **💬 Conversation** | A real back-and-forth. Say what you want, answer what the agent still needs, keep refining ("make it 200 users", "drop /checkout"), and build the plan when the draft looks right. See [Conversation mode](#conversation-mode). |
+| **📝 Manual form** | Type or import the target and endpoints yourself; the AI drafts the plan from them. |
+| **⚡ My k6 script** | Already have a script? Upload or paste it and go straight to validating and running it — no AI planning. |
+| **📂 Import from Git** | Pull a test PerfAgent saved to Git back as an editable plan, or pick up another k6 script from the repository. |
 
-All three produce the same structured plan you review and approve. Inline **ℹ️ tooltips** explain
-every concept, so a QA engineer can use it without a walkthrough.
+Conversation and Manual both end in the same place: a plan you review and approve.
+Inline **ℹ️ tooltips** explain every concept, so a QA engineer can use it without a walkthrough.
+
+---
+
+## Reviewing the plan
+
+Step 2 shows the **summary first** — what the test will do, in plain English — and keeps
+the detail closed until you want it. Everything a plan needs is in four numbered sections:
+
+1. **Target & load** — target URL, peak users, duration, test type and load tool. Changing
+   the size rebuilds the load shape in code (never by the AI). *Connection options*
+   (headers, environment label, TLS) are tucked underneath.
+2. **Test data file** *(optional)* — upload a CSV / TSV / TXT / JSON file here, see its
+   columns and first rows, and choose how its rows are used.
+3. **Journeys** — each step is one line (`POST /orders · 5 changing values · 2 checks`).
+   Click a step to open its **request data**, **checks**, and — under *Advanced* —
+   capturing a value for later steps and GraphQL.
+4. **Pass / fail rules** — written as sentences ("95% of responses are faster than **500** ms",
+   "The error rate stays under **5** %"); you only edit the number.
+
+**🔍 Preview the requests** shows the first requests of every step exactly as they will
+be sent — with real rows from your file and sample generated values — without sending
+anything. **Approve & generate** stays pinned to the bottom of the page, and warns you
+first if any value has no source and would be sent empty.
 
 ---
 
@@ -118,7 +142,7 @@ checkpointed per conversation in `perfagent_chat.db`. The wait for your reply is
 
 | Setting (`.env`) | Default | Meaning |
 |---|---|---|
-| `CHAT_CONVERSATION_ENABLED` | `true` | Turn the mode off to fall back to Quick + Manual. |
+| `CHAT_CONVERSATION_ENABLED` | `true` | Turn the mode off to hide the Conversation tab. |
 | `CHAT_CHECKPOINT_DB` | `perfagent_chat.db` | Where conversations are saved; `:memory:` keeps them in memory only. |
 | `CHAT_MAX_TURNS` | `40` | Most user messages in one conversation. |
 | `CHAT_HISTORY_WINDOW` | `12` | Recent messages replayed to the AI each turn (the draft carries the rest). |
@@ -126,7 +150,7 @@ checkpointed per conversation in `perfagent_chat.db`. The wait for your reply is
 
 API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 `POST /api/chat/sessions/{id}/build`, `GET /api/chat/sessions[/{id}]`,
-`DELETE /api/chat/sessions/{id}`. The single-shot `POST /api/chat-plan` is unchanged.
+`DELETE /api/chat/sessions/{id}`.
 
 ---
 
@@ -134,14 +158,14 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 
 ```
   1 ─ Describe ──▶ 2 ─ Review & Approve ──▶ 3 ─ Generate ──▶ 4 ─ Run & Monitor ──▶ 5 ─ Report
-  chat or form,       editable form,          k6 script         validate, pre-flight,  dashboard +
-  import a spec       plain-English summary   (deterministic,   live metrics, chart,   diagnosis +
+  chat, form, own     summary first,          k6 script         validate, pre-flight,  dashboard +
+  script or Git       details on demand       (deterministic,   live metrics, chart,   diagnosis +
                       + grounding + guardrail  editable)         live logs              vs. last run,
                                                                                         checks + logs (saved)
 ```
 
-1. **Describe** — chat or form; type/import endpoints, add a data file, custom headers, test type, environment.
-2. **Review & approve** — edit the plan in a form (weight sliders, think-times, thresholds, **response checks**), with a plain-English summary of what it does and why.
+1. **Describe** — a conversation, a form, your own k6 script, or an import from Git.
+2. **Review & approve** — a plain-English summary of what the test does and why, then four sections you open only if needed: load, **test data file**, journeys (with **request data** and **response checks** per step) and pass/fail rules. **Preview the requests** before approving.
 3. **Generate** — a deterministic renderer produces a runnable **k6** script. No LLM touches it. You can **edit it** to add custom debugging before running, and **Save to Git** for CI/CD.
 4. **Run & monitor** — **validate** the script and **pre-flight** the endpoints, then launch k6 with live tiles, a chart, and **live run logs**.
 5. **Report** — a **dashboard**: PASS/FAIL/INCONCLUSIVE verdict, KPI tiles, automatic **diagnosis**, a **comparison to your last run**, a **response-checks panel**, the **run logs**, and an AI narrative whose figures are verified. Saved to the **Runs & reports** history so you can reopen it anytime.
@@ -215,23 +239,52 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 
 ## Dynamic test data — the three sources
 
-Real request bodies mix three kinds of values. The agent handles all three, and the
-**"✨ Add dynamic data"** button (in the body editor) lets the AI assign the right source to
-each field automatically — even in deeply nested bodies.
+Real request bodies mix three kinds of values. On the Review step, open a step and its
+**Request data** table lists every field of the body with a **Comes from** choice — no
+`${...}` to type by hand:
 
-| Source | When to use | Example | Renders to |
+| Comes from | When to use | You pick | In the script |
 |---|---|---|---|
-| **Generator** | A value that must be *unique/random* per request | `${randomEmail}`, `${uuid}`, `${randomInt(1,5)}` | self-contained k6 helpers (`fakeName()`, `uuidv4()`, …) |
-| **Data file** | A *real existing* value the API validates | `${branch}` from `branches.csv` | `row.branch` (k6 `SharedArray`) |
-| **Fixed** | A constant spec value | `"Weight": 3120`, `"ServiceCode": "GRND"` | kept as-is |
+| **Fixed value** | A constant | the value (text, number, true/false, empty) | kept as-is |
+| **From data file** | A *real existing* value the API validates | a column of the uploaded file | `row.branch` (k6 `SharedArray`) |
+| **Generated** | A value that must be *new for every request* | Unique ID, Unique email, Random number between…, Random pick from a list…, names, addresses, dates… | self-contained k6 helpers (`uuidv4()`, `fakeName()`, …) |
 
-Built-in generators include: `uuid`, `randomEmail`, `randomFullName`, `randomCompanyName`,
-`randomStreetAddress`, `randomCity`, `randomState`, `randomZipCode`, `randomPhone`,
-`randomCatchPhrase`, `randomBic`, `randomInt(min,max)`, `randomString(n)`,
-`randomFrom(a,b,c)`, `dateOffset(n,'days')`, `timestamp`, `sequential`. Postman-style
-`{{var}}` / `{{$randomX}}` syntax is also accepted and converted automatically. The realistic
-generators emit **self-contained helper functions** — no external faker dependency, so the
-script runs on any standard k6.
+A fourth kind appears on its own: **From an earlier step** — a value captured from a
+previous response (for example a login token).
+
+**How to make every request unique**
+
+1. On the Review step, upload the file under **2 · Test data file**. Its columns and first
+   rows are shown.
+2. Under **3 · Journeys**, click the step. For each field choose *From data file* (a column
+   with the same name is picked for you) or *Generated*. **✨ Suggest with AI** proposes a
+   source for every field at once — review it, or press *Undo*.
+3. Choose how the rows are used:
+
+   | Use the rows | Behaviour |
+   |---|---|
+   | In random order *(default)* | Any row; a row can be used more than once. |
+   | In file order | Row 1, 2, 3 … shared by all virtual users; starts again at the top. |
+   | Each row once | No row is ever reused. With several journeys each gets its own share of the rows. When the rows run out the test stops and says so. |
+
+4. Click **🔍 Preview the requests** to see three real examples per step.
+
+Nested bodies work the same way (fields are listed as `address.city`, `items[0].sku`);
+*Edit as JSON* is there for structural changes. A name that is neither a column, nor
+generated, nor captured is flagged — in the step, in the preview and before generating —
+because it would be sent empty.
+
+The same `${...}` placeholders still work if you prefer to type them:
+`${username}` (column), `${uuid}`, `${randomEmail}`, `${randomInt(1,5)}`,
+`${randomString(8)}`, `${randomFrom(a,b,c)}`, `${timestamp}`, `${sequential}`,
+`${dateOffset(3,'days')}`, `${randomFullName}`, `${randomCity}` and the other realistic
+generators. Postman-style `{{var}}` / `{{$randomX}}` is also accepted and converted. The
+realistic generators are **self-contained helper functions** — no external faker library.
+
+Only the **column names** of a data file are ever sent to the AI; the values stay in the
+database for the run. Data files are built into **k6** scripts (the other tools ignore them).
+The pre-flight check fills in a real row and sample generated values too, so it sends
+realistic requests.
 
 ---
 
@@ -407,9 +460,9 @@ environment variables.
 * Thresholds are enforced by k6, so a breach exits with code 99 and fails the pipeline.
 * Exporting again with the same names updates the test in a new commit.
 * **Download framework (.zip)** gives the same files without Git.
-* Uploaded scripts ("Already have a k6 script?") can't be saved to Git yet.
+* Uploaded scripts (the "My k6 script" tab) can't be saved to Git yet.
 
-### Import from Git (Step 1)
+### Import from Git (a tab on Step 1)
 
 **Import an existing test from Git** lists what's on a branch:
 
@@ -417,7 +470,7 @@ environment variables.
   again for its secrets; committed test data comes along. Tests whose `loadtest.js` was
   edited by hand are flagged, because PerfAgent rebuilds scripts from the plan.
 * **Other load-test scripts** (k6, Locust, JMeter) — *View* shows them; a k6 script can be
-  loaded with *Use this script*, exactly like "Already have a k6 script?".
+  loaded with *Use this script*, exactly like the "My k6 script" tab.
 
 Every push and import is recorded in the activity log. The server needs `git` 2.31+.
 Admins can set `GIT_ALLOWED_HOSTS`, `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL` in `.env`.
@@ -528,6 +581,41 @@ PERFAGENT_TEST_DATABASE_URL=postgresql://user:password@localhost:5432/perfagent_
 ```
 
 Use a separate, empty database for this. Each test gets its own schema, removed at the end.
+
+---
+
+## API reference
+
+Interactive docs are at **`/docs`** (and the raw OpenAPI file at `/openapi.json`). Every
+endpoint is documented — what it does, what it returns — and sorted into groups:
+
+| Group | What is in it |
+|---|---|
+| Conversation | The multi-turn planning chat |
+| Planning | Draft a plan, import endpoints, saved plans, load shape, suggested checks |
+| Request data | Data file upload, field sources, request preview |
+| Scripts | Generate, upload, download, validate, pre-flight |
+| Runs | Start, watch, stop, logs |
+| Reports & history | Report, download, saved reports, trend |
+| SLA profiles | Saved pass/fail rule sets |
+| Git · Jenkins · Integrations | Save/import tests, run in Jenkins, remembered details |
+| Observability | Audit log, AI usage, AI call traces |
+| System | Health, supported tools |
+
+Each endpoint also carries an **access level**, published in the OpenAPI file as `x-access`
+(and `x-uses-ai` for calls that spend tokens):
+
+| Level | Meaning |
+|---|---|
+| `read` | Only reads stored data. |
+| `write` | Creates or changes stored data. |
+| `run` | Sends real requests or load to the system under test. |
+| `integrate` | Talks to Git or Jenkins with credentials supplied in the call. |
+
+The agent does not enforce these itself — sign-in and permissions belong to the hub that
+hosts it — but a gateway or a role system can read them to decide who may call what.
+All of this lives in one file, `src/perfagent/api/docs.py`; a test fails if an endpoint is
+added without documenting it there.
 
 ---
 
@@ -697,6 +785,8 @@ flowchart TD
 | `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS; failed checks count as errors). |
 | `analyzer/verdict.py` · `diagnostics.py` · `baseline.py` · `narrator.py` · `report.py` | Verdict (fail-closed), diagnosis, regression compare, AI narrative, HTML report. |
 | `logging_config.py` · `audit.py` | Structured logging and the audit trail. |
+| `api/docs.py` | Every API endpoint documented in one place: group, summary, access level, AI use. |
+| `request_data.py` | Where each request value comes from (fixed / data file / generated), sample values, and the request preview. |
 | `db/connection.py` · `db/migrate.py` · `db/migrations/` | Database URL handling (SQLite / Postgres), write-time safety, and Alembic migrations applied on start-up. |
 | `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports & logs), audit, SLA profiles, traces, integration settings, chat sessions. |
 | `api/app.py` + `api/*_routes.py` | FastAPI app: REST API + serves the UI; export / git-import / integration / jenkins / chat routes. |
@@ -743,7 +833,8 @@ the Git export / import / Jenkins / integrations features.
 | "no prebuilt k6 for this platform" | Unusual OS/CPU — install k6 manually and set `PERFAGENT_K6_PATH`. |
 | "OPENAI_API_KEY is not set" | Fill the key in `.env` and restart the app. |
 | Run shows 0 requests / "Run error" | The target isn't running, or the URL is wrong. Start the target and retry. |
-| Quick mode asks clarifying questions | Expected — add the answers to your description and draft again, or use Conversation mode to answer them in place. |
+| A step shows "values with no source" | A `${name}` in its body is not a data-file column, not generated and not captured. Open the step and pick a source, or upload a file with that column. |
+| The run stopped with "the data file ran out of rows" | Rows are set to *Each row once* and there were fewer rows than requests. Add rows, shorten the test, or let rows repeat. |
 | Conversation tab is missing | `CHAT_CONVERSATION_ENABLED` is `false`, or dependencies are stale — run `uv sync`. |
 | Imported a spec but no endpoints | Confirm it's valid OpenAPI (JSON/YAML), a Postman collection, or a `.har`. |
 | `/me` (or a protected call) is 401 in pre-flight | Expected — pre-flight hits endpoints alone; correlation flows the token only in a full run. |

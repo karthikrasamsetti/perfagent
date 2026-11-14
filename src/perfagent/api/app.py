@@ -14,6 +14,11 @@ Endpoints:
   POST /api/runs/{id}/stop        -> stop a run
   GET  /api/runs/{id}/report      -> verdict + narrative
   /api/chat/sessions...           -> conversational planning (see api/chat_routes.py)
+  POST /api/load-profile          -> build the load stages (deterministic)
+  POST /api/request-preview       -> the requests a plan will send (nothing is sent)
+  GET  /api/data/{id}             -> columns + first rows of an uploaded data file
+
+Every endpoint is documented in api/docs.py (group, summary, access level).
   GET  /api/health                -> app + database status (which database is in use)
 
 Start with:  uv run uvicorn perfagent.api.app:app --reload
@@ -29,40 +34,60 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from perfagent.contracts.artifacts import PlanArtifact
-from perfagent.contracts.load_model import DataFile, LoadModel
-from perfagent.data import DataValidationError, load_data
+from perfagent import __version__, audit, tracing
 from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline
-from perfagent import audit, tracing
-from perfagent.logging_config import configure as _configure_logging, get_logger
 from perfagent.analyzer.diagnostics import diagnose
-from perfagent.preflight import preflight
-from perfagent.runner.validator import validate_script
-from perfagent.importers import ImportError_, import_endpoints
-from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, SlaProfileRow, get_session
-from perfagent.evaluation import evaluate_plan, evaluate_report
-from perfagent.generator import generate_script, supported_tools
-from perfagent.chat_intent import ChatIntent, CHAT_SYSTEM_PROMPT, build_chat_user_prompt
-from perfagent.check_suggest import SuggestedChecks, CHECK_SUGGEST_SYSTEM_PROMPT, build_check_suggest_prompt
-from perfagent.dynamize import DynamizedBody, DYNAMIZE_SYSTEM_PROMPT, build_dynamize_user_prompt
-from perfagent.planner import PlanRequest, draft_plan
-from perfagent.planner.spec import EndpointSpec
-from perfagent.providers import build_provider
-from perfagent.runner import get_run, k6_available, start_run, stop_run
+from perfagent.api.chat_routes import router as chat_router
+from perfagent.api.docs import API_DESCRIPTION, API_TITLE, TAGS, doc
 from perfagent.api.export_routes import router as export_router
 from perfagent.api.git_import_routes import router as git_import_router
-from perfagent.api.jenkins_routes import router as jenkins_router
 from perfagent.api.integration_routes import router as integration_router
-from perfagent.api.chat_routes import router as chat_router
+from perfagent.api.jenkins_routes import router as jenkins_router
+from perfagent.check_suggest import (
+    CHECK_SUGGEST_SYSTEM_PROMPT,
+    SuggestedChecks,
+    build_check_suggest_prompt,
+)
+from perfagent.contracts.artifacts import PlanArtifact
+from perfagent.contracts.load_model import (
+    ROW_MODES,
+    DataFile,
+    LoadModel,
+    LoadProfileType,
+)
+from perfagent.data import DataValidationError, load_data
+from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, SlaProfileRow, get_session
+from perfagent.dynamize import DYNAMIZE_SYSTEM_PROMPT, DynamizedBody, build_dynamize_user_prompt
+from perfagent.evaluation import evaluate_plan, evaluate_report
+from perfagent.generator import generate_script, supported_tools
+from perfagent.importers import ImportError_, import_endpoints
+from perfagent.logging_config import configure as _configure_logging
+from perfagent.logging_config import get_logger
 from perfagent.plan_summary import (
     plan_rationale as _plan_rationale,
+)
+from perfagent.plan_summary import (
     summarize_redactions as _summarize_redactions,
+)
+from perfagent.plan_summary import (
     usage_summary as _usage_summary,
 )
+from perfagent.planner import PlanRequest, draft_plan
+from perfagent.planner.profile import build_profile
+from perfagent.preflight import preflight
+from perfagent.providers import build_provider
+from perfagent.request_data import preview_requests
+from perfagent.runner import get_run, k6_available, start_run, stop_run
+from perfagent.runner.validator import validate_script
 
-app = FastAPI(title="AI Performance Testing Agent")
+app = FastAPI(
+    title=API_TITLE,
+    description=API_DESCRIPTION,
+    version=__version__,
+    openapi_tags=TAGS,
+)
 app.include_router(export_router)
 app.include_router(git_import_router)
 app.include_router(jenkins_router)
@@ -82,6 +107,8 @@ class GenerateBody(BaseModel):
     load_model: LoadModel | None = None
     # Optional: id of an uploaded data file to attach to this plan for the run.
     data_file_id: str | None = None
+    # Optional: how its rows are handed out — random | sequential | unique.
+    data_row_mode: str | None = None
     # Optional: global headers to apply to every request (e.g. Authorization).
     headers: dict[str, str] | None = None
 
@@ -91,7 +118,7 @@ class GenerateBody(BaseModel):
 
 # ---------- health ----------
 
-@app.get("/api/health")
+@app.get("/api/health", **doc("GET", "/api/health"))
 def health() -> dict:
     """Is the app up and can it reach its database? Also says WHICH database is in
     use (SQLite or Postgres) and whether its schema is current — handy after
@@ -124,38 +151,38 @@ def health() -> dict:
 
 # ---------- UI ----------
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index() -> str:
     return (_WEB_DIR / "index.html").read_text(encoding="utf-8")
 
 
 # ---------- API ----------
 
-@app.get("/api/tools")
+@app.get("/api/tools", **doc("GET", "/api/tools"))
 def tools() -> dict:
     return {"tools": supported_tools()}
 
 
 
-@app.get("/api/audit")
+@app.get("/api/audit", **doc("GET", "/api/audit"))
 def get_audit(limit: int = 100) -> dict:
     """Return recent audit events for the activity log."""
     return {"events": audit.recent(limit=limit)}
 
 
-@app.get("/api/usage/total")
+@app.get("/api/usage/total", **doc("GET", "/api/usage/total"))
 def usage_total() -> dict:
     """Total LLM token usage + rough cost across all AI calls (for the top-bar chip)."""
     return audit.totals()
 
 
-@app.get("/api/traces")
+@app.get("/api/traces", **doc("GET", "/api/traces"))
 def get_traces(limit: int = 100) -> dict:
     """Recent AI-call traces (step, model, tokens, latency, status) for debugging."""
     return {"traces": tracing.recent(limit=limit)}
 
 
-@app.get("/api/runs")
+@app.get("/api/runs", **doc("GET", "/api/runs"))
 def list_runs(limit: int = 50) -> dict:
     """List past runs (with their saved report) — newest first, for the Runs history."""
     with get_session() as s:
@@ -188,7 +215,7 @@ class SlaProfileBody(BaseModel):
     thresholds: list[dict]
 
 
-@app.get("/api/sla")
+@app.get("/api/sla", **doc("GET", "/api/sla"))
 def list_sla() -> dict:
     """List saved SLA / threshold profiles."""
     with get_session() as s:
@@ -200,7 +227,7 @@ def list_sla() -> dict:
         ]}
 
 
-@app.post("/api/sla")
+@app.post("/api/sla", **doc("POST", "/api/sla"))
 def create_sla(body: SlaProfileBody) -> dict:
     """Save a reusable SLA / threshold profile."""
     if not body.name.strip():
@@ -213,7 +240,7 @@ def create_sla(body: SlaProfileBody) -> dict:
         return {"id": row.id, "name": row.name}
 
 
-@app.delete("/api/sla/{sla_id}")
+@app.delete("/api/sla/{sla_id}", **doc("DELETE", "/api/sla/{sla_id}"))
 def delete_sla(sla_id: str) -> dict:
     with get_session() as s:
         row = s.get(SlaProfileRow, sla_id)
@@ -224,7 +251,7 @@ def delete_sla(sla_id: str) -> dict:
         return {"deleted": sla_id}
 
 
-@app.get("/api/runs/trend")
+@app.get("/api/runs/trend", **doc("GET", "/api/runs/trend"))
 def runs_trend(plan_id: str = "", limit: int = 10) -> dict:
     """Return recent runs' key metrics for a plan (oldest->newest) for the trend chart."""
     with get_session() as s:
@@ -245,7 +272,7 @@ def runs_trend(plan_id: str = "", limit: int = 10) -> dict:
         ]}
 
 
-@app.get("/api/runs/{result_id}/saved-report")
+@app.get("/api/runs/{result_id}/saved-report", **doc("GET", "/api/runs/{result_id}/saved-report"))
 def get_saved_report(result_id: str) -> dict:
     """Return a previously-saved report so it can be reopened."""
     with get_session() as s:
@@ -260,7 +287,7 @@ def get_saved_report(result_id: str) -> dict:
 
 
 
-@app.post("/api/data")
+@app.post("/api/data", **doc("POST", "/api/data"))
 async def upload_data(file: UploadFile) -> dict:
     """Upload a test-data file (CSV/TSV/TXT/JSON/JSONL). Parse + validate + store.
 
@@ -299,11 +326,40 @@ async def upload_data(file: UploadFile) -> dict:
         "row_count": dataset.row_count,
         "source_format": dataset.source_format,
         "warnings": dataset.warnings,
+        "sample_rows": dataset.rows[:_SAMPLE_ROWS],
     }
 
 
+_SAMPLE_ROWS = 3      # rows shown back to the user so they can see what the file holds
 
-@app.post("/api/import-endpoints")
+
+def _data_rows(data_row) -> list[dict]:
+    """The parsed rows of a stored data file ([] if it cannot be parsed)."""
+    try:
+        return load_data(data_row.filename, data_row.content).rows
+    except Exception:  # noqa: BLE001
+        return []
+
+
+@app.get("/api/data/{data_file_id}", **doc("GET", "/api/data/{data_file_id}"))
+def get_data_file(data_file_id: str) -> dict:
+    """Columns, row count and first rows of a stored data file."""
+    with get_session() as s:
+        row = s.get(DataFileRow, data_file_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="data file not found")
+        return {
+            "data_file_id": row.id,
+            "filename": row.filename,
+            "fields": row.columns,
+            "row_count": row.row_count,
+            "source_format": row.source_format,
+            "sample_rows": _data_rows(row)[:_SAMPLE_ROWS],
+        }
+
+
+
+@app.post("/api/import-endpoints", **doc("POST", "/api/import-endpoints"))
 async def import_endpoints_api(file: UploadFile) -> dict:
     """Import endpoints from an OpenAPI/Swagger JSON, Postman collection, or HAR file."""
     raw = await file.read()
@@ -319,7 +375,7 @@ async def import_endpoints_api(file: UploadFile) -> dict:
 
 
 
-@app.post("/api/plan")
+@app.post("/api/plan", **doc("POST", "/api/plan"))
 def create_plan(request: PlanRequest) -> dict:
     """AI drafts a LoadModel from the endpoints, saved; returns it for review."""
     try:
@@ -363,95 +419,12 @@ def create_plan(request: PlanRequest) -> dict:
 
 
 
-class ChatPlanBody(BaseModel):
-    message: str
-    collection_text: str = ""
-
-
-@app.post("/api/chat-plan")
-def chat_plan(body: ChatPlanBody) -> dict:
-    """Turn a plain-English request (+ optional pasted collection) into a plan.
-
-    If essential info is missing, returns clarifying questions instead of a plan.
-    The chat text goes through the guarded provider, so secrets are redacted.
-    """
-    if not body.message.strip():
-        raise HTTPException(status_code=400, detail="message is empty")
-    try:
-        provider = build_provider()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    tracing.set_step("chat")
-    # 1. extract structured intent from the chat (guarded LLM call)
-    intent: ChatIntent = provider.structured(
-        response_model=ChatIntent,
-        system=CHAT_SYSTEM_PROMPT,
-        user=build_chat_user_prompt(body.message, body.collection_text),
-    )
-
-    # 2. if essential info is missing, ask instead of guessing
-    questions = list(intent.needs_clarification)
-    if not intent.target_base_url:
-        questions.insert(0, "What's the target base URL (e.g. https://staging.example.com)?")
-    if not intent.endpoints:
-        questions.append("Which endpoints should I test (method + path)?")
-    if questions:
-        return {"status": "clarify", "questions": questions,
-                "notes": intent.notes, "provider": provider.name}
-
-    # 3. build a PlanRequest and draft a plan (reuses the normal planner path)
-    req = PlanRequest(
-        target_base_url=intent.target_base_url,
-        goal=intent.goal or body.message[:120],
-        max_users=intent.max_users or 20,
-        duration_seconds=intent.duration_seconds or 60,
-        profile_type=intent.profile_type,
-        endpoints=[EndpointSpec(method=e.method, path=e.path, example_body=e.example_body)
-                   for e in intent.endpoints],
-    )
-    tracing.set_step("chat")
-    plan = draft_plan(req, provider)
-
-    with get_session() as s:
-        row = PlanRow(
-            id=plan.id,
-            target_base_url=plan.load_model.target_base_url,
-            goal=req.goal,
-            load_model_json=plan.load_model.model_dump_json(),
-        )
-        s.add(row)
-        s.commit()
-
-    _uc = _usage_summary(provider)
-    audit.record("plan.created", entity="plan", entity_id=plan.id,
-                 target=plan.load_model.target_base_url,
-                 summary=f"Chat-drafted a plan with {len(plan.load_model.scenarios)} scenario(s)",
-                 tokens=_uc.get("total_tokens", 0), cost_usd=_uc.get("cost_usd", 0.0))
-
-    plan_eval = evaluate_plan(plan.load_model, req).summary()
-    redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
-
-    return {
-        "status": "plan",
-        "plan_id": plan.id,
-        "provider": provider.name,
-        "load_model": plan.load_model.model_dump(),
-        "guardrail": _summarize_redactions(redaction_counts),
-        "evaluation": plan_eval,
-        "rationale": _plan_rationale(plan.load_model),
-        "notes": intent.notes,
-    }
-
-
-
-
 class DynamizeBody(BaseModel):
     body: dict
     data_file_id: str | None = None
 
 
-@app.post("/api/dynamize")
+@app.post("/api/dynamize", **doc("POST", "/api/dynamize"))
 def dynamize(req: DynamizeBody) -> dict:
     """Ask the AI to assign generator tokens to the fields of a body that should vary."""
     import json as _json
@@ -491,7 +464,7 @@ class SuggestChecksBody(BaseModel):
     sample_response: str
 
 
-@app.post("/api/suggest-checks")
+@app.post("/api/suggest-checks", **doc("POST", "/api/suggest-checks"))
 def suggest_checks(body: SuggestChecksBody) -> dict:
     """Propose validation assertions from a pasted sample response (Option B).
 
@@ -517,7 +490,81 @@ def suggest_checks(body: SuggestChecksBody) -> dict:
         "usage": _usage_summary(provider),
     }
 
-@app.post("/api/plan/{plan_id}/generate")
+def _row_mode(value: str | None) -> str:
+    if value not in ROW_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"data_row_mode must be one of: {', '.join(ROW_MODES)}")
+    return value
+
+
+def _attach_data_file(model: LoadModel, data_row, row_mode: str | None) -> DataFile:
+    """The plan's data-file record for a stored file (values stay in the database).
+
+    Keeps the row mode the plan already had unless a new one is given.
+    """
+    previous = model.data_file.row_mode if model.data_file else "random"
+    return DataFile(
+        filename=data_row.filename,
+        fields=data_row.columns,
+        row_count=data_row.row_count,
+        source_format=data_row.source_format,
+        row_mode=_row_mode(row_mode) if row_mode else previous,
+    )
+
+
+class LoadProfileBody(BaseModel):
+    type: LoadProfileType = LoadProfileType.RAMP
+    max_users: int = Field(gt=0, le=1_000_000)
+    duration_seconds: int = Field(gt=0, le=7 * 24 * 3600)
+
+
+@app.post("/api/load-profile", **doc("POST", "/api/load-profile"))
+def load_profile(body: LoadProfileBody) -> dict:
+    """Build the load stages for a test type, peak users and duration. No AI."""
+    profile = build_profile(body.type, body.max_users, body.duration_seconds)
+    return {
+        "load_profile": profile.model_dump(mode="json"),
+        "max_users": body.max_users,              # what was asked for
+        "peak_users": profile.peak_users,         # the highest stage (stress goes past it)
+        "total_seconds": profile.total_seconds,
+    }
+
+
+class RequestPreviewBody(BaseModel):
+    load_model: LoadModel
+    data_file_id: str | None = None
+    data_row_mode: str | None = None
+    samples: int = Field(default=3, ge=1, le=10)
+
+
+@app.post("/api/request-preview", **doc("POST", "/api/request-preview"))
+def request_preview(body: RequestPreviewBody) -> dict:
+    """Show the first few requests of each step, filled with real rows and sample
+    generated values. Sends nothing; no AI."""
+    model = body.load_model
+    rows: list[dict] = []
+    if body.data_file_id:
+        with get_session() as s:
+            data_row = s.get(DataFileRow, body.data_file_id)
+            if data_row is None:
+                raise HTTPException(status_code=404, detail="data file not found")
+            model.data_file = _attach_data_file(model, data_row, body.data_row_mode)
+            rows = _data_rows(data_row)
+    elif model.data_file is not None:
+        # A plan reopened later: find its file by name, as the runner does.
+        with get_session() as s:
+            data_row = (s.query(DataFileRow)
+                        .filter(DataFileRow.filename == model.data_file.filename)
+                        .order_by(DataFileRow.created_at.desc()).first())
+            rows = _data_rows(data_row) if data_row is not None else []
+        if body.data_row_mode:
+            model.data_file = model.data_file.model_copy(
+                update={"row_mode": _row_mode(body.data_row_mode)})
+    return preview_requests(model, rows, samples=body.samples)
+
+
+@app.post("/api/plan/{plan_id}/generate", **doc("POST", "/api/plan/{plan_id}/generate"))
 def generate(plan_id: str, body: GenerateBody) -> dict:
     """Render a plan to a script. Uses the edited LoadModel if provided, else stored.
 
@@ -536,12 +583,10 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
             data_row = s.get(DataFileRow, body.data_file_id)
             if data_row is None:
                 raise HTTPException(status_code=404, detail="data file not found")
-            model.data_file = DataFile(
-                filename=data_row.filename,
-                fields=data_row.columns,
-                row_count=data_row.row_count,
-                source_format=data_row.source_format,
-            )
+            model.data_file = _attach_data_file(model, data_row, body.data_row_mode)
+        elif body.data_row_mode and model.data_file is not None:
+            model.data_file = model.data_file.model_copy(
+                update={"row_mode": _row_mode(body.data_row_mode)})
 
         # Attach custom headers (tokens/API keys) — go to the runner, not the LLM.
         if body.headers:
@@ -582,7 +627,7 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
         }
 
 
-@app.get("/api/plans")
+@app.get("/api/plans", **doc("GET", "/api/plans"))
 def list_plans() -> dict:
     with get_session() as s:
         rows = s.query(PlanRow).order_by(PlanRow.created_at.desc()).all()
@@ -600,7 +645,7 @@ def list_plans() -> dict:
         }
 
 
-@app.get("/api/plans/{plan_id}")
+@app.get("/api/plans/{plan_id}", **doc("GET", "/api/plans/{plan_id}"))
 def get_plan(plan_id: str) -> dict:
     with get_session() as s:
         row = s.get(PlanRow, plan_id)
@@ -623,7 +668,7 @@ def get_plan(plan_id: str) -> dict:
         }
 
 
-@app.get("/api/scripts/{script_id}/download", response_class=PlainTextResponse)
+@app.get("/api/scripts/{script_id}/download", response_class=PlainTextResponse, **doc("GET", "/api/scripts/{script_id}/download"))
 def download_script(script_id: str) -> PlainTextResponse:
     with get_session() as s:
         row = s.get(ScriptRow, script_id)
@@ -646,7 +691,7 @@ class PreflightBody(BaseModel):
     headers: dict[str, str] | None = None
 
 
-@app.post("/api/preflight")
+@app.post("/api/preflight", **doc("POST", "/api/preflight"))
 def api_preflight(body: PreflightBody) -> dict:
     """Fire one request per endpoint and report status codes (no load)."""
     model = body.load_model
@@ -673,7 +718,7 @@ def api_preflight(body: PreflightBody) -> dict:
 
 
 
-@app.post("/api/scripts/{script_id}/validate")
+@app.post("/api/scripts/{script_id}/validate", **doc("POST", "/api/scripts/{script_id}/validate"))
 def api_validate_script(script_id: str) -> dict:
     """Smoke-test a generated script with 1 VU / 1 iteration before a full run."""
     with get_session() as s:
@@ -696,7 +741,7 @@ class UploadScriptBody(BaseModel):
     tool: str = "k6"
 
 
-@app.post("/api/scripts/upload")
+@app.post("/api/scripts/upload", **doc("POST", "/api/scripts/upload"))
 def upload_script(body: UploadScriptBody) -> dict:
     """Store a hand-written / existing script and make it runnable, skipping planning.
 
@@ -746,7 +791,7 @@ def upload_script(body: UploadScriptBody) -> dict:
 
 # ---------- run + live monitor ----------
 
-@app.get("/api/run/available")
+@app.get("/api/run/available", **doc("GET", "/api/run/available"))
 def run_available() -> dict:
     """Tell the UI whether k6 is installed so it can show a helpful message."""
     return {"k6": k6_available()}
@@ -773,7 +818,7 @@ def _data_for_plan(session, plan_row) -> tuple[str, str]:
     return dr.filename, dr.content
 
 
-@app.post("/api/scripts/{script_id}/run")
+@app.post("/api/scripts/{script_id}/run", **doc("POST", "/api/scripts/{script_id}/run"))
 def run_script(script_id: str) -> dict:
     """Launch a script as a live run. Returns a run_id the UI polls for status."""
     with get_session() as s:
@@ -810,7 +855,7 @@ def run_script(script_id: str) -> dict:
     return {"run_id": run.run_id, "status": run.status, "message": run.message}
 
 
-@app.get("/api/runs/{run_id}")
+@app.get("/api/runs/{run_id}", **doc("GET", "/api/runs/{run_id}"))
 def run_status(run_id: str) -> dict:
     """Live status + aggregated metrics snapshot for a run."""
     run = get_run(run_id)
@@ -829,7 +874,7 @@ def run_status(run_id: str) -> dict:
     }
 
 
-@app.post("/api/runs/{run_id}/stop")
+@app.post("/api/runs/{run_id}/stop", **doc("POST", "/api/runs/{run_id}/stop"))
 def run_stop(run_id: str) -> dict:
     ok = stop_run(run_id)
     if not ok:
@@ -874,7 +919,7 @@ def _build_report(run) -> tuple[dict, str]:
     return verdict, report_html
 
 
-@app.get("/api/runs/{run_id}/report")
+@app.get("/api/runs/{run_id}/report", **doc("GET", "/api/runs/{run_id}/report"))
 def run_report(run_id: str) -> dict:
     """Return the verdict + narrative for a finished run (for the UI panel)."""
     run = get_run(run_id)
@@ -979,7 +1024,7 @@ def run_report(run_id: str) -> dict:
     }
 
 
-@app.get("/api/runs/{run_id}/logs/download")
+@app.get("/api/runs/{run_id}/logs/download", **doc("GET", "/api/runs/{run_id}/logs/download"))
 def run_logs_download(run_id: str):
     """Download the run's logs as a .txt file (live run, or from the saved report)."""
     from fastapi.responses import PlainTextResponse
@@ -1003,7 +1048,7 @@ def run_logs_download(run_id: str):
         body, headers={"Content-Disposition": f'attachment; filename="run_{run_id}_logs.txt"'})
 
 
-@app.get("/api/runs/{run_id}/report/download", response_class=HTMLResponse)
+@app.get("/api/runs/{run_id}/report/download", response_class=HTMLResponse, **doc("GET", "/api/runs/{run_id}/report/download"))
 def run_report_download(run_id: str) -> HTMLResponse:
     """Download the full HTML report."""
     run = get_run(run_id)

@@ -179,11 +179,27 @@ class Threshold(BaseModel):
         return v
 
 
+ROW_MODES = ("random", "sequential", "unique")
+
+
 class DataFile(BaseModel):
     filename: str = Field(..., description="e.g. 'users.csv'.")
     fields: list[str] = Field(..., min_length=1)
     row_count: int = Field(default=0, ge=0)
     source_format: str = Field(default="csv")
+    row_mode: str = Field(
+        default="random",
+        description="How rows are handed to requests: 'random' (any row, repeats "
+                    "possible), 'sequential' (in file order, starting again at the "
+                    "top) or 'unique' (each row once; the test stops when rows run out).",
+    )
+
+    @field_validator("row_mode")
+    @classmethod
+    def known_row_mode(cls, v: str) -> str:
+        if v not in ROW_MODES:
+            raise ValueError(f"row_mode must be one of {', '.join(ROW_MODES)}")
+        return v
 
 
 class LoadModel(BaseModel):

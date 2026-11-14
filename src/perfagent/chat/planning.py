@@ -3,7 +3,7 @@
 This is the hand-off from chat to the rest of the agent. It reuses ``draft_plan`` (so
 every deterministic control still applies: forced target, code-owned load shape,
 threshold sanity, correlation), stores the plan, audits it and grades it. The result
-has the same shape the Review step already consumes from /api/plan and /api/chat-plan.
+has the same shape the Review step already consumes from /api/plan.
 
 Nothing here fires load: the plan still has to be reviewed and approved by a human.
 """
