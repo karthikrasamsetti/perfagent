@@ -1,6 +1,8 @@
 # Frontend migration decision
 
-Recommended next milestone: **React + TypeScript + Vite**, retaining FastAPI as the backend.
+Implemented first migration: **React + TypeScript + Vite**, retaining FastAPI as the backend. See [frontend/README.md](frontend/README.md) for development, builds and the compatibility boundary.
+
+The production entry point now renders seven React page components and shared navigation/dialogs, uses React Router for navigation and deep-link refreshes, and has TypeScript request declarations generated from OpenAPI. FastAPI serves the built assets and retains `/legacy` as a fallback. The advanced editor and existing workflow state remain in an extracted compatibility controller; converting that state to React hooks is the next incremental refactor.
 
 PerfAgent is an interactive testing workspace. Its existing Python services already handle planning, generation, execution, Git operations and reports. A client-rendered React application can use those JSON APIs directly; a second server-rendering layer is not needed for the present workflow. This is an application-specific recommendation, not a limitation of Next.js or Angular.
 
@@ -27,15 +29,13 @@ React documents incremental adoption in an existing server-backed application, a
 
 Organize components by project management, test library/editor, workload profiles, run monitor, reports, and integrations. Shared form controls, tables, charts, notices, dialogs, and navigation belong in a small common UI layer.
 
-## Migration sequence
+## Follow-up migration sequence
 
-1. Create a `frontend/` React/TypeScript app with Vite. Select compatible dependencies and generate the lockfile when implementation starts.
-2. Add routing and a typed API client derived from FastAPI's OpenAPI contract. Keep execution and verdict logic in Python.
-3. Move Projects, project settings, dashboards, and the test library first. Preserve the current UI as a fallback during development.
-4. Move test creation/review, reusable workload profiles, script imports, and Git framework import.
-5. Move run monitoring and reports. Replace global mutable state with project/test/run-specific state; cancel obsolete requests and control polling lifecycle explicitly.
-6. Serve a production build from FastAPI, with history fallback for frontend routes and `/api` kept separate. Proxy `/api` during local frontend development.
-7. Port the existing browser regression scenarios to the frontend test runner and verify parity before switching the default UI.
+1. Move Projects, project settings, dashboards and library state from the compatibility controller into React hooks and the typed API client.
+2. Replace generated scenario/request-data rows with React components and controlled forms.
+3. Move run polling and report state into project/test/run-specific hooks with explicit cancellation and cleanup.
+4. Retire window compatibility bindings as each feature's dynamic rows and state are converted.
+5. Keep API, component, route and real-browser regression checks passing before removing `/legacy`.
 
 For shared deployments, design account authentication and project membership before treating project routes as access boundaries. Administrator authorization belongs on the server, independent of navigation or presentation-role selections.
 

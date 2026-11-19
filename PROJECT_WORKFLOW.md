@@ -39,4 +39,4 @@ Generated framework files continue to use the existing secret extraction and exp
 
 ## Next UI milestone
 
-See [SPA_MIGRATION.md](SPA_MIGRATION.md). The current UI implements the workflow against FastAPI JSON APIs so the frontend can be replaced incrementally.
+The React SPA now serves the same workflow against FastAPI JSON APIs. See [frontend/README.md](frontend/README.md) for development/build commands and [SPA_MIGRATION.md](SPA_MIGRATION.md) for remaining state refactors. The previous single-file workspace remains at `/legacy` during the transition.

@@ -36,6 +36,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, Response  
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.convertors import Convertor, register_url_convertor
 from pydantic import BaseModel, Field
 
 from perfagent import __version__, audit, tracing
@@ -106,6 +108,17 @@ _configure_logging()
 _log = get_logger("perfagent.api")
 
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+_SPA_DIR = _WEB_DIR / "spa"
+
+
+class _FrontendAssets(StaticFiles):
+    async def check_config(self) -> None:
+        if self.directory and not Path(self.directory).is_dir():
+            return  # A source checkout without a frontend build still uses /legacy.
+        await super().check_config()
+
+
+app.mount("/assets", _FrontendAssets(directory=str(_SPA_DIR / "assets"), check_dir=False), name="spa-assets")
 
 
 # ---------- request/response models ----------
@@ -162,6 +175,14 @@ def health() -> dict:
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index() -> str:
+    if (_SPA_DIR / "index.html").is_file():
+        return (_SPA_DIR / "index.html").read_text(encoding="utf-8")
+    return (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/legacy", response_class=HTMLResponse, include_in_schema=False)
+def legacy_workspace() -> str:
+    """Preserved fallback during the React migration."""
     return (_WEB_DIR / "index.html").read_text(encoding="utf-8")
 
 
@@ -1248,3 +1269,27 @@ def metrics() -> Response:
     from perfagent.observability.metrics import render_latest
     payload, content_type = render_latest()
     return Response(content=payload, media_type=content_type)
+
+
+class _FrontendPath(Convertor[str]):
+    # Leave API, static assets and the fallback to Starlette's own 404/405 routing.
+    regex = r"(?!api(?:/|$)|assets(?:/|$)|legacy(?:/|$)).*"
+
+    def convert(self, value: str) -> str:
+        return value
+
+    def to_string(self, value: str) -> str:
+        return value
+
+
+register_url_convertor("perfagent_frontend", _FrontendPath())
+
+
+@app.get("/{spa_path:perfagent_frontend}", response_class=HTMLResponse, include_in_schema=False)
+def spa_route(spa_path: str) -> str:
+    """History fallback for client-side routes; API and asset errors remain 404s."""
+    if spa_path in ("api", "assets") or spa_path.startswith(("api/", "assets/", "legacy/")):
+        raise HTTPException(404, "Not found")
+    if not (_SPA_DIR / "index.html").is_file():
+        raise HTTPException(404, "Build the frontend first with npm run build in frontend/.")
+    return (_SPA_DIR / "index.html").read_text(encoding="utf-8")

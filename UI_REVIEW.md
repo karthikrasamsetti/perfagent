@@ -4,6 +4,10 @@ Reviewed November 19, 2026.
 
 ## Implementation update
 
+React migration: the default built UI is now a React/TypeScript/Vite SPA with seven page components, shared navigation/dialogs, OpenAPI-generated request types, browser history and deep-link refresh support. FastAPI serves the committed production assets. The previous workspace remains at `/legacy`. Workflow state and dynamic editor rows are retained in an extracted compatibility controller; see [frontend/README.md](frontend/README.md) for the exact boundary and run/build commands.
+
+Migration validation includes 50 backend workflow/API checks, 7 frontend unit tests, 42 React browser checks, and 34 checks against the previous workspace. Browser checks use fixture APIs; the backend smoke regression uses a temporary local HTTP target.
+
 Project milestone: the app now starts with Projects, captures a test name before planning, offers separate script/Git import actions, retains reusable workload profiles, and provides project-scoped dashboards/libraries. An admin-token-protected endpoint supplies the all-project overview. Legacy data is migrated into Imported workspace. See [PROJECT_WORKFLOW.md](PROJECT_WORKFLOW.md) for usage and the precise access-control scope; see [SPA_MIGRATION.md](SPA_MIGRATION.md) for the next React/TypeScript/Vite milestone.
 
 Project validation: the complete regression run finished with **415 passed, 25 skipped**. The final conversation/project/migration/API checks passed **57 tests, with 3 skipped**. The updated Edge harness exercises project creation, naming before planning, separate imports, reusable workloads, admin rejection/success, scoped dashboards, reports, and desktop/mobile navigation.

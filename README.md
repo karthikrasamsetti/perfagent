@@ -22,7 +22,7 @@ against your last run and is saved to a browsable history.
 
 ## Table of contents
 
-Start with the [project workflow](PROJECT_WORKFLOW.md) for project creation, separate script/Git imports, workload profiles, project dashboards and the admin overview. The planned React frontend migration is described in [SPA_MIGRATION.md](SPA_MIGRATION.md).
+Start with the [project workflow](PROJECT_WORKFLOW.md) for project creation, separate script/Git imports, workload profiles, project dashboards and the admin overview. The [React frontend guide](frontend/README.md) covers development and production builds; [SPA_MIGRATION.md](SPA_MIGRATION.md) records the remaining incremental refactors.
 
 - [Why this exists](#why-this-exists)
 - [Four ways to start](#four-ways-to-start)
