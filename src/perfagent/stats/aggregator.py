@@ -22,6 +22,8 @@ class Aggregator:
     def __init__(self) -> None:
         self._durations: list[float] = []   # http_req_duration values (ms)
         self._req_count = 0
+        self._iterations = 0
+        self._dropped_iterations = 0
         self._http_failed = 0               # http_req_failed (transport/status)
         self._errors = 0                    # custom `errors` metric (status>=400 || !ok)
         self._checks_total = 0
@@ -45,6 +47,10 @@ class Aggregator:
             b["durations"].append(float(value))
             b["count"] += 1
 
+        elif metric == "iterations" and value is not None:
+            self._iterations += int(value)
+        elif metric == "dropped_iterations" and value is not None:
+            self._dropped_iterations += int(value)
         elif metric == "http_reqs" and value is not None:
             self._req_count += int(value)
 
@@ -119,6 +125,9 @@ class Aggregator:
         return {
             "elapsed_s": round(elapsed, 1),
             "requests": self._req_count,
+            "iterations": self._iterations,
+            "iterations_per_second": round(self._iterations / elapsed, 2),
+            "dropped_iterations": self._dropped_iterations,
             "failed": failed,
             "error_rate": round(error_rate, 4),
             "rps": round(self._req_count / elapsed, 2),

@@ -29,6 +29,8 @@ class PlanRequest(BaseModel):
     target_base_url: str
     endpoints: list[EndpointSpec] = Field(..., min_length=1)
     goal: str = ""
+    project_id: str | None = None
+    test_name: str = Field(default="", max_length=120)
     max_users: int = Field(default=100, gt=0)
     duration_seconds: int = Field(default=300, gt=0)
     profile_type: LoadProfileType = LoadProfileType.RAMP

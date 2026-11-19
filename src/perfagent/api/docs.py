@@ -5,8 +5,8 @@ module. Each endpoint gets:
 
   - a GROUP (tag), so the docs read as a handful of areas instead of one long list;
   - a one-line summary and a plain-English description;
-  - an ACCESS LEVEL — what kind of thing the call does. There is no login or
-    permission check in the agent today (that belongs to the hub that hosts it), but
+  - an ACCESS LEVEL — what kind of thing the call does. Project membership and account login are not provided by the agent;
+    the admin overview separately requires a configured token.
     the levels are published in the OpenAPI file as `x-access`, so a gateway or a
     future role system can decide who may call what without re-reading the code;
   - whether it USES AI (spends tokens), published as `x-uses-ai`.
@@ -106,6 +106,22 @@ def _e(tag, summary, description, access="read", uses_ai=False, returns="Success
 
 
 ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
+    ("GET", "/api/projects"): _e("Planning", "List performance projects",
+        "List project names, non-secret repository settings and test counts."),
+    ("POST", "/api/projects"): _e("Planning", "Create a performance project",
+        "Create a named project with target, environment and optional Git framework settings.", "write"),
+    ("PUT", "/api/projects/{project_id}"): _e("Planning", "Update project settings",
+        "Update project identity, default target and non-secret Git configuration.", "write"),
+    ("GET", "/api/projects/{project_id}/dashboard"): _e("Reports & history", "Project dashboard summary",
+        "Aggregate test counts, runs, requests and pass rate within one project."),
+    ("GET", "/api/admin/dashboard"): _e("Reports & history", "Administrator overview of all projects",
+        "Cross-project summaries. Requires X-Perfagent-Admin matching ADMIN_API_TOKEN on the server."),
+    ("PUT", "/api/plans/{plan_id}/project"): _e("Planning", "Assign a test to a project",
+        "Attach an existing plan and its execution history to the selected project.", "write"),
+    ("GET", "/api/plans/{plan_id}/workloads"): _e("Planning", "List saved workload profiles",
+        "List named load shapes and threshold sets saved for this reusable test."),
+    ("POST", "/api/plans/{plan_id}/workloads"): _e("Planning", "Save a named workload profile",
+        "Save or update a named load shape and threshold set without changing completed runs.", "write"),
     # ------------------------------------------------------------ Conversation
     ("GET", "/api/chat/config"): _e(
         "Conversation", "Is conversation mode on, and its limits",
@@ -253,6 +269,10 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "Starts the script with k6 and returns at once. The run continues in the "
         "background; poll the run for live metrics. This sends real load to the target.",
         "run", returns="`run_id`, `status`, `message`."),
+    ("GET", "/api/scripts/{script_id}/readiness"): _e(
+        "Runs", "Execution readiness checklist",
+        "Check frozen inputs, engine availability and planned load without sending traffic.",
+        returns="`checks`, `execution`, `target`, `smoke_supported`."),
     ("GET", "/api/runs/{run_id}"): _e(
         "Runs", "Live status of a run",
         "The run's status and the metrics measured so far (requests, error rate, "
@@ -283,7 +303,7 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
     ("GET", "/api/runs/{run_id}/report/download"): _e(
         "Reports & history", "Download the report",
         "The full report as a self-contained HTML file.",
-        uses_ai=True, returns="An HTML file, as an attachment."),
+        returns="An HTML file, as an attachment."),
     ("GET", "/api/runs"): _e(
         "Reports & history", "List past runs",
         "Runs that have a saved report, newest first.",

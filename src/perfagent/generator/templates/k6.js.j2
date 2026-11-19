@@ -26,14 +26,25 @@ export const options = {
   scenarios: {
 {% for scenario in scenarios %}
     {{ scenario.key }}: {
+{% if arrival_rate %}
+      executor: 'constant-arrival-rate',
+      rate: {{ scenario.rate }},
+      timeUnit: '1s',
+      duration: '{{ total_seconds }}s',
+      preAllocatedVUs: {{ scenario.vus }},
+{% else %}
       executor: 'ramping-vus',
+{% endif %}
       exec: '{{ scenario.func_name }}',
-      startVUs: 0,
+      gracefulStop: '{{ graceful_stop_seconds }}s',
+{% if not arrival_rate %}
+      startVUs: {{ scenario.start_vus }},
       stages: [
 {% for st in scenario.stages %}
         { duration: '{{ st.duration }}s', target: {{ st.target }} },
 {% endfor %}
       ],
+{% endif %}
     },
 {% endfor %}
   },

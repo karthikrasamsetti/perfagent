@@ -106,8 +106,10 @@ def _fallback_narrative(target: str, snapshot: dict, verdict: dict) -> Narrative
             for c in failed
         ]
         summary += "Thresholds missed: " + "; ".join(parts) + "."
-    else:
+    elif passed is True:
         summary += "All configured thresholds were satisfied."
+    else:
+        summary += "A final pass/fail verdict is unavailable."
 
     observations = []
     for e in snapshot.get("per_endpoint", []):

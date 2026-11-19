@@ -55,6 +55,8 @@ class RunState:
     snapshot: dict = field(default_factory=dict)
     # human-readable k6 output lines (console.*, thresholds, checks) — for live logs
     logs: list[str] = field(default_factory=list)
+    samples: list[dict] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
     _proc: subprocess.Popen | None = None
     _agg: Aggregator = field(default_factory=Aggregator)
     _tmpdir: str | None = None
@@ -210,6 +212,12 @@ def _run_worker(run: RunState, content: str) -> None:
         now = time.time()
         if now - last_snapshot > 0.25:
             run.snapshot = run._agg.snapshot()
+            run.samples.append({"t": round(now - run.started_at, 2),
+                                "rps": run.snapshot.get("rps", 0),
+                                "p95": run.snapshot.get("latency", {}).get("p95_ms"),
+                                "err": run.snapshot.get("error_rate", 0) * 100})
+            if len(run.samples) > 1200:
+                run.samples = run.samples[::2]
             last_snapshot = now
 
     proc.wait()

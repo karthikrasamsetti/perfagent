@@ -215,10 +215,13 @@ class ChatService:
         """The conversation as the UI shows it (used to resume after a refresh)."""
         return self._view(session_id, self._state(session_id))
 
-    def list(self, limit: int = 20) -> list[dict]:
+    def list(self, limit: int = 20, project_id: str | None = None) -> list[dict]:
         """Recent conversations, newest first."""
         with get_session() as s:
-            rows = (s.query(ChatSessionRow)
+            query = s.query(ChatSessionRow)
+            if project_id:
+                query = query.filter(ChatSessionRow.project_id == project_id)
+            rows = (query
                     .order_by(ChatSessionRow.updated_at.desc())
                     .limit(max(1, min(limit, 100))).all())
             return [

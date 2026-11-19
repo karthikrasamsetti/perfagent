@@ -11,6 +11,7 @@ steps reference as ${var} (e.g. capture a login token, reuse it on protected cal
 from __future__ import annotations
 
 from enum import Enum
+import re
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -156,6 +157,11 @@ class Stage(BaseModel):
 class LoadProfile(BaseModel):
     type: LoadProfileType = LoadProfileType.RAMP
     stages: list[Stage] = Field(..., min_length=1)
+    arrival_rate: int | None = Field(default=None, ge=1, le=1_000_000,
+                                    description="Journey iterations per second; k6 only.")
+    pre_allocated_vus: int = Field(default=10, ge=1, le=1_000_000)
+    graceful_stop_seconds: int = Field(default=30, ge=0, le=3600)
+    start_users: int = Field(default=0, ge=0, le=1_000_000)
 
     @property
     def peak_users(self) -> int:
@@ -183,6 +189,7 @@ ROW_MODES = ("random", "sequential", "unique")
 
 
 class DataFile(BaseModel):
+    data_file_id: str | None = None
     filename: str = Field(..., description="e.g. 'users.csv'.")
     fields: list[str] = Field(..., min_length=1)
     row_count: int = Field(default=0, ge=0)
@@ -203,6 +210,8 @@ class DataFile(BaseModel):
 
 
 class LoadModel(BaseModel):
+    test_name: str = Field(default="", max_length=120)
+    script_filename: str = Field(default="", max_length=120)
     target_base_url: str
     scenarios: list[Scenario] = Field(..., min_length=1)
     load_profile: LoadProfile
@@ -211,6 +220,13 @@ class LoadModel(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     environment: str = Field(default="", description="Environment label (dev/staging/prod).")
     insecure_tls: bool = Field(default=False, description="Skip TLS verification (test hosts only).")
+
+    @field_validator("script_filename")
+    @classmethod
+    def safe_script_filename(cls, value: str) -> str:
+        if value and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value) or ".." in value):
+            raise ValueError("Use a filename without folders, spaces or '..'.")
+        return value
 
     @field_validator("target_base_url")
     @classmethod

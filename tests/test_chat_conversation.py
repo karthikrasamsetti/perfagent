@@ -459,6 +459,23 @@ def test_api_full_flow(client):
         assert a in actions
 
 
+def test_api_conversation_stays_in_named_project(client):
+    a = client.post('/api/projects', json={'name': 'Commerce'}).json()['project_id']
+    b = client.post('/api/projects', json={'name': 'Payments'}).json()['project_id']
+    response = client.post('/api/chat/sessions', json={
+        'message': 'test login', 'project_id': a, 'test_name': 'Login journey'})
+    assert response.status_code == 200, response.text
+    sid = response.json()['session_id']
+    assert client.get('/api/chat/sessions?project_id='+b).json()['sessions'] == []
+    assert client.get('/api/chat/sessions?project_id='+a).json()['sessions'][0]['session_id'] == sid
+    client.post(f'/api/chat/sessions/{sid}/messages', json={'message': 'https://shop.test'})
+    view = client.post(f'/api/chat/sessions/{sid}/build').json()
+    plan_id = view['plan']['plan_id']
+    assert view['plan']['load_model']['test_name'] == 'Login journey'
+    saved = client.get('/api/plans/'+plan_id).json()
+    assert saved['project_id'] == a and saved['load_model']['test_name'] == 'Login journey'
+
+
 def test_api_errors(client):
     assert client.post("/api/chat/sessions", json={"message": "  "}).status_code == 400
     assert client.get("/api/chat/sessions/nope").status_code == 404

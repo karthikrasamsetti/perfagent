@@ -263,7 +263,7 @@ def test_api_export_zip(api):
     assert "shop/ci/Jenkinsfile" not in names
 
 
-def test_api_export_rejects_stale_script(api):
+def test_api_export_uses_frozen_script_after_plan_changes(api):
     from tests.test_api import _plan_body
     plan = api.post("/api/plan", json=_plan_body()).json()
     pid = plan["plan_id"]
@@ -272,7 +272,10 @@ def test_api_export_rejects_stale_script(api):
     edited["thresholds"] = [{"metric": "p95_ms", "op": "<", "value": 123}]
     api.post(f"/api/plan/{pid}/generate", json={"tool": "k6", "load_model": edited})
     r = api.post(f"/api/scripts/{sid}/export/zip", json={"framework_name": "a", "test_name": "b"})
-    assert r.status_code == 409
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
+        exported = json.loads(archive.read("a/tests/b/plan.json"))
+        assert all(threshold["value"] != 123 for threshold in exported["thresholds"])
 
 
 def test_api_export_bad_name(api):

@@ -37,10 +37,30 @@ class Base(DeclarativeBase):
     pass
 
 
+class ProjectRow(Base):
+    __tablename__ = "projects"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    settings_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class WorkloadRow(Base):
+    __tablename__ = "test_workloads"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    plan_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    profile_json: Mapped[str] = mapped_column(Text)
+    thresholds_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
 class PlanRow(Base):
     __tablename__ = "plans"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    source_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_now)
     target_base_url: Mapped[str] = mapped_column(String(500))
     goal: Mapped[str] = mapped_column(Text, default="")
@@ -82,6 +102,17 @@ class DataFileRow(Base):
     @property
     def columns(self) -> list[str]:
         return [c for c in self.columns_csv.split(",") if c]
+
+
+class ScriptSnapshotRow(Base):
+    """Immutable execution inputs for a script version (never sent in reports)."""
+
+    __tablename__ = "script_snapshots"
+    script_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    load_model_json: Mapped[str] = mapped_column(Text, default="")
+    data_filename: Mapped[str] = mapped_column(Text, default="")
+    data_content: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
 class RunResultRow(Base):
@@ -190,6 +221,8 @@ class ChatSessionRow(Base):
     __tablename__ = "chat_sessions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    test_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now, index=True)
     title: Mapped[str] = mapped_column(String(200), default="")

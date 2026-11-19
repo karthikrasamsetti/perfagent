@@ -79,6 +79,19 @@ def _scale_stages(model: LoadModel, frac: float) -> list[dict]:
     return stages
 
 
+def _allocate(total: int, fractions: list[float]) -> list[int]:
+    """Give every journey a slot, then distribute the rest by weight."""
+    if total < len(fractions):
+        raise ValueError("Iteration rate and preallocated users must each be at least the number of journeys.")
+    remainder = total - len(fractions)
+    values = [1 + int(remainder * fraction) for fraction in fractions]
+    order = sorted(range(len(fractions)), key=lambda i:
+                   remainder * fractions[i] - int(remainder * fractions[i]), reverse=True)
+    for i in order[:total - sum(values)]:
+        values[i] += 1
+    return values
+
+
 def _thresholds(model: LoadModel) -> list[dict]:
     out = []
     for th in model.thresholds:
@@ -152,7 +165,7 @@ def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEAD
 
 
 def _scenario_js(sc, si, cap, data_on, corr_on, has_headers, dynamic,
-                 row_mode="random", scenario_count=1) -> str:
+                 row_mode="random", scenario_count=1, arrival=False) -> str:
     fn = _func_name(sc.name, si)
     out = [f"export function {fn}() {{"]
     if corr_on:
@@ -162,9 +175,10 @@ def _scenario_js(sc, si, cap, data_on, corr_on, has_headers, dynamic,
     out.append(f"  group({json.dumps(sc.name)}, function () {{")
     think = round(sc.think_time.max_seconds - sc.think_time.min_seconds, 3)
     lo = sc.think_time.min_seconds
-    for step in sc.steps:
+    for index, step in enumerate(sc.steps):
         out.append(_step_js(step, cap, dynamic, has_headers, data_on))
-        out.append(f"    sleep(Math.random() * {think} + {lo});")
+        if not arrival or index < len(sc.steps) - 1:
+            out.append(f"    sleep(Math.random() * {think} + {lo});")
     out.append("  });")
     out.append("}")
     return "\n".join(out)
@@ -179,6 +193,8 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
     dynamic = has_headers and headers_dynamic(headers)
 
     fractions = model.normalised_weights()
+    rates = _allocate(model.load_profile.arrival_rate, fractions) if model.load_profile.arrival_rate else [0] * len(fractions)
+    vus = _allocate(model.load_profile.pre_allocated_vus, fractions) if model.load_profile.arrival_rate else [0] * len(fractions)
     scenarios_meta = []
     scenario_funcs = []
     for i, (sc, frac) in enumerate(zip(model.scenarios, fractions, strict=False)):
@@ -186,11 +202,14 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
             "key": _identifier(sc.name, f"scenario_{i}").lower(),
             "func_name": _func_name(sc.name, i),
             "stages": _scale_stages(model, frac),
+            "rate": rates[i],
+            "vus": vus[i],
+            "start_vus": max(1, round(model.load_profile.start_users * frac)) if model.load_profile.start_users else 0,
         })
         scenario_funcs.append(_scenario_js(
             sc, i, cap, data_on, corr_on, has_headers, dynamic,
             row_mode=model.data_file.row_mode if data_on else "random",
-            scenario_count=len(model.scenarios)))
+            scenario_count=len(model.scenarios), arrival=bool(model.load_profile.arrival_rate)))
 
     # extra imports (uuid generator) + headers declarations.
     # Build as a list and join, so the uuid import is never overwritten by the
@@ -218,6 +237,8 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
         profile_type=model.load_profile.type.value,
         peak_users=model.load_profile.peak_users,
         total_seconds=model.load_profile.total_seconds,
+        arrival_rate=model.load_profile.arrival_rate,
+        graceful_stop_seconds=model.load_profile.graceful_stop_seconds,
         scenarios=scenarios_meta,
         thresholds=_thresholds(model),
         data_on=data_on,
