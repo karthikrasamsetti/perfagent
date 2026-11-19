@@ -14,10 +14,12 @@ npm run dev
 Start the Python backend separately from the repository root:
 
 ```text
-uv run uvicorn perfagent.api.app:app --reload --port 8000
+uv run uvicorn perfagent.api.app:app --reload --port 8080
 ```
 
-Open the local URL printed by Vite, normally `http://127.0.0.1:5173`. `/api` and `/legacy` are proxied to port 8000. Set `PERFAGENT_API_URL` before starting Vite if the backend uses a different port. Application secrets remain in the backend `.env`; never copy them to `VITE_` variables.
+Open the local URL printed by Vite, normally `http://127.0.0.1:5173`. `/api` and `/legacy` are proxied to PerfAgent on port **8080**. Port **8000** belongs to the optional sample target, not the PerfAgent API. A sample-target response cannot handle `/api/projects`.
+
+Set `PERFAGENT_API_URL` in the repository-root `.env` or shell before starting Vite if the backend uses a different port. For example, in PowerShell: `$env:PERFAGENT_API_URL='http://127.0.0.1:9000'`. Restart Vite after changing the proxy target. Application secrets remain in the backend `.env`; never copy them to `VITE_` variables. Vite reads only the backend-address setting from that file.
 
 ## Production and checks
 
