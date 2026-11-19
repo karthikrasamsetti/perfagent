@@ -374,33 +374,111 @@
   .panel#panel5 .card{margin-bottom:18px}
   @media(max-width:860px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.rpt-cols{grid-template-columns:1fr}}
 
+  /* ===== sidebar redesign ===== */
+  .app{display:flex;min-height:100vh}
+  .sidebar{width:230px;flex:none;background:linear-gradient(170deg,#0f2b23,#0a1f19);
+           color:#cfe4db;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;
+           transition:width .18s;z-index:50;overflow:hidden}
+  .sidebar.collapsed{width:60px}
+  .sb-top{display:flex;align-items:center;gap:10px;padding:16px 16px 14px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .sb-logo{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.14);display:flex;
+           align-items:center;justify-content:center;font-size:16px;flex:none}
+  .sb-title{font-weight:700;font-size:13.5px;color:#fff;white-space:nowrap;letter-spacing:-.01em}
+  .sidebar.collapsed .sb-title{display:none}
+  .sb-toggle{margin-left:auto;background:none;border:none;color:#9fc3b7;cursor:pointer;font-size:16px;padding:4px;border-radius:6px}
+  .sb-toggle:hover{background:rgba(255,255,255,.08);color:#fff}
+  .sidebar.collapsed .sb-toggle{margin:0}
+  .sb-nav{padding:10px 8px;display:flex;flex-direction:column;gap:3px;flex:1;overflow-y:auto}
+  .sb-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:9px;color:#b9d4ca;
+           cursor:pointer;font-size:13.5px;font-weight:500;border:none;background:none;text-align:left;
+           width:100%;transition:.12s;white-space:nowrap}
+  .sb-item:hover{background:rgba(255,255,255,.07);color:#fff}
+  .sb-item.active{background:var(--teal);color:#fff;font-weight:600;box-shadow:0 2px 8px rgba(15,122,95,.3)}
+  .sb-ic{font-size:17px;flex:none;width:20px;text-align:center}
+  .sidebar.collapsed .sb-lbl{display:none}
+  .sb-foot{padding:12px 14px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;color:#7fa294;white-space:nowrap}
+  .sidebar.collapsed .sb-foot{display:none}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .maintop{display:flex;align-items:center;gap:12px;padding:12px 24px;background:#fff;border-bottom:1px solid var(--line);
+           position:sticky;top:0;z-index:40}
+  .maintop h1{margin:0;font-size:15px;font-weight:650;letter-spacing:-.01em}
+  .maintop .sub{font-size:12px;color:var(--muted)}
+  .view{display:none;animation:fade .2s ease}
+  .view.show{display:block}
+  .viewwrap{max-width:1120px;margin:22px auto 60px;padding:0 24px;width:100%}
+  .mobnav{display:none}
+  @media(max-width:860px){
+    .sidebar{position:fixed;left:0;top:0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.25)}
+    .sidebar.mobopen{transform:translateX(0)}
+    .mobnav{display:inline-flex;background:none;border:none;color:var(--ink);font-size:20px;cursor:pointer}
+    .sb-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:45}
+    .sb-backdrop.show{display:block}
+  }
+  /* richer dashboard */
+  .dash-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:14px}
+  @media(max-width:860px){.dash-grid{grid-template-columns:1fr}}
+  .dash-cell{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}
+  .dash-cell h4{margin:0 0 4px;font-size:12.5px;font-weight:700;color:var(--ink)}
+  .dash-cell .sub{font-size:11px;color:var(--muted);margin-bottom:8px}
+  .monitor-card{border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden;margin-bottom:14px;background:#fff}
+  .monitor-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .monitor-head .tool{font-weight:650;font-size:13.5px}
+  .monitor-head .url{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px}
+  .monitor-frame{width:100%;height:420px;border:0;display:block;background:#fcfcfb}
+  .monitor-empty{padding:18px;text-align:center;color:var(--muted);font-size:13px}
+  .tool-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:11.5px;
+             font-weight:600;background:var(--teal-l);color:var(--teal-d);border:1px solid var(--teal-ring)}
+
 </style>
 </head>
 <body>
 
-<div class="topbar">
-  <div class="logo">⚡</div>
-  <div>
-    <h1>AI Performance Testing Agent</h1>
-    <p>AI drafts the plan · you approve · code generates, runs &amp; reports</p>
-  </div>
-  <div style="flex:1"></div>
-  <div class="usage-chip" id="sessionUsage" title="Total AI tokens used this session (rough cost estimate)">
-    🪙 <span id="sessionTokens">0</span> tokens
-    <span id="sessionCost" style="opacity:.8"></span>
-  </div>
-</div>
+<div class="sb-backdrop" id="sbBackdrop" onclick="closeMobNav()"></div>
+<div class="app">
 
-<!-- STEPPER -->
-<div class="stepper" id="stepper">
-  <div class="step" data-step="1"><div class="num">1</div><div><div class="lbl">Describe</div><div class="sub">target &amp; endpoints</div></div></div>
-  <div class="step" data-step="2"><div class="num">2</div><div><div class="lbl">Review plan</div><div class="sub">edit &amp; approve</div></div></div>
-  <div class="step" data-step="3"><div class="num">3</div><div><div class="lbl">Script</div><div class="sub">generated code</div></div></div>
-  <div class="step" data-step="4"><div class="num">4</div><div><div class="lbl">Run</div><div class="sub">live metrics</div></div></div>
-  <div class="step" data-step="5"><div class="num">5</div><div><div class="lbl">Report</div><div class="sub">verdict</div></div></div>
-</div>
+  <!-- LEFT SIDEBAR -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sb-top">
+      <div class="sb-logo">⚡</div>
+      <div class="sb-title">PerfAgent</div>
+      <button class="sb-toggle" onclick="toggleSidebar()" title="Collapse / expand">☰</button>
+    </div>
+    <div class="sb-nav">
+      <button class="sb-item active" data-view="create" onclick="showView('create')"><span class="sb-ic">🎯</span><span class="sb-lbl">Create test</span></button>
+      <button class="sb-item" data-view="dashboard" onclick="showView('dashboard')"><span class="sb-ic">📊</span><span class="sb-lbl">Dashboard</span></button>
+      <button class="sb-item" data-view="history" onclick="showView('history')"><span class="sb-ic">📁</span><span class="sb-lbl">History</span></button>
+      <button class="sb-item" data-view="monitoring" onclick="showView('monitoring')"><span class="sb-ic">📡</span><span class="sb-lbl">Monitoring</span></button>
+      <button class="sb-item" data-view="activity" onclick="showView('activity')"><span class="sb-ic">📋</span><span class="sb-lbl">Activity</span></button>
+    </div>
+    <div class="sb-foot">AI drafts · you approve · code runs</div>
+  </nav>
 
-<div class="wrap">
+  <!-- MAIN AREA -->
+  <div class="main">
+    <div class="maintop">
+      <button class="mobnav" onclick="openMobNav()">☰</button>
+      <div>
+        <h1 id="viewTitle">Create a performance test</h1>
+        <div class="sub" id="viewSub">AI drafts the plan · you approve · code generates, runs &amp; reports</div>
+      </div>
+      <div style="flex:1"></div>
+      <div class="usage-chip" id="sessionUsage" title="Total AI tokens used this session (rough cost estimate)">
+        🪙 <span id="sessionTokens">0</span> tokens
+        <span id="sessionCost" style="opacity:.8"></span>
+      </div>
+    </div>
+
+    <!-- ===== VIEW: CREATE TEST (the 5-step wizard) ===== -->
+    <section class="view show" id="view-create">
+    <div class="stepper" id="stepper">
+      <div class="step" data-step="1"><div class="num">1</div><div><div class="lbl">Describe</div><div class="sub">target &amp; endpoints</div></div></div>
+      <div class="step" data-step="2"><div class="num">2</div><div><div class="lbl">Review plan</div><div class="sub">edit &amp; approve</div></div></div>
+      <div class="step" data-step="3"><div class="num">3</div><div><div class="lbl">Script</div><div class="sub">generated code</div></div></div>
+      <div class="step" data-step="4"><div class="num">4</div><div><div class="lbl">Run</div><div class="sub">live metrics</div></div></div>
+      <div class="step" data-step="5"><div class="num">5</div><div><div class="lbl">Report</div><div class="sub">verdict</div></div></div>
+    </div>
+
+    <div class="wrap">
 
   <!-- ===== STEP 1: DESCRIBE ===== -->
   <div class="panel show" id="panel1">
@@ -877,6 +955,50 @@
     </div>
   </div>
 
+    </div><!-- /.wrap -->
+    </section><!-- /view-create -->
+
+    <!-- ===== VIEW: DASHBOARD ===== -->
+    <section class="view" id="view-dashboard">
+      <div class="viewwrap">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0;font-size:15px">📊 Stakeholder dashboard</h2>
+          <button class="btn ghost sm" onclick="loadStakeholder()">↻ Refresh</button>
+          <span class="muted">what each role sees across all runs</span>
+          <div class="spacer"></div>
+          <label for="sdRole" style="margin:0;font-size:12px">View as</label>
+          <select id="sdRole" style="width:auto;padding:5px 9px" onchange="loadStakeholder()">
+            <option value="executive">Executive</option>
+            <option value="qa_lead">QA lead</option>
+            <option value="engineer">Engineer</option>
+            <option value="viewer">Viewer</option>
+          </select>
+        </div>
+
+        <div class="tiles" id="sdTiles" style="grid-template-columns:repeat(4,1fr);margin:14px 0 4px"></div>
+
+        <div class="dash-grid">
+          <div class="dash-cell"><h4>p95 latency across runs</h4><div class="sub">lower is better · amber line</div>
+            <canvas id="sdTrend" height="140" style="width:100%"></canvas></div>
+          <div class="dash-cell"><h4>Error rate across runs</h4><div class="sub">percentage of failed requests · red line</div>
+            <canvas id="sdErrTrend" height="140" style="width:100%"></canvas></div>
+          <div class="dash-cell"><h4>Verdict breakdown</h4><div class="sub">pass / fail / inconclusive</div>
+            <canvas id="sdDonut" height="140" style="width:100%"></canvas></div>
+          <div class="dash-cell"><h4>Latency percentiles (latest run)</h4><div class="sub">p50 · p95 · p99 in ms</div>
+            <canvas id="sdBars" height="140" style="width:100%"></canvas></div>
+        </div>
+
+        <div class="mini" style="margin-top:18px">Recent runs</div>
+        <table id="sdTable" style="margin-top:4px"><thead><tr id="sdHead"></tr></thead><tbody></tbody></table>
+        <div class="muted" id="sdEmpty" style="display:none;padding:10px 2px">No runs recorded yet. Run a plan to populate this.</div>
+      </div>
+      </div>
+    </section>
+
+    <!-- ===== VIEW: HISTORY ===== -->
+    <section class="view" id="view-history">
+      <div class="viewwrap">
   <!-- HISTORY -->
   <div class="card">
     <div style="display:flex;align-items:center;gap:10px">
@@ -884,31 +1006,6 @@
       <button class="btn ghost sm" onclick="loadPlans()">↻ Refresh</button>
     </div>
     <table id="plansTable" style="margin-top:10px"><thead><tr><th>Created</th><th>Target</th><th>Goal</th><th>Scripts</th><th></th></tr></thead><tbody></tbody></table>
-  </div>
-
-  <!-- STAKEHOLDER DASHBOARD -->
-  <div class="card">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <h2 style="margin:0;font-size:14px">📊 Stakeholder dashboard</h2>
-      <button class="btn ghost sm" onclick="loadStakeholder()">↻ Refresh</button>
-      <span class="muted">run history &amp; p95 trend — scoped to the chosen role</span>
-      <div class="spacer"></div>
-      <label for="sdRole" style="margin:0;font-size:12px">View as</label>
-      <select id="sdRole" style="width:auto;padding:5px 9px" onchange="loadStakeholder()">
-        <option value="executive">Executive</option>
-        <option value="qa_lead">QA lead</option>
-        <option value="engineer">Engineer</option>
-        <option value="viewer">Viewer</option>
-      </select>
-    </div>
-
-    <div class="tiles" id="sdTiles" style="grid-template-columns:repeat(3,1fr);margin:14px 0 8px"></div>
-
-    <div class="mini" style="margin-top:10px">p95 latency across runs (ms)</div>
-    <canvas id="sdTrend" height="130" style="width:100%;margin:4px 0 14px;border:1px solid var(--line);border-radius:12px;background:#fcfcfb"></canvas>
-
-    <table id="sdTable" style="margin-top:4px"><thead><tr id="sdHead"></tr></thead><tbody></tbody></table>
-    <div class="muted" id="sdEmpty" style="display:none;padding:10px 2px">No runs recorded yet. Run a plan to populate this.</div>
   </div>
 
   <!-- RUNS / REPORTS HISTORY -->
@@ -920,7 +1017,35 @@
     </div>
     <table id="runsTable" style="margin-top:10px"><thead><tr><th>When</th><th>Verdict</th><th>Target</th><th>Goal</th><th>Requests</th><th>Errors</th><th>p95</th><th></th></tr></thead><tbody></tbody></table>
   </div>
+      </div>
+    </section>
 
+    <!-- ===== VIEW: MONITORING ===== -->
+    <section class="view" id="view-monitoring">
+      <div class="viewwrap">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0;font-size:15px">📡 Monitoring tools</h2>
+          <span class="muted">link your own Grafana, Datadog, Prometheus or any dashboard — it embeds here</span>
+        </div>
+        <p class="hint" style="margin:10px 0 0">Add the URL of a dashboard you already run. It is stored only in this browser. If the tool blocks embedding, use <b>Open ↗</b> to view it in a new tab. For Grafana embedding, the Grafana admin must set <code class="k">allow_embedding = true</code>.</p>
+        <div class="grid3" style="margin-top:14px">
+          <div class="field"><label>Tool</label>
+            <select id="monTool"><option>Grafana</option><option>Datadog</option><option>Prometheus</option><option>Kibana</option><option>New Relic</option><option>Custom</option></select></div>
+          <div class="field" style="grid-column:span 2"><label>Dashboard URL</label>
+            <input id="monUrl" placeholder="https://grafana.mycompany.com/d/abc/perf?kiosk" autocomplete="off"/></div>
+        </div>
+        <div class="btnrow"><button class="btn" onclick="monAdd()">+ Add dashboard</button>
+          <span class="hint" style="margin:0">Tip: append <code class="k">&amp;kiosk</code> to a Grafana URL to hide its menus.</span></div>
+        <div class="statusline" id="monStatus"></div>
+      </div>
+      <div id="monList"></div>
+      </div>
+    </section>
+
+    <!-- ===== VIEW: ACTIVITY ===== -->
+    <section class="view" id="view-activity">
+      <div class="viewwrap">
   <!-- ACTIVITY LOG -->
   <div class="card">
     <div style="display:flex;align-items:center;gap:10px">
@@ -940,8 +1065,11 @@
     </div>
     <table id="tracesTable" style="margin-top:10px"><thead><tr><th>When</th><th>Step</th><th>Model</th><th>Tokens</th><th>Latency</th><th>Redactions</th><th>Status</th></tr></thead><tbody></tbody></table>
   </div>
+      </div>
+    </section>
 
-</div>
+  </div><!-- /.main -->
+</div><!-- /.app -->
 
 <script>
 let currentPlanId=null, currentScriptId=null, currentDataFileId=null, currentRunId=null, pollTimer=null;
@@ -950,6 +1078,11 @@ let dataColumns=[];        // uploaded data file columns
 
 /* ---------- stepper ---------- */
 function goStep(n){
+  // the 5 panels live inside the Create view; make sure it is the visible view
+  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-create'));
+  document.querySelectorAll('.sb-item').forEach(b=>b.classList.toggle('active', b.dataset.view==='create'));
+  const mt=(typeof VIEW_META!=='undefined')?VIEW_META.create:null;
+  if(mt){ document.getElementById('viewTitle').textContent=mt[0]; document.getElementById('viewSub').textContent=mt[1]; }
   for(let i=1;i<=5;i++){
     document.getElementById('panel'+i).classList.toggle('show', i===n);
   }
@@ -2910,13 +3043,28 @@ async function loadStakeholder(){
     '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total):0)+'%</div><div class="l">Pass rate</div></div>'+
     '<div class="tile"><div class="v">'+(worst!=null?worst.toFixed(2)+' ms':'—')+'</div><div class="l">Worst p95</div></div>';
 
+  // extra charts
+  const passes2=runs.filter(r=>r.verdict==='pass').length;
+  const fails=runs.filter(r=>r.verdict==='fail').length;
+  const inconc=runs.filter(r=>r.verdict==='inconclusive').length;
+  _donut(document.getElementById('sdDonut'),[
+    {l:'Pass',v:passes2,c:'#0f7a5f'},{l:'Fail',v:fails,c:'#b4342b'},{l:'Inconc.',v:inconc,c:'#9a6412'}]);
+  // latency bars from the most recent run (first row, since newest-first)
+  const latest=runs[0]||{};
+  _bars(document.getElementById('sdBars'),[
+    {l:'p50',v:latest.p50_ms!=null?latest.p50_ms:null,c:'#2f7d5b'},
+    {l:'p95',v:latest.p95_ms!=null?latest.p95_ms:null,c:'#9a6412'},
+    {l:'p99',v:latest.p99_ms!=null?latest.p99_ms:null,c:'#b4342b'}]);
   sdDrawTrend();
 }
 async function sdDrawTrend(){
-  const c=document.getElementById('sdTrend'); if(!c) return;
-  let pts=[];
-  try{ const j=await (await fetch('/api/reporting/trend?metric=p95_ms&limit=30')).json(); pts=j.points||[]; }catch(e){}
-  _lineChart(c,[{data:pts.map((p,i)=>({x:i,y:p.value})),color:'#9a6412'}]);
+  const c=document.getElementById('sdTrend');
+  let p95=[], err=[];
+  try{ const j=await (await fetch('/api/reporting/trend?metric=p95_ms&limit=30')).json(); p95=j.points||[]; }catch(e){}
+  try{ const j=await (await fetch('/api/reporting/trend?metric=error_rate&limit=30')).json(); err=j.points||[]; }catch(e){}
+  if(c) _lineChart(c,[{data:p95.map((p,i)=>({x:i,y:p.value})),color:'#9a6412'}]);
+  const ce=document.getElementById('sdErrTrend');
+  if(ce) _lineChart(ce,[{data:err.map((p,i)=>({x:i,y:(p.value||0)*100})),color:'#b4342b'}]);
 }
 
 /* ---------- runs & reports history ---------- */
@@ -3133,6 +3281,92 @@ function drawChart(){
   x.fillText('RPS (teal) · p95 ms (amber)',pad,12);
 }
 
+/* ---------- sidebar navigation ---------- */
+const VIEW_META={
+  create:['Create a performance test','AI drafts the plan · you approve · code generates, runs & reports'],
+  dashboard:['Stakeholder dashboard','Run history, trends and coverage — scoped to a role'],
+  history:['History','Saved plans and every finished run'],
+  monitoring:['Monitoring','Your Grafana, Datadog and other dashboards in one place'],
+  activity:['Activity','Audit log and AI call traces'],
+};
+function showView(v){
+  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-'+v));
+  document.querySelectorAll('.sb-item').forEach(b=>b.classList.toggle('active', b.dataset.view===v));
+  const m=VIEW_META[v]||VIEW_META.create;
+  document.getElementById('viewTitle').textContent=m[0];
+  document.getElementById('viewSub').textContent=m[1];
+  if(v==='dashboard') loadStakeholder();
+  if(v==='history'){ loadPlans(); loadRuns(); }
+  if(v==='activity'){ loadAudit(); loadTraces(); }
+  if(v==='monitoring') monRender();
+  closeMobNav();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('collapsed'); }
+function openMobNav(){ document.getElementById('sidebar').classList.add('mobopen'); document.getElementById('sbBackdrop').classList.add('show'); }
+function closeMobNav(){ document.getElementById('sidebar').classList.remove('mobopen'); document.getElementById('sbBackdrop').classList.remove('show'); }
+
+/* ---------- monitoring tools (Grafana / Datadog / etc) ---------- */
+const MON_KEY='perfagent.monitors';
+function monLoad(){ try{ return JSON.parse(localStorage.getItem(MON_KEY)||'[]'); }catch(e){ return []; } }
+function monSave(a){ try{ localStorage.setItem(MON_KEY, JSON.stringify(a)); }catch(e){} }
+function monAdd(){
+  const tool=document.getElementById('monTool').value;
+  const url=document.getElementById('monUrl').value.trim();
+  const st=document.getElementById('monStatus');
+  if(!/^https?:\/\//.test(url)){ st.className='statusline err'; st.textContent='Enter a full URL starting with http:// or https://'; return; }
+  const a=monLoad(); a.push({tool,url}); monSave(a);
+  document.getElementById('monUrl').value='';
+  st.className='statusline ok'; st.textContent=tool+' dashboard added.';
+  monRender();
+}
+function monRemove(i){ const a=monLoad(); a.splice(i,1); monSave(a); monRender(); }
+function monRender(){
+  const host=document.getElementById('monList'); if(!host) return;
+  const a=monLoad();
+  if(!a.length){
+    host.innerHTML='<div class="monitor-card"><div class="monitor-empty">No dashboards linked yet. Add your Grafana or other monitoring URL above — it will embed right here.</div></div>';
+    return;
+  }
+  host.innerHTML=a.map((m,i)=>
+    '<div class="monitor-card"><div class="monitor-head">'+
+      '<span class="tool-chip">'+esc(m.tool)+'</span>'+
+      '<span class="url" title="'+esc(m.url)+'">'+esc(m.url)+'</span>'+
+      '<div class="spacer"></div>'+
+      '<a class="btn ghost sm" href="'+esc(m.url)+'" target="_blank" rel="noopener">Open ↗</a>'+
+      '<button class="btn danger sm" onclick="monRemove('+i+')">Remove</button>'+
+    '</div>'+
+    '<iframe class="monitor-frame" src="'+esc(m.url)+'" loading="lazy" referrerpolicy="no-referrer"></iframe>'+
+    '</div>').join('');
+}
+
+/* ---------- extra dashboard charts (donut, bars, error trend) ---------- */
+function _donut(canvas, segs){
+  const c=canvas; if(!c) return;
+  const dpr=window.devicePixelRatio||1, W=c.clientWidth||300, H=140;
+  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const total=segs.reduce((a,s)=>a+s.v,0);
+  if(!total){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('no runs yet',10,20); return; }
+  const cx=70, cy=H/2, r=48, rin=28; let ang=-Math.PI/2;
+  segs.forEach(s=>{ if(!s.v) return; const a2=ang+(s.v/total)*Math.PI*2;
+    x.beginPath(); x.moveTo(cx,cy); x.arc(cx,cy,r,ang,a2); x.closePath(); x.fillStyle=s.c; x.fill(); ang=a2; });
+  x.beginPath(); x.arc(cx,cy,rin,0,Math.PI*2); x.fillStyle='#fff'; x.fill();
+  x.fillStyle='#16201c'; x.font='700 15px system-ui'; x.textAlign='center'; x.fillText(total, cx, cy+5); x.textAlign='left';
+  let ly=20; segs.forEach(s=>{
+    x.fillStyle=s.c; x.fillRect(150, ly-9, 10, 10);
+    x.fillStyle='#16201c'; x.font='11px system-ui'; x.fillText(s.l+'  '+s.v, 166, ly); ly+=18; });
+}
+function _bars(canvas, bars){
+  const c=canvas; if(!c) return;
+  const dpr=window.devicePixelRatio||1, W=c.clientWidth||300, H=140;
+  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const max=Math.max(1,...bars.map(b=>b.v)); const pad=28, bw=(W-pad*2)/bars.length*0.6, gap=(W-pad*2)/bars.length;
+  bars.forEach((b,i)=>{ const h=(b.v/max)*(H-pad*1.6); const bx=pad+i*gap+(gap-bw)/2, by=H-pad-h;
+    x.fillStyle=b.c||'#0f7a5f'; x.fillRect(bx,by,bw,h);
+    x.fillStyle='#16201c'; x.font='700 11px system-ui'; x.textAlign='center'; x.fillText(b.v!=null?(+b.v).toFixed(0):'—', bx+bw/2, by-5);
+    x.fillStyle='#6a7570'; x.font='10px system-ui'; x.fillText(b.l, bx+bw/2, H-10); x.textAlign='left'; });
+}
+
 /* ---------- init ---------- */
 loadTools();
 addEndpoint("GET","/products");
@@ -3140,10 +3374,8 @@ addEndpoint("POST","/login",'{"user":"demo","password":"x"}');
 addEndpoint("POST","/cart",'{"product_id":1}');
 addEndpoint("POST","/checkout",'{"pay":"card"}');
 loadPlans();
-loadRuns();
-loadStakeholder();
-loadAudit();
 refreshUsage();
+showView('create');
 setMode('manual');
 initConversation();
 loadSlaProfiles();
