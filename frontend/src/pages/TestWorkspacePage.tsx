@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { handlers } from '../workspace/controller'
+import { initializeDisabled } from '../components/initializeDisabled'
 
 export function TestWorkspacePage() {
 return <>
@@ -164,7 +165,7 @@ return <>
 
 </div>
 <div className={"btnrow"} style={{"marginTop": "12px"} as CSSProperties}>
-<button className={"btn"} id={"convBuildBtn"} onClick={handlers.h21} disabled>
+<button className={"btn"} id={"convBuildBtn"} onClick={handlers.h21} ref={initializeDisabled}>
 {"Build plan →"}
 </button>
 </div>
@@ -752,19 +753,19 @@ return <>
 <button className={"btn ghost sm"} id={"regenBtn"} onClick={handlers.h62} style={{"display": "none"} as CSSProperties}>
 {"↻ Regenerate"}
 </button>
-<button className={"btn ghost sm"} id={"dlBtn"} onClick={handlers.h63} disabled>
+<button className={"btn ghost sm"} id={"dlBtn"} onClick={handlers.h63} ref={initializeDisabled}>
 {"⬇ Download"}
 </button>
 <div className={"spacer"}>
 
 </div>
-<button className={"btn ghost"} id={"validateBtn"} onClick={handlers.h64} disabled>
+<button className={"btn ghost"} id={"validateBtn"} onClick={handlers.h64} ref={initializeDisabled}>
 {"✓ Validate script"}
 </button>
-<button className={"btn ghost"} id={"preflightBtn"} onClick={handlers.h65} disabled>
+<button className={"btn ghost"} id={"preflightBtn"} onClick={handlers.h65} ref={initializeDisabled}>
 {"✈ Pre-flight check"}
 </button>
-<button className={"btn"} id={"runBtn"} onClick={handlers.h66} disabled>
+<button className={"btn"} id={"runBtn"} onClick={handlers.h66} ref={initializeDisabled}>
 {"▶ Run & monitor live"}
 </button>
 </div>
@@ -855,13 +856,13 @@ return <>
 </label>
 </div>
 <div className={"btnrow"}>
-<button className={"btn ghost sm"} id={"gitZipBtn"} onClick={handlers.h67} disabled>
+<button className={"btn ghost sm"} id={"gitZipBtn"} onClick={handlers.h67} ref={initializeDisabled}>
 {"⬇ Download framework (.zip)"}
 </button>
 <div className={"spacer"}>
 
 </div>
-<button className={"btn"} id={"gitBtn"} onClick={handlers.h68} disabled>
+<button className={"btn"} id={"gitBtn"} onClick={handlers.h68} ref={initializeDisabled}>
 {"⇪ Push to Git"}
 </button>
 </div>
@@ -982,7 +983,7 @@ return <>
 <div className={"spacer"}>
 
 </div>
-<button className={"btn ghost"} id={"jkStopBtn"} onClick={handlers.h71} disabled>
+<button className={"btn ghost"} id={"jkStopBtn"} onClick={handlers.h71} ref={initializeDisabled}>
 {"■ Stop"}
 </button>
 <button className={"btn"} id={"jkRunBtn"} onClick={handlers.h72}>
@@ -1012,7 +1013,7 @@ return <>
 <div className={"spacer"}>
 
 </div>
-<button className={"btn danger sm"} id={"stopBtn"} onClick={handlers.h73} disabled>
+<button className={"btn danger sm"} id={"stopBtn"} onClick={handlers.h73} ref={initializeDisabled}>
 {"■ Stop"}
 </button>
 </div>
@@ -1128,7 +1129,7 @@ return <>
 </button>
 </div>
 <div className={"btnrow"} style={{"margin": "16px 0"} as CSSProperties}>
-<button className={"btn"} id={"rerunBtn"} onClick={handlers.h75} disabled>
+<button className={"btn"} id={"rerunBtn"} onClick={handlers.h75} ref={initializeDisabled}>
 {"Run again"}
 </button>
 <span className={"muted"} id={"rerunNote"} role={"status"}>

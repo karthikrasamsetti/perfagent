@@ -2270,17 +2270,19 @@ async function uploadExisting(){
   }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
 }
 
-/* ---------- validate script (1 VU / 1 iteration) ---------- */
+/* ---------- validate script (syntax/configuration; no traffic) ---------- */
 async function doValidate(){
   const el=document.getElementById('validateResult'); el.style.display='flex'; el.className='note info';
   el.textContent='Validating the script… (the very first time, this also sets up the load engine and can take a little longer)';
   try{
     await ensureScriptId();
+    if(!currentScriptId) throw new Error('Generate or import a script first.');
     const r=await fetch(`/api/scripts/${currentScriptId}/validate`,{method:'POST'});
     const j=await r.json();
+    if(!r.ok) throw new Error(j.detail||j.message||'Script validation failed');
     if(j.ok){
       el.className='note ok';
-      el.innerHTML='✅ <b>Script is valid</b> — it compiled and ran one request successfully. Safe to run.';
+      el.innerHTML='✅ <b>Script validation passed</b> — syntax and configuration checked without sending traffic. Use pre-flight to check endpoints.';
     } else if(j.status==='k6_missing'){
       el.className='note warn'; el.textContent='⚠ '+j.message;
     } else {
@@ -2296,6 +2298,7 @@ async function doPreflight(){
   el.textContent='Pre-flight: sending one request per endpoint…';
   try{
     await ensureScriptId();
+    if(!currentScriptId) throw new Error('Generate or import a script first.');
     const payload={script_id:currentScriptId};
     const r=await fetch('/api/preflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'preflight failed');

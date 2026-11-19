@@ -10,7 +10,7 @@ const runs=[
  {run_id:'saved-c',plan_id:'plan-c',project_id:'project-a',created_at:'2026-11-19T11:00:00',target:'https://example.test',verdict:'pass',p95_ms:100,error_rate:0,requests:150,rps:20,test_name:'Login flow',script_name:'login.js',mode:'full',endpoint_summary:'POST /login'},
  {run_id:'other-project-run',plan_id:'plan-d',project_id:'project-b',created_at:'2026-11-19T12:00:00',target:'https://payment.test',verdict:'pass',p95_ms:100,requests:100,test_name:'Hidden payment test'}];
 const report={run_id:'original-a',plan_id:'plan-a',script_id:'script-a',target:'https://example.test',execution:{test_name:'Product browsing',script_name:'products.smoke.js',endpoint_summary:'GET /products'},verdict:{overall_passed:true,checks:[]},narrative:{headline:'Fixture passed',summary:'Fixture report',observations:[],recommendations:[]},snapshot:{requests:100,error_rate:.01,rps:20,latency:{p95_ms:120}},logs:['fixture log']};
-const profiles={};let lastPlanRequest,browser,ws,server,send;const checks=[],errors=[],downloads=[],pending=new Map();let sequence=0;
+const profiles={};let lastPlanRequest,browser,ws,server,send;const checks=[],errors=[],downloads=[],validationCalls=[],preflightCalls=[],pending=new Map();let sequence=0;
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function main(){
  server=http.createServer(async(req,res)=>{
@@ -43,7 +43,9 @@ async function main(){
   else if(p==='/api/reporting/runs'||p==='/api/runs'){
    const visible=runs.filter(r=>(!url.searchParams.get('project_id')||r.project_id===url.searchParams.get('project_id'))&&(!url.searchParams.get('plan_id')||r.plan_id===url.searchParams.get('plan_id'))&&(!url.searchParams.get('target')||r.target.includes(url.searchParams.get('target'))));
    data={runs:visible.map(r=>url.searchParams.get('role')==='viewer'?{run_id:r.run_id,created_at:r.created_at,verdict:r.verdict,p95_ms:r.p95_ms,requests:r.requests,test_name:r.test_name,script_name:r.script_name,mode:r.mode}:{...r,has_report:true}),total:visible.length};
-  }else if(p.endsWith('/readiness'))data={checks:[{name:'Engine',ok:true,detail:'Ready'}],execution:{duration_seconds:30,peak_users:3},smoke_supported:true};
+  }else if(p==='/api/scripts/script-a/validate'){validationCalls.push(req.method);data={ok:true};}
+  else if(p==='/api/preflight'){preflightCalls.push({method:req.method,body});data={all_ok:true,ok:1,total:1,results:[{method:'GET',path:'/products',status:200,ok:true}]};}
+  else if(p.endsWith('/readiness'))data={checks:[{name:'Engine',ok:true,detail:'Ready'}],execution:{duration_seconds:30,peak_users:3},smoke_supported:true};
   else if(p.endsWith('/report/download')){downloads.push(p);res.setHeader('Content-Disposition','attachment; filename="fixture-report.html"');res.setHeader('Content-Type','text/html');res.end('<h1>Fixture report</h1>');return;}
   else if(p.endsWith('/saved-report'))data=report;
   else if(p==='/api/traces')data={traces:[]};else if(p==='/api/audit')data={events:[]};else if(p==='/api/sla')data={profiles:[]};else if(p==='/api/chat/config')data={enabled:false};else if(p.includes('trend'))data={points:[]};
@@ -90,6 +92,13 @@ async function main(){
  await check('Report has own identity',"reportContext.savedId==='saved-a'&&currentRunId===null");await send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:os.tmpdir()});await evaluate('downloadReport()');await pause(200);checks.push({name:'Download uses displayed report',result:downloads.includes('/api/runs/saved-a/report/download')});
  await evaluate('selectReportBaseline()');await check('Baseline saved',"getSelectedBaseline()==='saved-a'");await evaluate('clearSelectedBaseline()');await check('Baseline cleared','getSelectedBaseline()===null');
  await evaluate("currentScriptId='script-a';checkReadiness()");await check('Readiness checklist shown',"document.getElementById('readinessResult').textContent.includes('Before you run')");
+ // Match the compatibility controller's native enablement after script generation.
+ await evaluate("document.getElementById('validateBtn').disabled=false;document.getElementById('preflightBtn').disabled=false;document.getElementById('validateBtn').click()");await pause(150);
+ checks.push({name:'Validate click sends POST',result:validationCalls.length===1&&validationCalls[0]==='POST'});
+ await check('Validation result appears',"document.getElementById('validateResult').classList.contains('ok')");
+ await evaluate("document.getElementById('preflightBtn').click()");await pause(150);
+ checks.push({name:'Pre-flight click sends script identity',result:preflightCalls.length===1&&preflightCalls[0].method==='POST'&&preflightCalls[0].body.script_id==='script-a'});
+ await check('Pre-flight endpoint result appears',"document.getElementById('preflightResult').textContent.includes('1/1 endpoints responded OK')&&document.getElementById('preflightResult').textContent.includes('/products')");
  fs.writeFileSync(path.join(os.tmpdir(),'perfagent-ui-report.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
  for(const view of ['history','monitoring','activity']){await evaluate("showView('"+view+"')");await pause(100);await check(view+' navigation',"document.getElementById('view-"+view+"').classList.contains('show')");}
  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await evaluate("showView('dashboard')");await pause(150);await evaluate("document.querySelector('#sdTable [data-report-id]').click()");await pause(150);await check('Mobile report fits viewport','document.documentElement.scrollWidth<=390');
