@@ -1,0 +1,1115 @@
+From f560dfcb19449142e07c4ac60ded8212e13278bb Mon Sep 17 00:00:00 2001
+From: Karthik <k@example.com>
+Date: Wed, 18 Nov 2026 05:26:21 +0000
+Subject: [PATCH] feat(observability): Prometheus/Grafana monitoring +
+ role-scoped reporting + coverage
+
+New packages:
+- perfagent.observability: Prometheus series, MetricsSink, /metrics renderer, runner hooks
+- perfagent.reporting: run recorder, flow inventory, role projection, reporting routes
+
+New infra:
+- docker-compose.observability.yml (Prometheus + Grafana)
+- observability/ prometheus + grafana provisioning + 2 dashboards
+- Alembic migration for run_records
+
+Tests: test_reporting.py, test_observability.py (offline, 7 tests)
+
+Modified-file snippets provided separately (db/models.py, api/app.py, api/docs.py).
+run_id kept out of Prometheus labels; per-run detail served from run_records.
+---
+ README-observability.md                       | 158 ++++++++++++++++++
+ docker-compose.observability.yml              |  30 ++++
+ .../provisioning/dashboards/dashboards.yml    |  11 ++
+ .../dashboards/perfagent-history.json         |  36 ++++
+ .../dashboards/perfagent-live-run.json        |  84 ++++++++++
+ .../provisioning/datasources/datasources.yml  |  23 +++
+ observability/prometheus.yml                  |  11 ++
+ src/perfagent/api/app_additions.py            |  31 ++++
+ src/perfagent/api/reporting_routes.py         |  90 ++++++++++
+ .../versions/0001_add_run_records.py          |  51 ++++++
+ .../db/models_run_records_addition.py         |  65 +++++++
+ src/perfagent/observability/__init__.py       |   7 +
+ src/perfagent/observability/hooks.py          |  41 +++++
+ src/perfagent/observability/metrics.py        |  93 +++++++++++
+ src/perfagent/reporting/__init__.py           |   7 +
+ src/perfagent/reporting/flow_inventory.py     |  26 +++
+ src/perfagent/reporting/recorder.py           |  53 ++++++
+ src/perfagent/reporting/service.py            |  39 +++++
+ tests/test_observability.py                   |  29 ++++
+ tests/test_reporting.py                       |  45 +++++
+ 20 files changed, 930 insertions(+)
+ create mode 100644 README-observability.md
+ create mode 100644 docker-compose.observability.yml
+ create mode 100644 observability/grafana/provisioning/dashboards/dashboards.yml
+ create mode 100644 observability/grafana/provisioning/dashboards/perfagent-history.json
+ create mode 100644 observability/grafana/provisioning/dashboards/perfagent-live-run.json
+ create mode 100644 observability/grafana/provisioning/datasources/datasources.yml
+ create mode 100644 observability/prometheus.yml
+ create mode 100644 src/perfagent/api/app_additions.py
+ create mode 100644 src/perfagent/api/reporting_routes.py
+ create mode 100644 src/perfagent/db/migrations/versions/0001_add_run_records.py
+ create mode 100644 src/perfagent/db/models_run_records_addition.py
+ create mode 100644 src/perfagent/observability/__init__.py
+ create mode 100644 src/perfagent/observability/hooks.py
+ create mode 100644 src/perfagent/observability/metrics.py
+ create mode 100644 src/perfagent/reporting/__init__.py
+ create mode 100644 src/perfagent/reporting/flow_inventory.py
+ create mode 100644 src/perfagent/reporting/recorder.py
+ create mode 100644 src/perfagent/reporting/service.py
+ create mode 100644 tests/test_observability.py
+ create mode 100644 tests/test_reporting.py
+
+diff --git a/README-observability.md b/README-observability.md
+new file mode 100644
+index 0000000..a3316f3
+--- /dev/null
++++ b/README-observability.md
+@@ -0,0 +1,158 @@
++# PerfAgent — Monitoring, Reporting & Stakeholder Visibility
++
++Adds a Prometheus → Grafana live-monitoring layer, a historical run store,
++and role-scoped reporting so every stakeholder can see what's covered,
++what's happening in each prod run, and what still needs to complete.
++
++Consistent with **"AI proposes, code proves, humans approve"**: this whole
++layer is deterministic code. The only AI-authored column it surfaces is the
++existing narrator output — read-only, engineer-scoped.
++
++## How it's built
++
++```
++ runner/k6_runner.py ──emits──▶ stats/aggregator.py
++        │ (already streams to UI)      │ (RPS, p50/p90/p95/p99, err rate)
++        ▼                              ▼
++ observability/metrics.py  ◀───feed───┘   ← NEW in-proc Prometheus series
++        │
++        ▼
++   GET /metrics  ──scrape──▶ Prometheus ──▶ Grafana (live + historical)
++
++ analyzer/verdict.py + aggregator summary ──persist──▶ db: run_records
++        │                                                   │
++ reporting/recorder.py (NEW) ──────────────────────────────┘
++        │
++ reporting/service.py (role projection) ──serves──▶ api/reporting_routes.py (NEW)
++        ├─ GET /reporting/runs      (history, projected per role)
++        ├─ GET /reporting/trend     (p95 / error / rps over time)
++        └─ GET /reporting/coverage  (declared flows − tested flows)
++```
++
++* **Two stores, two questions.** Prometheus/Grafana answers "what's
++  happening in this prod run right now" at 5s resolution; the `run_records`
++  table answers "how does this run compare over 90 days" and "what's
++  covered." Grafana reads both (Prometheus native + a Postgres datasource
++  on `run_records`).
++* **run_id is deliberately NOT a Prometheus label** — it's high-cardinality
++  and would bloat the TSDB. Live series are grouped by
++  `(scenario, environment, load_tool)`; per-run detail lives in `run_records`
++  and is served by the reporting API. This is the load-bearing decision.
++* **Role projection is a whitelist** (`reporting/service.py`), so a new
++  sensitive column never leaks by default. Maps onto your `x-access` scheme:
++  all new routes are `x-access=read, x-uses-ai=false` — safe to expose
++  through the hub gateway at zero token cost.
++* **Coverage = declared − tested.** `flow_inventory.py` declares the flows
++  expected per environment; `uncovered` is literally the "what needs to
++  complete" list; `untracked` flags runs nobody declared.
++
++## New files
++
++| File | What it does |
++| :--- | :--- |
++| `src/perfagent/observability/__init__.py` | Package export. |
++| `src/perfagent/observability/metrics.py` | Prometheus registry, series, `MetricsSink`, `/metrics` renderer. |
++| `src/perfagent/observability/hooks.py` | Thin bridge so `k6_runner` feeds the sink without importing Prometheus. |
++| `src/perfagent/reporting/__init__.py` | Package export. |
++| `src/perfagent/reporting/recorder.py` | Writes a `run_records` row at run completion. |
++| `src/perfagent/reporting/flow_inventory.py` | Declared flows per environment (drives coverage). |
++| `src/perfagent/reporting/service.py` | Role → allowed-fields projection. |
++| `src/perfagent/api/reporting_routes.py` | `/reporting/runs`, `/trend`, `/coverage`. |
++| `src/perfagent/db/migrations/versions/0001_add_run_records.py` | Alembic migration for the new table. |
++| `tests/test_reporting.py` | Role projection + coverage logic (offline). |
++| `tests/test_observability.py` | `MetricsSink` + `/metrics` rendering (offline). |
++| `docker-compose.observability.yml` | Prometheus + Grafana stack. |
++| `observability/prometheus.yml` | Scrape config (targets `:8080/metrics`). |
++| `observability/grafana/provisioning/datasources/datasources.yml` | Prometheus + Postgres datasources. |
++| `observability/grafana/provisioning/dashboards/dashboards.yml` | Dashboard provider. |
++| `observability/grafana/provisioning/dashboards/perfagent-live-run.json` | Live run dashboard (RPS, error, p95, VUs). |
++| `observability/grafana/provisioning/dashboards/perfagent-history.json` | History + coverage dashboard. |
++
++## Modified files (apply by hand — small, exact)
++
++These three need edits to existing files. The snippets are provided as
++separate `*_addition.py` files so you can paste them in; nothing in your
++current code is removed.
++
++* **`src/perfagent/db/models.py`** — append the contents of
++  `src/perfagent/db/models_run_records_addition.py` (the `RunStatus` enum
++  and `RunRecord` model). Reuse the existing `Base`; do **not** create a
++  second one.
++* **`src/perfagent/api/app.py`** — append the contents of
++  `src/perfagent/api/app_additions.py` (mount the reporting router + the
++  `/metrics` endpoint).
++* **`src/perfagent/api/docs.py`** — add the four `ROUTE_METADATA` entries
++  shown (commented) at the bottom of `app_additions.py`, so the new routes
++  carry `x-access`/`x-uses-ai` like every other route.
++
++Two more wiring edits to do when you're ready to see live data (one line
++each, left for you so I don't guess your exact signatures):
++
++* **`src/perfagent/runner/k6_runner.py`** — at run start call
++  `sink = observability.hooks.sink_for(ctx)`; on each aggregator snapshot
++  call `observability.hooks.on_aggregator_snapshot(sink, snapshot)`; on
++  finish `sink.mark_active(False)`.
++* **`src/perfagent/analyzer/verdict.py`** (or wherever the run finalizes) —
++  call `reporting.recorder.record_run(session, ...)` with the aggregator
++  summary and the verdict.
++
++## New dependency
++
++Add `prometheus-client` to `pyproject.toml` / `requirements.txt`:
++
++```
++prometheus-client>=0.20
++```
++
++## Apply it
++
++```bash
++git checkout -b feat/observability
++
++# copy the files into the same paths, then:
++uv add prometheus-client            # or edit pyproject + uv sync
++uv sync
++
++# create the table (prefer autogenerate so the revision chain links):
++uv run alembic revision --autogenerate -m "add run_records"
++uv run alembic upgrade head
++
++# offline tests (no k6, no LLM):
++uv run pytest -q tests/test_reporting.py tests/test_observability.py
++```
++
++## Run it
++
++```bash
++# monitoring stack
++docker compose -f docker-compose.observability.yml up -d
++
++# agent (exposes /metrics on :8080) + demo target
++uv run uvicorn perfagent.api.app:app --reload --port 8080
++uv run python -m perfagent.sample_target.app --port 8000
++
++# Grafana: http://localhost:3000  (admin / $GRAFANA_ADMIN_PASSWORD)
++# Dashboards auto-provision. Set the Postgres datasource password to match
++# your feat/postgres setup for the history dashboard.
++
++# stakeholder views:
++curl "http://localhost:8080/reporting/runs?role=executive&environment=prod"
++curl "http://localhost:8080/reporting/trend?scenario=checkout&metric=p95_ms"
++curl "http://localhost:8080/reporting/coverage?environment=prod"
++```
++
++## Push (both remotes, per your workflow)
++
++```bash
++git push origin feat/observability
++git push company feat/observability
++```
++
++## Next
++
++* Grafana alerting on `perfagent_error_rate` and p95 breaches for
++  `environment="prod"`.
++* Map the four `Role` values to the hub's auth claims when the agent moves
++  behind the hub tab; until then the `role` query param demos all views.
++* Extend coverage to step/endpoint granularity (not just scenario) once the
++  distributed-runner work lands.
+diff --git a/docker-compose.observability.yml b/docker-compose.observability.yml
+new file mode 100644
+index 0000000..7b2ad83
+--- /dev/null
++++ b/docker-compose.observability.yml
+@@ -0,0 +1,30 @@
++version: "3.9"
++
++services:
++  prometheus:
++    image: prom/prometheus:v2.54.1
++    volumes:
++      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
++      - prometheus_data:/prometheus
++    ports:
++      - "9090:9090"
++    command:
++      - "--config.file=/etc/prometheus/prometheus.yml"
++      - "--storage.tsdb.retention.time=90d"
++
++  grafana:
++    image: grafana/grafana:11.2.0
++    depends_on:
++      - prometheus
++    environment:
++      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
++      - GF_USERS_VIEWERS_CAN_EDIT=false
++    volumes:
++      - grafana_data:/var/lib/grafana
++      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
++    ports:
++      - "3000:3000"
++
++volumes:
++  prometheus_data:
++  grafana_data:
+diff --git a/observability/grafana/provisioning/dashboards/dashboards.yml b/observability/grafana/provisioning/dashboards/dashboards.yml
+new file mode 100644
+index 0000000..f15dc66
+--- /dev/null
++++ b/observability/grafana/provisioning/dashboards/dashboards.yml
+@@ -0,0 +1,11 @@
++apiVersion: 1
++
++providers:
++  - name: "PerfAgent"
++    orgId: 1
++    folder: "PerfAgent"
++    type: file
++    disableDeletion: false
++    editable: true
++    options:
++      path: /etc/grafana/provisioning/dashboards
+diff --git a/observability/grafana/provisioning/dashboards/perfagent-history.json b/observability/grafana/provisioning/dashboards/perfagent-history.json
+new file mode 100644
+index 0000000..bbe1080
+--- /dev/null
++++ b/observability/grafana/provisioning/dashboards/perfagent-history.json
+@@ -0,0 +1,36 @@
++{
++  "annotations": { "list": [] },
++  "editable": true,
++  "title": "PerfAgent - History & Coverage",
++  "uid": "perfagent-history",
++  "schemaVersion": 39,
++  "version": 1,
++  "time": { "from": "now-90d", "to": "now" },
++  "panels": [
++    {
++      "type": "timeseries",
++      "title": "p95 over time (per run)",
++      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
++      "datasource": { "type": "postgres", "uid": "PerfAgent-Postgres" },
++      "fieldConfig": { "defaults": { "unit": "ms" } },
++      "targets": [
++        {
++          "rawSql": "SELECT started_at AS \"time\", scenario AS metric, p95_ms AS value FROM run_records WHERE environment = 'prod' AND $__timeFilter(started_at) ORDER BY started_at",
++          "format": "time_series"
++        }
++      ]
++    },
++    {
++      "type": "table",
++      "title": "Recent runs (prod)",
++      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
++      "datasource": { "type": "postgres", "uid": "PerfAgent-Postgres" },
++      "targets": [
++        {
++          "rawSql": "SELECT started_at, scenario, verdict, p95_ms, error_rate, rps, max_vus FROM run_records WHERE environment = 'prod' ORDER BY started_at DESC LIMIT 50",
++          "format": "table"
++        }
++      ]
++    }
++  ]
++}
+diff --git a/observability/grafana/provisioning/dashboards/perfagent-live-run.json b/observability/grafana/provisioning/dashboards/perfagent-live-run.json
+new file mode 100644
+index 0000000..40ca598
+--- /dev/null
++++ b/observability/grafana/provisioning/dashboards/perfagent-live-run.json
+@@ -0,0 +1,84 @@
++{
++  "annotations": { "list": [] },
++  "editable": true,
++  "graphTooltip": 0,
++  "title": "PerfAgent - Live Run",
++  "uid": "perfagent-live",
++  "schemaVersion": 39,
++  "version": 1,
++  "time": { "from": "now-15m", "to": "now" },
++  "refresh": "5s",
++  "templating": {
++    "list": [
++      {
++        "name": "environment",
++        "type": "query",
++        "datasource": { "type": "prometheus", "uid": "prometheus" },
++        "query": "label_values(perfagent_rps, environment)",
++        "refresh": 2,
++        "includeAll": true,
++        "current": { "text": "prod", "value": "prod" }
++      },
++      {
++        "name": "scenario",
++        "type": "query",
++        "datasource": { "type": "prometheus", "uid": "prometheus" },
++        "query": "label_values(perfagent_rps{environment=\"$environment\"}, scenario)",
++        "refresh": 2,
++        "includeAll": true
++      }
++    ]
++  },
++  "panels": [
++    {
++      "type": "timeseries",
++      "title": "Requests/sec (RPS)",
++      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
++      "datasource": { "type": "prometheus", "uid": "prometheus" },
++      "targets": [
++        {
++          "expr": "perfagent_rps{environment=~\"$environment\", scenario=~\"$scenario\"}",
++          "legendFormat": "{{scenario}} / {{environment}}"
++        }
++      ]
++    },
++    {
++      "type": "timeseries",
++      "title": "Error rate",
++      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
++      "datasource": { "type": "prometheus", "uid": "prometheus" },
++      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1 } },
++      "targets": [
++        {
++          "expr": "perfagent_error_rate{environment=~\"$environment\", scenario=~\"$scenario\"}",
++          "legendFormat": "{{scenario}}"
++        }
++      ]
++    },
++    {
++      "type": "timeseries",
++      "title": "p95 latency",
++      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
++      "datasource": { "type": "prometheus", "uid": "prometheus" },
++      "fieldConfig": { "defaults": { "unit": "s" } },
++      "targets": [
++        {
++          "expr": "histogram_quantile(0.95, sum by (le, scenario) (rate(perfagent_request_duration_seconds_bucket{environment=~\"$environment\", scenario=~\"$scenario\"}[1m])))",
++          "legendFormat": "p95 {{scenario}}"
++        }
++      ]
++    },
++    {
++      "type": "timeseries",
++      "title": "Active VUs",
++      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
++      "datasource": { "type": "prometheus", "uid": "prometheus" },
++      "targets": [
++        {
++          "expr": "perfagent_vus_active{environment=~\"$environment\", scenario=~\"$scenario\"}",
++          "legendFormat": "{{scenario}}"
++        }
++      ]
++    }
++  ]
++}
+diff --git a/observability/grafana/provisioning/datasources/datasources.yml b/observability/grafana/provisioning/datasources/datasources.yml
+new file mode 100644
+index 0000000..9f2227b
+--- /dev/null
++++ b/observability/grafana/provisioning/datasources/datasources.yml
+@@ -0,0 +1,23 @@
++apiVersion: 1
++
++datasources:
++  - name: Prometheus
++    type: prometheus
++    access: proxy
++    url: http://prometheus:9090
++    isDefault: true
++
++  # Point this at your run_records table for the historical/trend panels.
++  # Fill host/user/password to match your Postgres (feat/postgres) setup,
++  # or delete this block if you query trend/coverage via the reporting API.
++  - name: PerfAgent-Postgres
++    type: postgres
++    access: proxy
++    url: host.docker.internal:5432
++    database: perfagent
++    user: perfagent
++    secureJsonData:
++      password: "change-me"
++    jsonData:
++      sslmode: disable
++      postgresVersion: 1500
+diff --git a/observability/prometheus.yml b/observability/prometheus.yml
+new file mode 100644
+index 0000000..5b9d533
+--- /dev/null
++++ b/observability/prometheus.yml
+@@ -0,0 +1,11 @@
++global:
++  scrape_interval: 5s          # high-res for live run views
++  evaluation_interval: 15s
++
++scrape_configs:
++  - job_name: "perfagent"
++    # PerfAgent dev server runs on :8080 (per the run protocol).
++    # host.docker.internal reaches the host from Docker Desktop (Windows).
++    static_configs:
++      - targets: ["host.docker.internal:8080"]
++    metrics_path: /metrics
+diff --git a/src/perfagent/api/app_additions.py b/src/perfagent/api/app_additions.py
+new file mode 100644
+index 0000000..b3a0945
+--- /dev/null
++++ b/src/perfagent/api/app_additions.py
+@@ -0,0 +1,31 @@
++# =====================================================================
++# APPEND THESE to src/perfagent/api/app.py
++# (after `app = FastAPI(...)` is constructed and other routers mounted)
++# =====================================================================
++from fastapi import Response
++from perfagent.observability.metrics import render_latest
++from perfagent.api.reporting_routes import router as reporting_router
++
++app.include_router(reporting_router)
++
++
++@app.get("/metrics", tags=["observability"])   # x-access: read
++def metrics() -> Response:
++    """Prometheus scrape endpoint (deterministic, no AI)."""
++    payload, content_type = render_latest()
++    return Response(content=payload, media_type=content_type)
++
++
++# ---------------------------------------------------------------------
++# APPEND THESE to src/perfagent/api/docs.py (your x-access registry)
++# ---------------------------------------------------------------------
++# ROUTE_METADATA.update({
++#     "GET /metrics": {"x-access": "read", "x-uses-ai": False,
++#                      "summary": "Prometheus metrics scrape"},
++#     "GET /reporting/runs": {"x-access": "read", "x-uses-ai": False,
++#                             "summary": "Role-scoped run history"},
++#     "GET /reporting/trend": {"x-access": "read", "x-uses-ai": False,
++#                              "summary": "Metric trend over time"},
++#     "GET /reporting/coverage": {"x-access": "read", "x-uses-ai": False,
++#                                 "summary": "Flow coverage vs. declared"},
++# })
+diff --git a/src/perfagent/api/reporting_routes.py b/src/perfagent/api/reporting_routes.py
+new file mode 100644
+index 0000000..ae78c99
+--- /dev/null
++++ b/src/perfagent/api/reporting_routes.py
+@@ -0,0 +1,90 @@
++"""Reporting endpoints. Classified x-access=read, x-uses-ai=false.
++
++Answers the three stakeholder questions:
++  /reporting/runs     -> what happened across runs (history)
++  /reporting/trend    -> how a metric moves over time in prod
++  /reporting/coverage -> what's covered vs. what needs to complete
++"""
++from __future__ import annotations
++
++from datetime import datetime, timedelta, timezone
++
++import structlog
++from fastapi import APIRouter, Depends, Query
++from sqlalchemy import select, func
++from sqlalchemy.orm import Session
++
++from perfagent.db.connection import get_session      # existing dependency
++from perfagent.db.models import RunRecord
++from perfagent.reporting.service import Role, project
++from perfagent.reporting.flow_inventory import load_inventory
++
++log = structlog.get_logger("perfagent.api.reporting")
++router = APIRouter(prefix="/reporting", tags=["reporting"])
++
++
++@router.get("/runs")   # x-access: read
++def list_runs(
++    role: Role = Query(Role.VIEWER),
++    environment: str | None = Query(None),
++    scenario: str | None = Query(None),
++    days: int = Query(30, ge=1, le=365),
++    session: Session = Depends(get_session),
++) -> dict:
++    """Paginated run history, projected to the caller's role."""
++    since = datetime.now(timezone.utc) - timedelta(days=days)
++    stmt = select(RunRecord).where(RunRecord.started_at >= since)
++    if environment:
++        stmt = stmt.where(RunRecord.environment == environment)
++    if scenario:
++        stmt = stmt.where(RunRecord.scenario == scenario)
++    stmt = stmt.order_by(RunRecord.started_at.desc())
++    rows = session.execute(stmt).scalars().all()
++    return {"role": role.value, "count": len(rows),
++            "runs": [project(r, role) for r in rows]}
++
++
++@router.get("/trend")   # x-access: read
++def trend(
++    scenario: str = Query(...),
++    environment: str = Query("prod"),
++    metric: str = Query("p95_ms",
++                        pattern="^(p95_ms|p99_ms|error_rate|rps)$"),
++    days: int = Query(90, ge=1, le=365),
++    session: Session = Depends(get_session),
++) -> dict:
++    """Time-series of one metric across runs -- the historical trend view."""
++    since = datetime.now(timezone.utc) - timedelta(days=days)
++    col = getattr(RunRecord, metric)
++    stmt = (select(RunRecord.started_at, col)
++            .where(RunRecord.scenario == scenario,
++                   RunRecord.environment == environment,
++                   RunRecord.started_at >= since)
++            .order_by(RunRecord.started_at.asc()))
++    points = [{"t": t.isoformat(), "value": v}
++              for t, v in session.execute(stmt).all() if v is not None]
++    return {"scenario": scenario, "environment": environment,
++            "metric": metric, "points": points}
++
++
++@router.get("/coverage")   # x-access: read
++def coverage(
++    environment: str = Query("prod"),
++    session: Session = Depends(get_session),
++) -> dict:
++    """Declared flows - tested flows = the 'what needs to complete' list."""
++    inventory = load_inventory()
++    declared = set(inventory.get(environment, []))
++    tested = set(session.execute(
++        select(func.distinct(RunRecord.scenario))
++        .where(RunRecord.environment == environment)
++    ).scalars().all())
++    return {
++        "environment": environment,
++        "declared_flows": sorted(declared),
++        "covered": sorted(tested & declared),
++        "uncovered": sorted(declared - tested),      # still to complete
++        "untracked": sorted(tested - declared),      # run, not declared
++        "coverage_pct": round(
++            100 * len(tested & declared) / max(len(declared), 1), 1),
++    }
+diff --git a/src/perfagent/db/migrations/versions/0001_add_run_records.py b/src/perfagent/db/migrations/versions/0001_add_run_records.py
+new file mode 100644
+index 0000000..6664b26
+--- /dev/null
++++ b/src/perfagent/db/migrations/versions/0001_add_run_records.py
+@@ -0,0 +1,51 @@
++"""add run_records table
++
++Revision ID: 0001_add_run_records
++Revises:
++Create Date: 2026-11-18
++
++Adjust `down_revision` to your current head before running, and move
++this file into src/perfagent/db/migrations/versions/. Prefer generating
++via `uv run alembic revision --autogenerate -m "add run_records"` so the
++revision chain links correctly; this hand-written version is a fallback.
++"""
++from alembic import op
++import sqlalchemy as sa
++
++revision = "0001_add_run_records"
++down_revision = None   # <-- set to your current migration head
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    op.create_table(
++        "run_records",
++        sa.Column("run_id", sa.String(), primary_key=True),
++        sa.Column("scenario", sa.String(), nullable=False, index=True),
++        sa.Column("environment", sa.String(), nullable=False, index=True),
++        sa.Column("target_url", sa.String(), nullable=False),
++        sa.Column("load_tool", sa.String(), nullable=False,
++                  server_default="k6"),
++        sa.Column("status", sa.String(), nullable=False, index=True),
++        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False,
++                  index=True),
++        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
++        sa.Column("total_requests", sa.Integer(), server_default="0"),
++        sa.Column("error_rate", sa.Float(), server_default="0"),
++        sa.Column("p50_ms", sa.Float(), nullable=True),
++        sa.Column("p90_ms", sa.Float(), nullable=True),
++        sa.Column("p95_ms", sa.Float(), nullable=True),
++        sa.Column("p99_ms", sa.Float(), nullable=True),
++        sa.Column("rps", sa.Float(), nullable=True),
++        sa.Column("max_vus", sa.Integer(), nullable=True),
++        sa.Column("verdict", sa.String(), nullable=True),
++        sa.Column("thresholds", sa.JSON(), nullable=True),
++        sa.Column("coverage", sa.JSON(), nullable=True),
++        sa.Column("ai_narrative", sa.Text(), nullable=True),
++        sa.Column("requested_by", sa.String(), nullable=True),
++    )
++
++
++def downgrade() -> None:
++    op.drop_table("run_records")
+diff --git a/src/perfagent/db/models_run_records_addition.py b/src/perfagent/db/models_run_records_addition.py
+new file mode 100644
+index 0000000..0495b51
+--- /dev/null
++++ b/src/perfagent/db/models_run_records_addition.py
+@@ -0,0 +1,65 @@
++# =====================================================================
++# APPEND THIS to src/perfagent/db/models.py
++# (reuse the existing `Base` declared at the top of that module --
++#  do NOT create a second Base)
++# =====================================================================
++import enum
++from datetime import datetime
++from sqlalchemy import (
++    Column, String, Integer, Float, DateTime, Enum as SAEnum, JSON, Text,
++)
++# from .models import Base   <-- already present in the file; shown for clarity
++
++
++class RunStatus(str, enum.Enum):
++    RUNNING = "running"
++    PASSED = "passed"              # mirrors verdict PASS
++    FAILED = "failed"             # verdict FAIL
++    INCONCLUSIVE = "inconclusive"  # verdict INCONCLUSIVE
++
++
++class RunRecord(Base):
++    """Denormalized per-run row for historical reporting & coverage.
++
++    Populated at run completion from stats/aggregator.py + analyzer/
++    verdict.py. Separate from the raw runs/reports tables so reporting
++    queries stay cheap and the schema here is purpose-built for trend
++    and coverage lookups.
++    """
++    __tablename__ = "run_records"
++
++    run_id = Column(String, primary_key=True)
++    scenario = Column(String, nullable=False, index=True)
++    environment = Column(String, nullable=False, index=True)  # dev/staging/prod
++    target_url = Column(String, nullable=False)
++    load_tool = Column(String, nullable=False, default="k6")
++    status = Column(SAEnum(RunStatus), nullable=False, index=True)
++
++    started_at = Column(DateTime(timezone=True), nullable=False, index=True)
++    finished_at = Column(DateTime(timezone=True), nullable=True)
++
++    total_requests = Column(Integer, default=0)
++    error_rate = Column(Float, default=0.0)
++    p50_ms = Column(Float, nullable=True)
++    p90_ms = Column(Float, nullable=True)
++    p95_ms = Column(Float, nullable=True)
++    p99_ms = Column(Float, nullable=True)
++    rps = Column(Float, nullable=True)
++    max_vus = Column(Integer, nullable=True)
++
++    verdict = Column(String, nullable=True)        # PASS/FAIL/INCONCLUSIVE
++    thresholds = Column(JSON, nullable=True)       # evaluated SLA rules
++    coverage = Column(JSON, nullable=True)         # endpoints/flows exercised
++    ai_narrative = Column(Text, nullable=True)     # narrator output (read-only)
++    requested_by = Column(String, nullable=True)   # stakeholder attribution
++
++    def as_full_dict(self) -> dict:
++        out = {}
++        for c in self.__table__.columns:
++            v = getattr(self, c.name)
++            if isinstance(v, datetime):
++                v = v.isoformat()
++            elif isinstance(v, RunStatus):
++                v = v.value
++            out[c.name] = v
++        return out
+diff --git a/src/perfagent/observability/__init__.py b/src/perfagent/observability/__init__.py
+new file mode 100644
+index 0000000..c595963
+--- /dev/null
++++ b/src/perfagent/observability/__init__.py
+@@ -0,0 +1,7 @@
++"""Deterministic observability layer: Prometheus metrics for live runs.
++
++No LLM calls, no AI. Reads the same aggregated samples that already
++drive the UI dashboard (stats/aggregator.py) and re-exposes them as
++Prometheus series for Grafana. Classified x-access=read.
++"""
++from .metrics import MetricsSink, render_latest  # noqa: F401
+diff --git a/src/perfagent/observability/hooks.py b/src/perfagent/observability/hooks.py
+new file mode 100644
+index 0000000..7319492
+--- /dev/null
++++ b/src/perfagent/observability/hooks.py
+@@ -0,0 +1,41 @@
++"""Wire MetricsSink into the existing k6 run loop with minimal coupling.
++
++k6_runner.py already streams metric snapshots to the UI. These helpers
++let it also feed Prometheus without the runner importing prometheus
++directly -- pass the hook callbacks in, keep the runner tool-agnostic.
++"""
++from __future__ import annotations
++
++from typing import Protocol
++
++from .metrics import MetricsSink
++
++
++class RunContext(Protocol):
++    run_id: str
++    scenario: str
++    environment: str
++    load_tool: str
++
++
++def sink_for(ctx: RunContext) -> MetricsSink:
++    """Create and activate a sink for a run context."""
++    sink = MetricsSink(
++        scenario=ctx.scenario, environment=ctx.environment,
++        load_tool=ctx.load_tool, run_id=ctx.run_id,
++    )
++    sink.mark_active(True)
++    return sink
++
++
++def on_aggregator_snapshot(sink: MetricsSink, snapshot: dict) -> None:
++    """Map a stats/aggregator.py summary dict onto Prometheus series.
++
++    Expects the summary shape the aggregator already produces:
++    {"rps": float, "error_rate": float, "active_vus": int, ...}.
++    """
++    sink.update_summary(
++        rps=snapshot.get("rps"),
++        error_rate=snapshot.get("error_rate"),
++        active_vus=snapshot.get("active_vus"),
++    )
+diff --git a/src/perfagent/observability/metrics.py b/src/perfagent/observability/metrics.py
+new file mode 100644
+index 0000000..f2c6a44
+--- /dev/null
++++ b/src/perfagent/observability/metrics.py
+@@ -0,0 +1,93 @@
++"""Prometheus series for PerfAgent runs.
++
++Cardinality rule: run_id is NOT a Prometheus label (high-cardinality,
++would bloat the TSDB). Per-run detail lives in the run_records table and
++is queried through perfagent.reporting. Live series are grouped by the
++low-cardinality (scenario, environment, load_tool) tuple that already
++exists on LoadModel.
++"""
++from __future__ import annotations
++
++import structlog
++from prometheus_client import (
++    CollectorRegistry, Counter, Gauge, Histogram,
++    generate_latest, CONTENT_TYPE_LATEST,
++)
++
++log = structlog.get_logger("perfagent.observability")
++
++REGISTRY = CollectorRegistry()
++
++# Mirror LoadModel.environment ("dev"/"staging"/"prod") and load_tool.
++_LABELS = ["scenario", "environment", "load_tool"]
++
++REQUESTS_TOTAL = Counter(
++    "perfagent_requests_total", "Requests issued during runs",
++    _LABELS + ["status_class"], registry=REGISTRY,
++)
++REQUEST_DURATION = Histogram(
++    "perfagent_request_duration_seconds", "Per-request latency",
++    _LABELS,
++    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
++    registry=REGISTRY,
++)
++VUS_ACTIVE = Gauge(
++    "perfagent_vus_active", "Active virtual users", _LABELS,
++    registry=REGISTRY,
++)
++ERROR_RATE = Gauge(
++    "perfagent_error_rate", "Rolling error rate 0..1 "
++    "(includes failed assertions, per aggregator policy)",
++    _LABELS, registry=REGISTRY,
++)
++RPS = Gauge(
++    "perfagent_rps", "Requests per second", _LABELS, registry=REGISTRY,
++)
++RUN_ACTIVE = Gauge(
++    "perfagent_run_active", "1 while a run is executing",
++    _LABELS + ["run_id"], registry=REGISTRY,
++)
++
++
++class MetricsSink:
++    """Adapter from aggregator snapshots to Prometheus series.
++
++    One instance per run. The k6_runner already produces a running
++    summary via stats/aggregator.py; call update_summary() on each
++    streamed snapshot so Prometheus scrapes reflect the run in near
++    real time.
++    """
++
++    def __init__(self, *, scenario: str, environment: str,
++                 load_tool: str, run_id: str) -> None:
++        self._base = {
++            "scenario": scenario,
++            "environment": environment or "unspecified",
++            "load_tool": load_tool,
++        }
++        self.run_id = run_id
++
++    def mark_active(self, active: bool = True) -> None:
++        RUN_ACTIVE.labels(**self._base, run_id=self.run_id).set(
++            1 if active else 0)
++
++    def record_request(self, duration_s: float, status_code: int) -> None:
++        REQUESTS_TOTAL.labels(
++            **self._base, status_class=f"{status_code // 100}xx").inc()
++        REQUEST_DURATION.labels(**self._base).observe(duration_s)
++
++    def update_summary(self, *, rps: float | None = None,
++                       error_rate: float | None = None,
++                       active_vus: int | None = None) -> None:
++        """Push an aggregator summary snapshot into the gauges."""
++        if rps is not None:
++            RPS.labels(**self._base).set(rps)
++        if error_rate is not None:
++            ERROR_RATE.labels(**self._base).set(error_rate)
++        if active_vus is not None:
++            VUS_ACTIVE.labels(**self._base).set(active_vus)
++
++
++def render_latest() -> tuple[bytes, str]:
++    """Payload + content-type for the /metrics endpoint."""
++    return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
+diff --git a/src/perfagent/reporting/__init__.py b/src/perfagent/reporting/__init__.py
+new file mode 100644
+index 0000000..09bbc29
+--- /dev/null
++++ b/src/perfagent/reporting/__init__.py
+@@ -0,0 +1,7 @@
++"""Deterministic reporting layer: role-scoped historical + coverage views.
++
++Serves run history, metric trends, and flow coverage off the run_records
++table. No LLM calls; the only AI-authored column surfaced is the existing
++narrator output, read-only and engineer-scoped.
++"""
++from .service import Role, project  # noqa: F401
+diff --git a/src/perfagent/reporting/flow_inventory.py b/src/perfagent/reporting/flow_inventory.py
+new file mode 100644
+index 0000000..2e8d6c9
+--- /dev/null
++++ b/src/perfagent/reporting/flow_inventory.py
+@@ -0,0 +1,26 @@
++"""Declared production flows per environment -> drives coverage reporting.
++
++Config-owned so stakeholders can see which flows are *expected* to be
++load-tested in each environment. Anything declared but never run shows
++as 'uncovered' -- the direct answer to 'what needs to complete'.
++Override via PERFAGENT_FLOW_INVENTORY (JSON file path).
++"""
++from __future__ import annotations
++
++import json
++import os
++
++_DEFAULT: dict[str, list[str]] = {
++    "prod": ["checkout", "login", "search", "product_browse", "order_history"],
++    "staging": ["checkout", "login", "search"],
++    "dev": ["login"],
++}
++
++
++def load_inventory() -> dict[str, list[str]]:
++    """Load the declared flow inventory, from file if configured."""
++    path = os.getenv("PERFAGENT_FLOW_INVENTORY")
++    if path and os.path.exists(path):
++        with open(path, encoding="utf-8") as fh:
++            return json.load(fh)
++    return _DEFAULT
+diff --git a/src/perfagent/reporting/recorder.py b/src/perfagent/reporting/recorder.py
+new file mode 100644
+index 0000000..48424cf
+--- /dev/null
++++ b/src/perfagent/reporting/recorder.py
+@@ -0,0 +1,53 @@
++"""Persist a RunRecord when a run finishes.
++
++Deterministic; called from the same place analyzer/verdict.py issues the
++final verdict. The `summary` argument is the dict already produced by
++stats/aggregator.py, so no metric math is duplicated here.
++"""
++from __future__ import annotations
++
++from datetime import datetime, timezone
++
++import structlog
++from sqlalchemy.orm import Session
++
++from perfagent.db.models import RunRecord, RunStatus
++from perfagent.audit import record_event  # existing audit ledger
++
++log = structlog.get_logger("perfagent.reporting.recorder")
++
++_VERDICT_TO_STATUS = {
++    "PASS": RunStatus.PASSED,
++    "FAIL": RunStatus.FAILED,
++    "INCONCLUSIVE": RunStatus.INCONCLUSIVE,
++}
++
++
++def record_run(
++    session: Session, *,
++    run_id: str, scenario: str, environment: str, target_url: str,
++    load_tool: str, started_at: datetime, verdict: str,
++    summary: dict, thresholds: list | None = None,
++    coverage: dict | None = None, ai_narrative: str | None = None,
++    requested_by: str | None = None,
++) -> RunRecord:
++    """Insert one historical record. `summary` is the aggregator output."""
++    rec = RunRecord(
++        run_id=run_id, scenario=scenario,
++        environment=environment or "unspecified",
++        target_url=target_url, load_tool=load_tool,
++        status=_VERDICT_TO_STATUS.get(verdict, RunStatus.INCONCLUSIVE),
++        started_at=started_at, finished_at=datetime.now(timezone.utc),
++        total_requests=summary.get("total_requests", 0),
++        error_rate=summary.get("error_rate", 0.0),
++        p50_ms=summary.get("p50"), p90_ms=summary.get("p90"),
++        p95_ms=summary.get("p95"), p99_ms=summary.get("p99"),
++        rps=summary.get("rps"), max_vus=summary.get("max_vus"),
++        verdict=verdict, thresholds=thresholds, coverage=coverage,
++        ai_narrative=ai_narrative, requested_by=requested_by,
++    )
++    session.add(rec)
++    session.commit()
++    record_event("run_recorded", {"run_id": run_id, "verdict": verdict})
++    log.info("run_record_persisted", run_id=run_id, verdict=verdict)
++    return rec
+diff --git a/src/perfagent/reporting/service.py b/src/perfagent/reporting/service.py
+new file mode 100644
+index 0000000..6b314d8
+--- /dev/null
++++ b/src/perfagent/reporting/service.py
+@@ -0,0 +1,39 @@
++"""Role-scoped projection of run records.
++
++A whitelist per role, so new sensitive columns never leak by default.
++Empty set means full access. Maps onto the x-access classification:
++executive/viewer are read-level consumers, engineer sees internals
++including the AI narrative.
++"""
++from __future__ import annotations
++
++from enum import Enum
++
++from perfagent.db.models import RunRecord
++
++
++class Role(str, Enum):
++    EXECUTIVE = "executive"   # headline verdict + trend only
++    QA_LEAD = "qa_lead"       # full metrics + coverage + thresholds
++    ENGINEER = "engineer"     # everything, incl. target_url + narrative
++    VIEWER = "viewer"         # minimal read-only summary
++
++
++_ROLE_FIELDS: dict[Role, set[str]] = {
++    Role.EXECUTIVE: {"run_id", "scenario", "environment", "status",
++                     "started_at", "verdict", "p95_ms", "error_rate"},
++    Role.QA_LEAD: {"run_id", "scenario", "environment", "target_url",
++                   "status", "started_at", "finished_at", "verdict",
++                   "p50_ms", "p90_ms", "p95_ms", "p99_ms", "error_rate",
++                   "rps", "max_vus", "total_requests", "thresholds",
++                   "coverage"},
++    Role.ENGINEER: set(),     # empty => all columns
++    Role.VIEWER: {"run_id", "scenario", "status", "verdict", "p95_ms"},
++}
++
++
++def project(record: RunRecord, role: Role) -> dict:
++    """Return only the fields `role` is permitted to see."""
++    full = record.as_full_dict()
++    allowed = _ROLE_FIELDS[role]
++    return full if not allowed else {k: full[k] for k in allowed if k in full}
+diff --git a/tests/test_observability.py b/tests/test_observability.py
+new file mode 100644
+index 0000000..fc63215
+--- /dev/null
++++ b/tests/test_observability.py
+@@ -0,0 +1,29 @@
++"""MetricsSink + /metrics rendering. Offline, no k6."""
++from perfagent.observability.metrics import MetricsSink, render_latest
++
++
++def _sink() -> MetricsSink:
++    return MetricsSink(scenario="checkout", environment="prod",
++                       load_tool="k6", run_id="r-1")
++
++
++def test_record_request_increments_and_renders():
++    s = _sink()
++    s.mark_active(True)
++    s.record_request(0.123, 200)
++    s.record_request(0.456, 503)
++    s.update_summary(rps=120.0, error_rate=0.5, active_vus=50)
++    payload, content_type = render_latest()
++    text = payload.decode()
++    assert "perfagent_requests_total" in text
++    assert 'status_class="2xx"' in text
++    assert 'status_class="5xx"' in text
++    assert "perfagent_rps" in text
++
++
++def test_run_active_toggles():
++    s = _sink()
++    s.mark_active(True)
++    s.mark_active(False)
++    payload, _ = render_latest()
++    assert "perfagent_run_active" in payload.decode()
+diff --git a/tests/test_reporting.py b/tests/test_reporting.py
+new file mode 100644
+index 0000000..ac3e165
+--- /dev/null
++++ b/tests/test_reporting.py
+@@ -0,0 +1,45 @@
++"""Reporting projection + coverage logic. No LLM, no k6; runs offline."""
++from datetime import datetime, timezone
++
++import pytest
++
++from perfagent.db.models import RunRecord, RunStatus
++from perfagent.reporting.service import Role, project
++
++
++@pytest.fixture
++def run() -> RunRecord:
++    return RunRecord(
++        run_id="r-1", scenario="checkout", environment="prod",
++        target_url="https://x", load_tool="k6", status=RunStatus.PASSED,
++        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
++        p50_ms=90, p90_ms=200, p95_ms=250, p99_ms=400,
++        error_rate=0.01, rps=120, max_vus=50, total_requests=10_000,
++        verdict="PASS",
++    )
++
++
++def test_executive_hides_internals(run):
++    v = project(run, Role.EXECUTIVE)
++    assert "verdict" in v and "p95_ms" in v
++    assert "target_url" not in v and "total_requests" not in v
++
++
++def test_qa_lead_sees_coverage_and_thresholds(run):
++    v = project(run, Role.QA_LEAD)
++    assert {"p99_ms", "coverage", "thresholds"} <= set(v)
++    assert "ai_narrative" not in v   # narrative is engineer-only
++
++
++def test_engineer_sees_all(run):
++    v = project(run, Role.ENGINEER)
++    assert "target_url" in v and "ai_narrative" in v
++
++
++def test_viewer_minimal(run):
++    v = project(run, Role.VIEWER)
++    assert set(v) == {"run_id", "scenario", "status", "verdict", "p95_ms"}
++
++
++def test_status_serialized_to_str(run):
++    assert project(run, Role.QA_LEAD)["status"] == "passed"
+-- 
+2.43.0
+

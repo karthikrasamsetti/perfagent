@@ -65,7 +65,8 @@ TAGS: list[dict] = [
     {"name": "Runs",
      "description": "Start, watch and stop a live k6 run."},
     {"name": "Reports & history",
-     "description": "The verdict and report of a run, saved reports, and trends across runs."},
+     "description": "The verdict and report of a run, saved reports, trends across runs, "
+                    "role-scoped run history, metric trends and flow coverage."},
     {"name": "SLA profiles",
      "description": "Reusable sets of pass/fail thresholds."},
     {"name": "Git",
@@ -77,7 +78,7 @@ TAGS: list[dict] = [
     {"name": "Integrations",
      "description": "The non-secret Git and Jenkins details remembered per plan."},
     {"name": "Observability",
-     "description": "Audit log, AI token usage and AI call traces."},
+     "description": "Audit log, AI token usage, AI call traces and Prometheus metrics."},
     {"name": "System",
      "description": "Health of the app and its database, and what it can do."},
 ]
@@ -295,6 +296,18 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "Reports & history", "Reopen a saved report",
         "A previously saved report, exactly as it was produced.",
         returns="The saved report."),
+    ("GET", "/api/reporting/runs"): _e(
+        "Reports & history", "Run history for a stakeholder role",
+        "Past runs, newest first, with each run's fields limited to what the given role "
+        "may see (executive, qa_lead, engineer, viewer). Optionally filtered by target "
+        "or verdict. Reads stored data only; no AI.",
+        returns="`role`, `count`, `runs`."),
+    ("GET", "/api/reporting/trend"): _e(
+        "Reports & history", "A metric's trend across runs",
+        "The chosen metric (p95, p99, error rate, avg or RPS) across recent runs, "
+        "oldest to newest, as points for a trend chart. Optionally filtered by target "
+        "or plan. Reads stored data only; no AI.",
+        returns="`metric`, `target`, `plan_id`, `points`."),
 
     # ------------------------------------------------------------ SLA profiles
     ("GET", "/api/sla"): _e(
@@ -396,6 +409,12 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "whether it succeeded and how many values were redacted. For debugging and "
         "cost review; prompts are stored redacted.",
         returns="`traces`."),
+    ("GET", "/api/metrics"): _e(
+        "Observability", "Prometheus metrics",
+        "Live run metrics in Prometheus text format for a Prometheus server to scrape "
+        "and Grafana to chart. Deterministic; no AI. Series are grouped by scenario, "
+        "environment and load tool; per-run detail lives in the run history, not here.",
+        returns="Prometheus exposition text (not JSON)."),
 
     # ------------------------------------------------------------------ System
     ("GET", "/api/health"): _e(

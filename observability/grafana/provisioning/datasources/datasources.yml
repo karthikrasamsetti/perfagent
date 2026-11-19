@@ -1,0 +1,23 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  # Point this at your run_records table for the historical/trend panels.
+  # Fill host/user/password to match your Postgres (feat/postgres) setup,
+  # or delete this block if you query trend/coverage via the reporting API.
+  - name: PerfAgent-Postgres
+    type: postgres
+    access: proxy
+    url: host.docker.internal:5432
+    database: perfagent
+    user: perfagent
+    secureJsonData:
+      password: "change-me"
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1500

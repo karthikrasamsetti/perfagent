@@ -19,7 +19,11 @@ from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 from perfagent.db.connection import build_engine, install_sanitiser, safe_url
-
+import enum
+from datetime import datetime
+from sqlalchemy import (
+    Column, String, Integer, Float, DateTime, Enum as SAEnum, JSON, Text,
+)
 
 def _new_id() -> str:
     return uuid.uuid4().hex
@@ -239,3 +243,49 @@ def get_engine(db_url: str | None = None):
 
 def get_session() -> Session:
     return Session(get_engine())
+
+class RunStatus(str, enum.Enum):
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    INCONCLUSIVE = "inconclusive"
+
+
+class RunRecord(Base):
+    __tablename__ = "run_records"
+
+    run_id = Column(String, primary_key=True)
+    scenario = Column(String, nullable=False, index=True)
+    environment = Column(String, nullable=False, index=True)
+    target_url = Column(String, nullable=False)
+    load_tool = Column(String, nullable=False, default="k6")
+    status = Column(SAEnum(RunStatus), nullable=False, index=True)
+
+    started_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+    total_requests = Column(Integer, default=0)
+    error_rate = Column(Float, default=0.0)
+    p50_ms = Column(Float, nullable=True)
+    p90_ms = Column(Float, nullable=True)
+    p95_ms = Column(Float, nullable=True)
+    p99_ms = Column(Float, nullable=True)
+    rps = Column(Float, nullable=True)
+    max_vus = Column(Integer, nullable=True)
+
+    verdict = Column(String, nullable=True)
+    thresholds = Column(JSON, nullable=True)
+    coverage = Column(JSON, nullable=True)
+    ai_narrative = Column(Text, nullable=True)
+    requested_by = Column(String, nullable=True)
+
+    def as_full_dict(self) -> dict:
+        out = {}
+        for c in self.__table__.columns:
+            v = getattr(self, c.name)
+            if isinstance(v, datetime):
+                v = v.isoformat()
+            elif isinstance(v, RunStatus):
+                v = v.value
+            out[c.name] = v
+        return out

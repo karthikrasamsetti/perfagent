@@ -32,7 +32,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile, Response  
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -45,6 +45,7 @@ from perfagent.api.export_routes import router as export_router
 from perfagent.api.git_import_routes import router as git_import_router
 from perfagent.api.integration_routes import router as integration_router
 from perfagent.api.jenkins_routes import router as jenkins_router
+from perfagent.api.reporting_routes import router as reporting_router
 from perfagent.check_suggest import (
     CHECK_SUGGEST_SYSTEM_PROMPT,
     SuggestedChecks,
@@ -93,6 +94,7 @@ app.include_router(git_import_router)
 app.include_router(jenkins_router)
 app.include_router(integration_router)
 app.include_router(chat_router)
+app.include_router(reporting_router)
 _configure_logging()
 _log = get_logger("perfagent.api")
 
@@ -1059,3 +1061,10 @@ def run_report_download(run_id: str) -> HTMLResponse:
         report_html,
         headers={"Content-Disposition": f'attachment; filename="report_{run_id[:8]}.html"'},
     )
+
+@app.get("/api/metrics", **doc("GET", "/api/metrics"))
+def metrics() -> Response:
+    """Prometheus scrape endpoint (deterministic, no AI)."""
+    from perfagent.observability.metrics import render_latest
+    payload, content_type = render_latest()
+    return Response(content=payload, media_type=content_type)

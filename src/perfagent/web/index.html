@@ -886,6 +886,31 @@
     <table id="plansTable" style="margin-top:10px"><thead><tr><th>Created</th><th>Target</th><th>Goal</th><th>Scripts</th><th></th></tr></thead><tbody></tbody></table>
   </div>
 
+  <!-- STAKEHOLDER DASHBOARD -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <h2 style="margin:0;font-size:14px">📊 Stakeholder dashboard</h2>
+      <button class="btn ghost sm" onclick="loadStakeholder()">↻ Refresh</button>
+      <span class="muted">run history &amp; p95 trend — scoped to the chosen role</span>
+      <div class="spacer"></div>
+      <label for="sdRole" style="margin:0;font-size:12px">View as</label>
+      <select id="sdRole" style="width:auto;padding:5px 9px" onchange="loadStakeholder()">
+        <option value="executive">Executive</option>
+        <option value="qa_lead">QA lead</option>
+        <option value="engineer">Engineer</option>
+        <option value="viewer">Viewer</option>
+      </select>
+    </div>
+
+    <div class="tiles" id="sdTiles" style="grid-template-columns:repeat(3,1fr);margin:14px 0 8px"></div>
+
+    <div class="mini" style="margin-top:10px">p95 latency across runs (ms)</div>
+    <canvas id="sdTrend" height="130" style="width:100%;margin:4px 0 14px;border:1px solid var(--line);border-radius:12px;background:#fcfcfb"></canvas>
+
+    <table id="sdTable" style="margin-top:4px"><thead><tr id="sdHead"></tr></thead><tbody></tbody></table>
+    <div class="muted" id="sdEmpty" style="display:none;padding:10px 2px">No runs recorded yet. Run a plan to populate this.</div>
+  </div>
+
   <!-- RUNS / REPORTS HISTORY -->
   <div class="card">
     <div style="display:flex;align-items:center;gap:10px">
@@ -2831,6 +2856,69 @@ async function loadAudit(){
 
 /* ---------- history ---------- */
 
+/* ---------- stakeholder dashboard ---------- */
+/* Reads /api/reporting/runs (role-scoped) and /api/reporting/trend.
+   Columns shown depend on the role, so switching role visibly changes
+   what that stakeholder can see. Reuses .tile/.pill/table styles. */
+const SD_COLS=[
+  ['created_at','When'],['target','Target'],['goal','Goal'],['verdict','Verdict'],
+  ['requests','Requests'],['error_rate','Errors'],['p95_ms','p95'],['p99_ms','p99'],
+  ['avg_ms','Avg'],['rps','RPS'],['run_id','Run'],
+];
+function sdFmt(k,v){
+  if(v===null||v===undefined) return '';
+  if(k==='created_at') return new Date(v).toLocaleString();
+  if(k==='error_rate') return (v*100).toFixed(2)+'%';
+  if(k==='p95_ms'||k==='p99_ms'||k==='avg_ms') return (+v).toFixed(2)+' ms';
+  if(k==='rps') return (+v).toFixed(2)+'/s';
+  if(k==='run_id') return String(v).slice(0,8);
+  return v;
+}
+function sdVerdict(v){
+  const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
+  return '<span class="pill '+m[0]+'">'+m[1]+'</span>';
+}
+async function loadStakeholder(){
+  const role=document.getElementById('sdRole').value;
+  const head=document.getElementById('sdHead');
+  const body=document.querySelector('#sdTable tbody');
+  const empty=document.getElementById('sdEmpty');
+  const tiles=document.getElementById('sdTiles');
+  let runs=[];
+  try{
+    const j=await (await fetch('/api/reporting/runs?role='+role+'&limit=100')).json();
+    runs=j.runs||[];
+  }catch(e){ body.innerHTML='<tr><td class="muted">Could not load: '+esc(e.message)+'</td></tr>'; return; }
+
+  const present = runs.length ? new Set(Object.keys(runs[0])) : new Set();
+  const cols = SD_COLS.filter(([k])=>present.has(k));
+  head.innerHTML = cols.map(([,l])=>'<th>'+l+'</th>').join('');
+
+  if(!runs.length){ body.innerHTML=''; empty.style.display='block'; }
+  else{
+    empty.style.display='none';
+    body.innerHTML = runs.map(r=>'<tr>'+cols.map(([k])=>
+      '<td>'+(k==='verdict'?sdVerdict(r[k]):sdFmt(k,r[k]))+'</td>').join('')+'</tr>').join('');
+  }
+
+  const total=runs.length;
+  const passes=runs.filter(r=>r.verdict==='pass').length;
+  const p95s=runs.map(r=>r.p95_ms).filter(v=>v!=null);
+  const worst=p95s.length?Math.max(...p95s):null;
+  tiles.innerHTML=
+    '<div class="tile"><div class="v">'+total+'</div><div class="l">Runs</div></div>'+
+    '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total):0)+'%</div><div class="l">Pass rate</div></div>'+
+    '<div class="tile"><div class="v">'+(worst!=null?worst.toFixed(2)+' ms':'—')+'</div><div class="l">Worst p95</div></div>';
+
+  sdDrawTrend();
+}
+async function sdDrawTrend(){
+  const c=document.getElementById('sdTrend'); if(!c) return;
+  let pts=[];
+  try{ const j=await (await fetch('/api/reporting/trend?metric=p95_ms&limit=30')).json(); pts=j.points||[]; }catch(e){}
+  _lineChart(c,[{data:pts.map((p,i)=>({x:i,y:p.value})),color:'#9a6412'}]);
+}
+
 /* ---------- runs & reports history ---------- */
 async function loadRuns(){
   try{
@@ -3053,6 +3141,7 @@ addEndpoint("POST","/cart",'{"product_id":1}');
 addEndpoint("POST","/checkout",'{"pay":"card"}');
 loadPlans();
 loadRuns();
+loadStakeholder();
 loadAudit();
 refreshUsage();
 setMode('manual');

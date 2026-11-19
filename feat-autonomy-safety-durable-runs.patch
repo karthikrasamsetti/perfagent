@@ -1,0 +1,2424 @@
+From 2dc4fd1be7a996d7eeff06983845a8fd95ce6f9f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 07:01:02 +0000
+Subject: [PATCH] Safety rails on load + durable run state (groundwork for
+ autonomy)
+
+Safety (perfagent/safety.py, enforced in the runner):
+- target allow-list (static scan of script URLs + runtime guard on hosts hit)
+- max users / max duration read from the script via 'k6 inspect' (fail closed)
+- concurrency cap, duration watchdog
+- durable kill switch: stops live runs, refuses new ones; API + top-bar control
+- pre-flight respects the allow-list; blocks and safety stops are audited
+
+Durable runs (runner/store.py, 'runs' table):
+- run state saved on start, every heartbeat, and on finish
+- get_run falls back to the DB: finished runs + reports survive a restart
+- runs orphaned by a restart are marked 'interrupted'; leftover k6 is stopped
+- /api/runs/active + UI banner to rejoin a live run after a refresh
+- stop works across processes (stop_requested)
+
+Verdict: a run cut short (stopped/interrupted) is never PASS -> inconclusive.
+Report waits for final metrics; response includes the final snapshot.
+deps: psutil. 35 new tests.
+---
+ README.md                             |  58 ++-
+ pyproject.toml                        |   1 +
+ requirements.txt                      |   2 +
+ src/perfagent/analyzer/narrator.py    |  13 +-
+ src/perfagent/api/app.py              | 111 +++++-
+ src/perfagent/api/safety_routes.py    |  62 ++++
+ src/perfagent/config.py               |  16 +
+ src/perfagent/db/__init__.py          |   3 +
+ src/perfagent/db/models.py            |  51 +++
+ src/perfagent/runner/__init__.py      |   8 +-
+ src/perfagent/runner/k6_runner.py     | 299 +++++++++++++--
+ src/perfagent/runner/store.py         | 271 ++++++++++++++
+ src/perfagent/safety.py               | 343 +++++++++++++++++
+ src/perfagent/web/index.html          |  99 ++++-
+ tests/test_safety_and_durable_runs.py | 510 ++++++++++++++++++++++++++
+ uv.lock                               |   2 +
+ 16 files changed, 1788 insertions(+), 61 deletions(-)
+ create mode 100644 src/perfagent/api/safety_routes.py
+ create mode 100644 src/perfagent/runner/store.py
+ create mode 100644 src/perfagent/safety.py
+ create mode 100644 tests/test_safety_and_durable_runs.py
+
+diff --git a/README.md b/README.md
+index f244e1d..fe3d346 100644
+--- a/README.md
++++ b/README.md
+@@ -42,6 +42,8 @@ against your last run and is saved to a browsable history.
+ - [Observability — logging, audit & tokens](#observability--logging-audit--tokens)
+ - [Architecture](#architecture)
+ - [Project layout](#project-layout)
++- [Safety rails on load](#safety-rails-on-load)
++- [Durable runs](#durable-runs)
+ - [Safety notes](#safety-notes)
+ - [Troubleshooting](#troubleshooting)
+ - [Roadmap](#roadmap)
+@@ -630,12 +632,14 @@ flowchart TD
+ | `ci/jenkins.py` | Jenkins trigger / status / stop / job set-up. |
+ | `integrations.py` | Saved (non-secret) Git & Jenkins details per plan. |
+ | `preflight.py` | One request per endpoint → status report (no load). |
+-| `runner/k6_runner.py` · `runner/validator.py` · `runner/k6_binary.py` | Launch & stream k6 (metrics + logs); validate a script via `k6 inspect`; find or auto-download k6. |
++| `runner/k6_runner.py` · `runner/validator.py` · `runner/k6_binary.py` | Launch & stream k6 (metrics + logs) with the safety rails enforced; validate a script via `k6 inspect`; find or auto-download k6. |
++| `runner/store.py` | Durable run state: save/reload runs, heartbeat, recovery of runs interrupted by a restart. |
++| `safety.py` | Safety rails: target allow-list, user/duration caps read from the script, concurrency cap, kill switch. |
+ | `stats/aggregator.py` | Deterministic metric aggregation (percentiles, error rate, RPS; failed checks count as errors). |
+ | `analyzer/verdict.py` · `diagnostics.py` · `baseline.py` · `narrator.py` · `report.py` | Verdict (fail-closed), diagnosis, regression compare, AI narrative, HTML report. |
+ | `logging_config.py` · `audit.py` | Structured logging and the audit trail. |
+ | `db/models.py` | SQLAlchemy models: plans, scripts, data files, run results (+ saved reports & logs), audit, SLA profiles, traces, integration settings, chat sessions. |
+-| `api/app.py` + `api/*_routes.py` | FastAPI app: REST API + serves the UI; export / git-import / integration / jenkins / chat routes. |
++| `api/app.py` + `api/*_routes.py` | FastAPI app: REST API + serves the UI; export / git-import / integration / jenkins / chat / safety routes. |
+ | `web/index.html` | The guided wizard UI (conversation + quick + manual modes, report dashboard, git/Jenkins panels, single file). |
+ | `sample_target/app.py` | A mock website to test against safely. |
+ 
+@@ -649,6 +653,51 @@ the Git export / import / Jenkins / integrations features.
+ 
+ ---
+ 
++## Safety rails on load
++
++Active guards in front of every run. They are decided in code and enforced in the runner
++itself, so the UI, the API and the agent's own orchestration all pass through the same gate.
++
++| Rail | Setting (`.env`) | Default | What it does |
++|---|---|---|---|
++| Target allow-list | `RUN_ALLOWED_HOSTS` | empty (any host) | Load, and pre-flight requests, only go to approved hosts. Entries: `staging.example.com`, `127.0.0.1:8000` (that port only), `*.test.example.com`. |
++| Max virtual users | `RUN_MAX_USERS` | `1000` | A run that reaches more is blocked. `0` = no cap. |
++| Max duration | `RUN_MAX_DURATION_SECONDS` | `3600` | A run that lasts longer is blocked (60 s of k6 wind-down is allowed on top). `0` = no cap. |
++| Concurrent runs | `RUN_MAX_CONCURRENT` | `3` | Most runs in progress at once. `0` = no limit. |
++| Kill switch | 🛑 in the top bar, or `POST /api/safety/kill-switch` | off | Stops every run in progress and refuses new ones until released. Saved in the database, so it survives a restart. |
++
++How they are enforced:
++
++- **The caps are read from the script itself**, with `k6 inspect`, not from the plan — a
++  script can be edited or uploaded, so the plan is not proof of what will run. If a cap is
++  set and the script's size cannot be determined, the run is blocked (fail closed).
++- **The allow-list is checked twice:** the target and every URL written in the script before
++  the run, and every host actually requested during it — a request to a host that is not
++  allowed stops the run.
++- **A watchdog** stops a run that outlives the duration cap.
++- A blocked run never starts the load engine. Blocks and safety stops are in the audit log
++  (`run.blocked`, `run.safety_stop`, `safety.kill_switch_on/off`).
++
++`GET /api/safety` returns the limits in force and the kill-switch state.
++
++---
++
++## Durable runs
++
++A live run is mirrored to the database (`runs` table) when it starts, about once a second
++while it runs, and when it ends — status, metrics, logs.
++
++- **Refresh the page mid-run** and a banner offers to rejoin it (`GET /api/runs/active`).
++- **After a restart, finished runs are still there**: their live view and report open as before.
++- **A run that was in flight when the app stopped is marked `interrupted`**, keeping the
++  metrics it had. A k6 process left behind is stopped, so load never keeps firing with
++  nothing watching it. The run itself does not resume — that needs separate load workers.
++- **A run cut short is never reported as PASS.** Stopped (by a person, a safety limit or the
++  kill switch) or interrupted runs measured only part of the test: a failed threshold is
++  still a failure, but a pass becomes *inconclusive*, with the reason shown.
++
++---
++
+ ## Safety notes
+ 
+ > [!WARNING]
+@@ -656,6 +705,8 @@ the Git export / import / Jenkins / integrations features.
+ > Generating load against systems you don't control can cause outages and may be illegal.
+ 
+ - The human approval gate sits **before** any load is fired — always review the plan first.
++- Set `RUN_ALLOWED_HOSTS` and tighten the caps before sharing the app with anyone else — see
++  [Safety rails on load](#safety-rails-on-load).
+ - Start with low user counts and short durations on any new target, then scale up.
+ - Sensitive data is redacted before it reaches the LLM; extend detectors in
+   `guardrails/redaction.py` for your environment before pointing at production-adjacent data.
+@@ -691,6 +742,7 @@ the Git export / import / Jenkins / integrations features.
+ ## Roadmap
+ 
+ **✅ Working today**
++**Safety rails (allow-list, user/duration caps, concurrency cap, kill switch) · durable run state** ·
+ **Conversational chat (multi-turn, saved, LangGraph)** · quick describe or form input · import (OpenAPI/Swagger JSON+YAML, Postman, HAR, **and from Git**) · AI
+ planning with an editable form & plain-English summary · guardrails (+ verify script & debug
+ mode) · AI evaluation · correlation (JSON/header/cookie/regex/array, auto-set-up) ·
+@@ -709,7 +761,7 @@ AI traces · modern UI with inline guidance.
+ - **Live runners for JMeter / Gatling** (scripts generate today; a live runner is k6-only).
+ - **Autonomy** — extend the conversation graph so the agent sequences generate → run → diagnose → report itself, with approval as an interrupt.
+ - **Scheduled & CI-triggered runs**; trend alerting on regression.
+-- **Reliability for the hub** — durable/concurrent run state, load workers, target allow-list & VU caps.
++- **Reliability for the hub** — a run queue and separate load workers (so a run survives an app restart), swappable database, containers. *(Durable run state, target allow-list, load caps and the kill switch are done.)*
+ 
+ ---
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 4041a1f..91e4104 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -19,6 +19,7 @@ dependencies = [
+     "structlog>=26.1.0",
+     "langgraph>=0.4,<2",
+     "langgraph-checkpoint-sqlite>=2.0,<4",
++    "psutil>=5.9",
+ ]
+ 
+ [dependency-groups]
+diff --git a/requirements.txt b/requirements.txt
+index 493d83e..b9e42f8 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -153,6 +153,8 @@ propcache==0.5.4
+     # via
+     #   aiohttp
+     #   yarl
++psutil==7.2.2
++    # via perfagent (pyproject.toml)
+ pydantic==2.13.5
+     # via
+     #   perfagent (pyproject.toml)
+diff --git a/src/perfagent/analyzer/narrator.py b/src/perfagent/analyzer/narrator.py
+index 09ca8b0..be18e84 100644
+--- a/src/perfagent/analyzer/narrator.py
++++ b/src/perfagent/analyzer/narrator.py
+@@ -64,8 +64,14 @@ def _facts_block(target: str, snapshot: dict, verdict: dict) -> str:
+         f"Latency max: {lat.get('max_ms', 0)} ms",
+         "",
+         f"Overall verdict: {_verdict_word(verdict.get('overall_passed'))}",
+-        "Threshold checks:",
+     ]
++    if verdict.get("incomplete"):
++        lines.append(
++            "IMPORTANT: the run ended early ("
++            + (verdict.get("incomplete_reason") or "it was stopped before completing")
++            + "). The numbers cover only part of the test — say so, and do not present "
++              "the result as a pass.")
++    lines.append("Threshold checks:")
+     for c in verdict.get("checks", []):
+         status = "PASS" if c["passed"] else "FAIL" if c["passed"] is False else "N/A"
+         lines.append(
+@@ -88,7 +94,10 @@ def _fallback_narrative(target: str, snapshot: dict, verdict: dict) -> Narrative
+     err = snapshot.get("error_rate", 0) * 100
+     p95 = lat.get("p95_ms", 0)
+ 
+-    if passed is True:
++    if verdict.get("incomplete") and passed is not False:
++        headline = (f"The run against {target} ended early, so the result is "
++                    "inconclusive — the numbers cover only part of the test.")
++    elif passed is True:
+         headline = f"The test PASSED: {target} met all performance thresholds."
+     elif passed is False:
+         headline = f"The test FAILED: {target} missed one or more thresholds."
+diff --git a/src/perfagent/api/app.py b/src/perfagent/api/app.py
+index 5087c4c..4f407dc 100644
+--- a/src/perfagent/api/app.py
++++ b/src/perfagent/api/app.py
+@@ -14,6 +14,7 @@ Endpoints:
+   POST /api/runs/{id}/stop        -> stop a run
+   GET  /api/runs/{id}/report      -> verdict + narrative
+   /api/chat/sessions...           -> conversational planning (see api/chat_routes.py)
++  /api/safety, /api/runs/active   -> safety rails + runs in progress (api/safety_routes.py)
+ 
+ Start with:  uv run uvicorn perfagent.api.app:app --reload
+ Then open:   http://127.0.0.1:8080
+@@ -24,6 +25,7 @@ from __future__ import annotations
+ import json
+ import time
+ import uuid
++from contextlib import asynccontextmanager
+ from pathlib import Path
+ 
+ from fastapi import FastAPI, HTTPException, UploadFile
+@@ -34,7 +36,7 @@ from perfagent.contracts.artifacts import PlanArtifact
+ from perfagent.contracts.load_model import DataFile, LoadModel
+ from perfagent.data import DataValidationError, load_data
+ from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline
+-from perfagent import audit, tracing
++from perfagent import audit, safety, tracing
+ from perfagent.logging_config import configure as _configure_logging, get_logger
+ from perfagent.analyzer.diagnostics import diagnose
+ from perfagent.preflight import preflight
+@@ -49,24 +51,47 @@ from perfagent.dynamize import DynamizedBody, DYNAMIZE_SYSTEM_PROMPT, build_dyna
+ from perfagent.planner import PlanRequest, draft_plan
+ from perfagent.planner.spec import EndpointSpec
+ from perfagent.providers import build_provider
+-from perfagent.runner import get_run, k6_available, start_run, stop_run
++from perfagent.runner import (
++    get_run,
++    k6_available,
++    recover_interrupted_runs,
++    start_run,
++    stop_run,
++    wait_until_settled,
++)
++from perfagent.safety import RunBlocked
+ from perfagent.api.export_routes import router as export_router
+ from perfagent.api.git_import_routes import router as git_import_router
+ from perfagent.api.jenkins_routes import router as jenkins_router
+ from perfagent.api.integration_routes import router as integration_router
+ from perfagent.api.chat_routes import router as chat_router
++from perfagent.api.safety_routes import router as safety_router
+ from perfagent.plan_summary import (
+     plan_rationale as _plan_rationale,
+     summarize_redactions as _summarize_redactions,
+     usage_summary as _usage_summary,
+ )
+ 
+-app = FastAPI(title="AI Performance Testing Agent")
++
++
++@asynccontextmanager
++async def _lifespan(_app: FastAPI):
++    """On start-up: runs left in flight by a previous app process are marked
++    'interrupted' (and a leftover k6 is stopped), so nothing is shown as running
++    when it is not."""
++    n = recover_interrupted_runs()
++    if n:
++        get_logger("perfagent.api").warning("runs.recovered_on_startup", interrupted=n)
++    yield
++
++
++app = FastAPI(title="AI Performance Testing Agent", lifespan=_lifespan)
+ app.include_router(export_router)
+ app.include_router(git_import_router)
+ app.include_router(jenkins_router)
+ app.include_router(integration_router)
+ app.include_router(chat_router)
++app.include_router(safety_router)      # before the routes below: /api/runs/active
+ _configure_logging()
+ _log = get_logger("perfagent.api")
+ 
+@@ -616,6 +641,13 @@ class PreflightBody(BaseModel):
+ def api_preflight(body: PreflightBody) -> dict:
+     """Fire one request per endpoint and report status codes (no load)."""
+     model = body.load_model
++    # Safety: even single requests only go to hosts on the allow-list.
++    blocked = safety.check_target(model.target_base_url)
++    if blocked:
++        audit.record("preflight.blocked", entity="plan", target=model.target_base_url,
++                     summary="Pre-flight blocked: " + "; ".join(blocked))
++        raise HTTPException(status_code=403,
++                            detail="Blocked by safety limits: " + "; ".join(blocked) + ".")
+     if body.headers:
+         model.headers = {k: v for k, v in body.headers.items() if k and v}
+ 
+@@ -753,16 +785,25 @@ def run_script(script_id: str) -> dict:
+             target = plan.target_base_url
+             data_filename, data_content = _data_for_plan(s, plan)
+         run_id = uuid.uuid4().hex
+-        run = start_run(
+-            run_id=run_id,
+-            script_id=script_id,
+-            tool=row.tool,
+-            target=target,
+-            content=row.content,
+-            load_model_json=(plan.load_model_json if plan is not None else ""),
+-            data_filename=data_filename,
+-            data_content=data_content,
+-        )
++        try:
++            run = start_run(
++                run_id=run_id,
++                script_id=script_id,
++                tool=row.tool,
++                target=target,
++                content=row.content,
++                load_model_json=(plan.load_model_json if plan is not None else ""),
++                data_filename=data_filename,
++                data_content=data_content,
++                plan_id=(plan.id if plan is not None else ""),
++            )
++        except RunBlocked as e:
++            # The safety rails refused the run — nothing was started.
++            audit.record("run.blocked", entity="script", entity_id=script_id, target=target,
++                         summary="Run blocked: " + "; ".join(e.reasons))
++            raise HTTPException(
++                status_code=403,
++                detail="Blocked by safety limits: " + "; ".join(e.reasons) + ".") from e
+     peak = ""
+     try:
+         if plan is not None:
+@@ -792,6 +833,9 @@ def run_status(run_id: str) -> dict:
+         "elapsed_s": round((run.ended_at or time.time()) - run.started_at, 1),
+         "snapshot": run.snapshot,
+         "logs": list(getattr(run, "logs", []) or [])[-200:],   # recent k6 output lines
++        # what the script will really do, as checked against the safety limits
++        "max_vus": getattr(run, "max_vus", 0),
++        "total_seconds": getattr(run, "total_seconds", 0.0),
+     }
+ 
+ 
+@@ -805,9 +849,31 @@ def run_stop(run_id: str) -> dict:
+ 
+ # ---------- analyze + report ----------
+ 
++def _verdict_for(run, model) -> dict:
++    """The deterministic verdict, with the fail-closed rule for runs cut short.
++
++    A run that was stopped (by a person, a safety limit or the kill switch) or
++    interrupted by a restart measured only part of the test. A threshold it FAILED
++    is still a failure, but it can never be certified PASS — that becomes
++    INCONCLUSIVE, with the reason attached.
++    """
++    from perfagent.analyzer import evaluate
++
++    verdict = evaluate(model, run.snapshot) if model else {"overall_passed": None, "checks": []}
++    if run.status in ("stopped", "interrupted"):
++        verdict = {
++            **verdict,
++            "incomplete": True,
++            "incomplete_reason": (run.message or "the run ended early").rstrip("."),
++        }
++        if verdict.get("overall_passed") is True:
++            verdict["overall_passed"] = None
++    return verdict
++
++
+ def _build_report(run) -> tuple[dict, str]:
+     """Compute verdict, narrate, and render HTML for a finished run. Returns (verdict, html)."""
+-    from perfagent.analyzer import evaluate, narrate, render_report_html
++    from perfagent.analyzer import narrate, render_report_html
+ 
+     if run.load_model_json:
+         model = LoadModel.model_validate_json(run.load_model_json)
+@@ -819,7 +885,7 @@ def _build_report(run) -> tuple[dict, str]:
+             '"thresholds":[]}'
+         )
+ 
+-    verdict = evaluate(model, run.snapshot)
++    verdict = _verdict_for(run, model)
+ 
+     try:
+         provider = build_provider()
+@@ -843,20 +909,24 @@ def _build_report(run) -> tuple[dict, str]:
+ @app.get("/api/runs/{run_id}/report")
+ def run_report(run_id: str) -> dict:
+     """Return the verdict + narrative for a finished run (for the UI panel)."""
+-    run = get_run(run_id)
++    # Wait for the final metrics: a stopped run's status changes a moment before
++    # k6 has exited and the last numbers are in.
++    run = wait_until_settled(run_id)
+     if run is None:
+         raise HTTPException(status_code=404, detail="run not found")
+-    if run.status not in ("finished", "stopped", "error"):
++    if run.status == "blocked":
++        raise HTTPException(status_code=400, detail="the run was blocked and never started")
++    if run.status not in ("finished", "stopped", "error", "interrupted"):
+         raise HTTPException(status_code=400, detail="run has not finished yet")
+ 
+-    from perfagent.analyzer import evaluate, narrate
++    from perfagent.analyzer import narrate
+ 
+     if run.load_model_json:
+         model = LoadModel.model_validate_json(run.load_model_json)
+     else:
+         model = None
+ 
+-    verdict = evaluate(model, run.snapshot) if model else {"overall_passed": None, "checks": []}
++    verdict = _verdict_for(run, model)
+     try:
+         provider = build_provider()
+     except ValueError:
+@@ -941,6 +1011,7 @@ def run_report(run_id: str) -> dict:
+         "evaluation": report_eval,
+         "diagnostics": diag.to_dict(),
+         "baseline": baseline_summary,
++        "snapshot": run.snapshot,          # the final numbers, so the tiles match the text
+         "logs": list(getattr(run, "logs", []) or [])[-500:],
+     }
+ 
+@@ -972,7 +1043,7 @@ def run_logs_download(run_id: str):
+ @app.get("/api/runs/{run_id}/report/download", response_class=HTMLResponse)
+ def run_report_download(run_id: str) -> HTMLResponse:
+     """Download the full HTML report."""
+-    run = get_run(run_id)
++    run = wait_until_settled(run_id)
+     if run is None:
+         raise HTTPException(status_code=404, detail="run not found")
+     _, report_html = _build_report(run)
+diff --git a/src/perfagent/api/safety_routes.py b/src/perfagent/api/safety_routes.py
+new file mode 100644
+index 0000000..c610465
+--- /dev/null
++++ b/src/perfagent/api/safety_routes.py
+@@ -0,0 +1,62 @@
++"""API routes: the safety rails on load, and the runs currently in progress.
++
++  GET  /api/safety               the limits in force + kill-switch state + active runs
++  POST /api/safety/kill-switch   {"engaged": true|false, "reason": "..."}
++                                 on  -> stops every run in progress and refuses new ones
++                                 off -> runs are allowed again
++  GET  /api/runs/active          runs in progress (from the database, so it is correct
++                                 after a refresh or a restart) — used to reconnect
++
++The limits themselves are settings (RUN_ALLOWED_HOSTS, RUN_MAX_USERS,
++RUN_MAX_DURATION_SECONDS, RUN_MAX_CONCURRENT) and are enforced in the runner.
++"""
++
++from __future__ import annotations
++
++from fastapi import APIRouter
++from pydantic import BaseModel
++
++from perfagent import audit, safety
++from perfagent.runner import active_runs, stop_all_runs
++
++router = APIRouter()
++
++
++class KillSwitchBody(BaseModel):
++    engaged: bool
++    reason: str = ""
++
++
++def _state() -> dict:
++    return {
++        "policy": safety.get_policy().to_dict(),
++        "kill_switch": safety.kill_switch(),
++        "active_runs": len(active_runs()),
++        "duration_grace_seconds": safety.DURATION_GRACE_SECONDS,
++    }
++
++
++@router.get("/api/safety")
++def get_safety() -> dict:
++    return _state()
++
++
++@router.post("/api/safety/kill-switch")
++def set_kill_switch(body: KillSwitchBody) -> dict:
++    safety.set_kill_switch(body.engaged, body.reason)
++    stopped = 0
++    if body.engaged:
++        # Flag first, then stop: nothing new can start in between.
++        stopped = stop_all_runs("Stopped by the kill switch.")
++        audit.record("safety.kill_switch_on", entity="run",
++                     summary=f"Kill switch ON — {stopped} run(s) stopped"
++                             + (f" ({body.reason.strip()[:120]})" if body.reason.strip() else ""))
++    else:
++        audit.record("safety.kill_switch_off", entity="run",
++                     summary="Kill switch OFF — runs allowed again")
++    return {**_state(), "stopped": stopped}
++
++
++@router.get("/api/runs/active")
++def get_active_runs() -> dict:
++    return {"runs": active_runs()}
+diff --git a/src/perfagent/config.py b/src/perfagent/config.py
+index c351864..9919997 100644
+--- a/src/perfagent/config.py
++++ b/src/perfagent/config.py
+@@ -64,6 +64,22 @@ class Settings(BaseSettings):
+     # "jenkins.mycorp.com". Empty = any host. Recommended when hosted.
+     jenkins_allowed_hosts: str = Field(default="")
+ 
++    # ---- Safety rails on load ---------------------------------------------------
++    # Enforced in code before and during every live run (and before pre-flight), so
++    # neither a person nor the agent can fire load outside these limits.
++    # Comma-separated hosts load may be sent to, e.g. "127.0.0.1,staging.example.com,
++    # *.test.example.com". An entry with a port ("127.0.0.1:8000") matches that port
++    # only. Empty = any host. Recommended when hosted.
++    run_allowed_hosts: str = Field(default="")
++    # Most virtual users one run may reach, read from the script itself. 0 = no cap.
++    run_max_users: int = Field(default=1000, ge=0)
++    # Longest a run may last, in seconds, read from the script itself. 0 = no cap.
++    run_max_duration_seconds: int = Field(default=3600, ge=0)
++    # Most runs in progress at once. 0 = no limit.
++    run_max_concurrent: int = Field(default=3, ge=0)
++    # How often a live run saves its state (status, metrics, logs) to the database.
++    run_heartbeat_seconds: float = Field(default=1.0, gt=0)
++
+     # ---- Conversational chat (LangGraph) ---------------------------------------
+     # The multi-turn "Conversation" mode on the Describe step. Turn off to hide it
+     # and fall back to the single-shot describe box.
+diff --git a/src/perfagent/db/__init__.py b/src/perfagent/db/__init__.py
+index 0abc1b8..3f2e94f 100644
+--- a/src/perfagent/db/__init__.py
++++ b/src/perfagent/db/__init__.py
+@@ -1,4 +1,5 @@
+ from perfagent.db.models import (
++    AppStateRow,
+     AuditRow,
+     Base,
+     ChatSessionRow,
+@@ -6,6 +7,7 @@ from perfagent.db.models import (
+     IntegrationSettingsRow,
+     PlanRow,
+     RunResultRow,
++    RunRow,
+     ScriptRow,
+     SlaProfileRow,
+     TraceRow,
+@@ -15,4 +17,5 @@ from perfagent.db.models import (
+ 
+ __all__ = ["Base", "PlanRow", "ScriptRow", "DataFileRow", "RunResultRow", "AuditRow",
+            "SlaProfileRow", "TraceRow", "IntegrationSettingsRow", "ChatSessionRow",
++           "RunRow", "AppStateRow",
+            "get_engine", "get_session"]
+\ No newline at end of file
+diff --git a/src/perfagent/db/models.py b/src/perfagent/db/models.py
+index 5d4bd7f..0c04988 100644
+--- a/src/perfagent/db/models.py
++++ b/src/perfagent/db/models.py
+@@ -168,6 +168,57 @@ class IntegrationSettingsRow(Base):
+     jenkins_json: Mapped[str] = mapped_column(Text, default="{}")   # url, user name, job, ...
+ 
+ 
++class RunRow(Base):
++    """A live run's durable state — so a run outlives the web process's memory.
++
++    Written when a run starts, refreshed about once a second while it runs (status,
++    metrics snapshot, logs, heartbeat) and finalised when it ends. After a restart the
++    record is still here: a finished run can be reopened and reported on, and a run
++    that was in flight is marked 'interrupted' with whatever it had measured.
++    RunResultRow (above) stays the *report* of a completed run; this is the run itself.
++    Its own table, so existing databases just gain it on start-up — no migration.
++    """
++
++    __tablename__ = "runs"
++
++    id: Mapped[str] = mapped_column(String(32), primary_key=True)
++    created_at: Mapped[datetime] = mapped_column(default=_now, index=True)
++    script_id: Mapped[str] = mapped_column(String(32), default="", index=True)
++    plan_id: Mapped[str] = mapped_column(String(32), default="", index=True)
++    tool: Mapped[str] = mapped_column(String(50), default="k6")
++    target: Mapped[str] = mapped_column(String(500), default="")
++    # starting | preparing | running | finished | error | stopped | blocked | interrupted
++    status: Mapped[str] = mapped_column(String(20), default="starting", index=True)
++    message: Mapped[str] = mapped_column(Text, default="")
++    started_at: Mapped[float] = mapped_column(default=0.0)       # epoch seconds
++    ended_at: Mapped[float] = mapped_column(default=0.0)         # 0 = not ended
++    heartbeat_at: Mapped[float] = mapped_column(default=0.0)     # last state save
++    load_model_json: Mapped[str] = mapped_column(Text, default="")
++    snapshot_json: Mapped[str] = mapped_column(Text, default="{}")
++    logs_json: Mapped[str] = mapped_column(Text, default="[]")
++    # What the script will actually do, read from it before the run (k6 inspect).
++    max_vus: Mapped[int] = mapped_column(default=0)
++    total_seconds: Mapped[float] = mapped_column(default=0.0)
++    # Which app process owns the run, and the k6 process it started — used after a
++    # restart to tell an orphaned run from a live one and to stop a leftover k6.
++    owner: Mapped[str] = mapped_column(String(120), default="")
++    k6_pid: Mapped[int] = mapped_column(default=0)
++    k6_started: Mapped[float] = mapped_column(default=0.0)
++    # Set by "stop" when the run belongs to another process; its owner honours it.
++    stop_requested: Mapped[bool] = mapped_column(default=False)
++
++
++class AppStateRow(Base):
++    """Small durable key/value flags shared by every app process (e.g. the run
++    kill switch). Its own table — no migration."""
++
++    __tablename__ = "app_state"
++
++    key: Mapped[str] = mapped_column(String(60), primary_key=True)
++    value_json: Mapped[str] = mapped_column(Text, default="{}")
++    updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
++
++
+ class ChatSessionRow(Base):
+     """One planning conversation — the index row for the Conversation mode.
+ 
+diff --git a/src/perfagent/runner/__init__.py b/src/perfagent/runner/__init__.py
+index 2ffe22e..8d63ec9 100644
+--- a/src/perfagent/runner/__init__.py
++++ b/src/perfagent/runner/__init__.py
+@@ -1,9 +1,15 @@
+ from perfagent.runner.k6_runner import (
++    active_runs,
+     get_run,
+     k6_available,
+     list_runs,
++    recover_interrupted_runs,
+     start_run,
++    stop_all_runs,
+     stop_run,
++    wait_until_settled,
+ )
+ 
+-__all__ = ["get_run", "k6_available", "list_runs", "start_run", "stop_run"]
+\ No newline at end of file
++__all__ = ["get_run", "k6_available", "list_runs", "start_run", "stop_run",
++           "stop_all_runs", "active_runs", "recover_interrupted_runs",
++           "wait_until_settled"]
+diff --git a/src/perfagent/runner/k6_runner.py b/src/perfagent/runner/k6_runner.py
+index b7b12ab..4a9202e 100644
+--- a/src/perfagent/runner/k6_runner.py
++++ b/src/perfagent/runner/k6_runner.py
+@@ -5,13 +5,27 @@ Design (matches the trust boundary):
+   - This module PARSES and AGGREGATES those deterministically in Python — every
+     number the UI shows (RPS, error rate, p95) is computed here, in code, not by
+     an LLM.
+-  - Runs are tracked in memory by run_id; the API polls get_run() for live status.
+   - If the script is data-parameterized, the uploaded data file is written next to
+     the script so k6's open('./file') finds it.
+   - k6's human-readable output (console.log/error from the script, threshold
+     crossings, the checks summary) goes to STDERR; we capture those lines into
+     run.logs for the "Live run logs" panel.
+ 
++DURABLE STATE: a live run is held in memory for speed and mirrored to the database
++(runner/store.py) when it starts, about once a second while it runs, and when it
++ends. get_run() falls back to the database, so a finished run can still be opened
++and reported on after a restart, and a run that was in flight is marked
++'interrupted' with the metrics it had (any leftover k6 process is stopped).
++
++SAFETY RAILS (perfagent/safety.py) are enforced here, at the lowest level, so every
++caller goes through them:
++  before launch   kill switch, target allow-list, concurrency cap  -> RunBlocked
++                  load caps read from the script with `k6 inspect` -> status 'blocked'
++  while running   a request to a host that is not allowed stops the run;
++                  a watchdog stops a run that outlives the duration cap;
++                  the kill switch (or a stop requested elsewhere) stops it within
++                  one heartbeat.
++
+ k6 does NOT need to be installed by the customer: k6_binary.ensure_k6() finds a
+ bundled/cached copy or downloads the pinned, checksum-verified release on first run.
+ If that fails (e.g. offline), the run is marked 'error' with a clear message.
+@@ -20,6 +34,7 @@ If that fails (e.g. offline), the run is marked 'error' with a clear message.
+ from __future__ import annotations
+ 
+ import json
++import shutil
+ import subprocess
+ import tempfile
+ import threading
+@@ -27,10 +42,21 @@ import time
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ 
++import psutil
++
++from perfagent import audit, safety
++from perfagent.config import get_settings
++from perfagent.logging_config import get_logger
++from perfagent.runner import store
+ from perfagent.runner.k6_binary import K6Unavailable, ensure_k6, find_k6, k6_ready_or_provisionable
++from perfagent.safety import RunBlocked
+ from perfagent.stats import Aggregator
+ 
++_log = get_logger("perfagent.runs")
++
+ _MAX_LOG_LINES = 1000   # keep the log buffer bounded
++# The duration watchdog fires this long after the cap (+ k6's graceful stop).
++_WATCHDOG_SLACK_SECONDS = 30
+ 
+ 
+ @dataclass
+@@ -39,7 +65,8 @@ class RunState:
+     script_id: str
+     tool: str
+     target: str
+-    status: str = "starting"  # starting | preparing | running | finished | error | stopped
++    # starting | preparing | running | finished | error | stopped | blocked | interrupted
++    status: str = "starting"
+     started_at: float = field(default_factory=time.time)
+     ended_at: float | None = None
+     message: str = ""
+@@ -52,37 +79,120 @@ class RunState:
+     snapshot: dict = field(default_factory=dict)
+     # human-readable k6 output lines (console.*, thresholds, checks) — for live logs
+     logs: list[str] = field(default_factory=list)
++    plan_id: str = ""
++    # what the script will really do (from `k6 inspect`), checked against the caps
++    max_vus: int = 0
++    total_seconds: float = 0.0
++    # the k6 process, so a leftover one can be identified and stopped after a restart
++    k6_pid: int = 0
++    k6_started: float = 0.0
+     _proc: subprocess.Popen | None = None
+     _agg: Aggregator = field(default_factory=Aggregator)
+     _tmpdir: str | None = None
++    _cancel: bool = False             # stop asked before k6 was launched
++    _log_seq: int = 0                 # bumped on every log line (cheap change check)
++    _lock: threading.Lock = field(default_factory=threading.Lock)
++    # set once the worker has fully finished (final metrics computed and saved)
++    _done: threading.Event = field(default_factory=threading.Event)
+ 
+ 
+-# in-memory registry of runs
++# in-memory registry of the runs this process started
+ _RUNS: dict[str, RunState] = {}
+ 
+ 
++def _local_active_ids() -> set[str]:
++    return {rid for rid, r in _RUNS.items() if r.status in store.ACTIVE}
++
++
+ def get_run(run_id: str) -> RunState | None:
+-    return _RUNS.get(run_id)
++    """A run by id: the live one if this process is running it, otherwise the
++    saved state from the database (None if unknown)."""
++    run = _RUNS.get(run_id)
++    if run is not None:
++        return run
++    return store.load(run_id, _local_active_ids())
+ 
+ 
+ def list_runs() -> list[RunState]:
+     return sorted(_RUNS.values(), key=lambda r: r.started_at, reverse=True)
+ 
+ 
++def active_runs() -> list[dict]:
++    """Runs in progress, from the database (so it is true across restarts)."""
++    return store.active(_local_active_ids())
++
++
++def recover_interrupted_runs() -> int:
++    """Mark runs left in flight by a previous app process as interrupted."""
++    return store.recover(_local_active_ids())
++
++
++def wait_until_settled(run_id: str, timeout: float = 5.0) -> RunState | None:
++    """Return the run once its worker has fully finished — final metrics computed
++    and saved — waiting up to ``timeout`` seconds. A run's status flips to 'stopped'
++    the instant it is stopped, a moment before k6 has exited and the last metrics
++    are in; anything that reports on a run should wait for this first."""
++    run = _RUNS.get(run_id)
++    if run is None:
++        return store.load(run_id, _local_active_ids())     # not live here: already final
++    if run.status not in store.ACTIVE:
++        run._done.wait(timeout)
++    return run
++
++
+ def k6_available() -> bool:
+     """True if k6 is present, or can be fetched automatically on first run."""
+     return k6_ready_or_provisionable()
+ 
+ 
+-def stop_run(run_id: str) -> bool:
+-    run = _RUNS.get(run_id)
+-    if run and run._proc and run.status == "running":
+-        run._proc.terminate()
+-        run.status = "stopped"
++# ---------- stopping ----------
++
++def _terminate(run: RunState, message: str, status: str = "stopped",
++               audit_action: str = "") -> bool:
++    """Stop a live run for the given reason. Safe to call more than once.
++    ``audit_action`` records the stop in the audit trail (used for safety stops)."""
++    with run._lock:
++        if run.status not in store.ACTIVE:
++            return False
++        run._cancel = True
++        run.status = status
++        run.message = message
+         run.ended_at = time.time()
+-        return True
+-    return False
++        proc = run._proc
++    if proc is not None:
++        try:
++            proc.terminate()
++        except OSError:
++            pass
++    _append_log(run, f"— {message} —")
++    if audit_action:
++        audit.record(audit_action, entity="run", entity_id=run.run_id, target=run.target,
++                     summary=message)
++    return True
++
++
++def stop_run(run_id: str, message: str = "Stopped by user.") -> bool:
++    """Stop a run in progress. Works for a run this process owns; for one owned by
++    another process, a stop is requested and its owner acts on the next heartbeat."""
++    run = _RUNS.get(run_id)
++    if run is not None:
++        return _terminate(run, message)
++    return store.request_stop(run_id)
++
+ 
++def stop_all_runs(message: str) -> int:
++    """Stop every run in progress (used by the kill switch). Returns how many."""
++    n = 0
++    for run in list(_RUNS.values()):
++        if _terminate(run, message, audit_action="run.safety_stop"):
++            n += 1
++    for row in store.active(_local_active_ids()):
++        if not row["local"] and store.request_stop(row["run_id"]):
++            n += 1
++    return n
++
++
++# ---------- starting ----------
+ 
+ def start_run(
+     run_id: str,
+@@ -93,22 +203,39 @@ def start_run(
+     load_model_json: str = "",
+     data_filename: str = "",
+     data_content: str = "",
++    plan_id: str = "",
+ ) -> RunState:
+     """Launch k6 for the given script content. Returns the RunState immediately;
+-    a background thread keeps parsing output and updating the snapshot."""
++    a background thread keeps parsing output and updating the snapshot.
++
++    Raises RunBlocked if the safety rails refuse the run outright (kill switch,
++    allow-list, too many runs). The load caps are checked just before launch, once
++    k6 is available; a run over the caps ends with status 'blocked'.
++    """
+     run = RunState(run_id=run_id, script_id=script_id, tool=tool, target=target)
+     run.load_model_json = load_model_json
+     run.data_filename = data_filename
+     run.data_content = data_content
+-    _RUNS[run_id] = run
++    run.plan_id = plan_id
+ 
+     if tool != "k6":
+         run.status = "error"
+         run.message = f"live run is only implemented for k6 (got {tool!r})"
+         run.ended_at = time.time()
++        run._done.set()
++        _RUNS[run_id] = run
++        store.insert(run)
+         return run
+ 
+-    thread = threading.Thread(target=_run_worker, args=(run, content), daemon=True)
++    policy = safety.get_policy()
++    check = safety.precheck_run(target=target, content=content,
++                                active_runs=len(active_runs()), policy=policy)
++    if not check.ok:
++        raise RunBlocked(check.reasons)
++
++    _RUNS[run_id] = run
++    store.insert(run)
++    thread = threading.Thread(target=_run_worker, args=(run, content, policy), daemon=True)
+     thread.start()
+     return run
+ 
+@@ -118,6 +245,7 @@ def _append_log(run: RunState, line: str) -> None:
+     if not line:
+         return
+     run.logs.append(line)
++    run._log_seq += 1
+     if len(run.logs) > _MAX_LOG_LINES:
+         del run.logs[: len(run.logs) - _MAX_LOG_LINES]
+ 
+@@ -133,18 +261,87 @@ def _pump_stderr(run: RunState, proc: subprocess.Popen) -> None:
+         pass
+ 
+ 
+-def _run_worker(run: RunState, content: str) -> None:
++def _k6_command(k6_path: str, script_path: Path) -> list[str]:
++    # k6 --out json=- streams one JSON object per line to stdout.
++    return [k6_path, "run", "--out", "json=-", "--quiet", str(script_path)]
++
++
++def _heartbeat(run: RunState, done: threading.Event, interval: float) -> None:
++    """While the run is alive: save its state, and act on the kill switch or a stop
++    requested from another process."""
++    saved_seq = -1
++    while not done.wait(interval):
++        with_logs = run._log_seq != saved_seq      # only rewrite the logs when they grew
++        saved_seq = run._log_seq
++        stop_requested = store.save(run, with_logs=with_logs)
++        if run.status not in store.ACTIVE:
++            continue
++        if stop_requested:
++            _terminate(run, "Stopped by user.")
++        elif safety.kill_switch()["engaged"]:
++            _terminate(run, "Stopped by the kill switch.", audit_action="run.safety_stop")
++
++
++def _finish(run: RunState, status: str, message: str = "") -> None:
++    with run._lock:
++        if run.status in store.ACTIVE:
++            run.status = status
++            run.message = message
++        if run.ended_at is None:
++            run.ended_at = time.time()
++
++
++def _run_worker(run: RunState, content: str, policy: safety.Policy) -> None:
++    done = threading.Event()
++    beat = threading.Thread(
++        target=_heartbeat, args=(run, done, get_settings().run_heartbeat_seconds),
++        daemon=True)
++    beat.start()
++    try:
++        _execute(run, content, policy)
++    except Exception as e:  # noqa: BLE001 — never leave a run stuck 'running'
++        _log.error("runs.worker_failed", run_id=run.run_id, error=f"{type(e).__name__}: {e}")
++        _finish(run, "error", f"the run failed unexpectedly: {e}")
++    finally:
++        done.set()
++        beat.join(timeout=5)
++        if run.ended_at is None:
++            run.ended_at = time.time()
++        store.save(run)                      # the final, authoritative state
++        if run._tmpdir:
++            shutil.rmtree(run._tmpdir, ignore_errors=True)
++        run._done.set()
++
++
++def _execute(run: RunState, content: str, policy: safety.Policy) -> None:
+     try:
+         if find_k6() is None:
+             run.status = "preparing"
+             run.message = "Setting up the load engine (first run only)..."
+         k6_path = ensure_k6()
+     except K6Unavailable as e:
+-        run.status = "error"
+-        run.message = str(e)
+-        run.ended_at = time.time()
++        _finish(run, "error", str(e))
++        return
++    if run.status == "preparing":
++        run.message = ""
++
++    # ---- safety: the load caps, read from the script itself (no load is sent) ----
++    load = safety.inspect_script_load(content, run.data_filename, run.data_content)
++    if load.known:
++        run.max_vus, run.total_seconds = int(load.max_vus), float(load.total_seconds)
++    reasons = safety.check_load(load, policy)
++    if reasons:
++        _finish(run, "blocked", "Blocked by safety limits: " + "; ".join(reasons) + ".")
++        _append_log(run, "— " + run.message + " —")
++        audit.record("run.blocked", entity="run", entity_id=run.run_id, target=run.target,
++                     summary="Run blocked: " + "; ".join(reasons))
++        return
++    if run._cancel or run.status not in store.ACTIVE:
++        return                                # stopped while preparing
++    if safety.kill_switch()["engaged"]:
++        _finish(run, "blocked", "Blocked by safety limits: the kill switch is on.")
+         return
+-    run.message = ""
++
+     # Measure from when k6 actually starts, not from when the run was requested,
+     # so a first-run download doesn't drag down the reported RPS.
+     run._agg = Aggregator()
+@@ -159,8 +356,7 @@ def _run_worker(run: RunState, content: str) -> None:
+     if run.data_filename and run.data_content:
+         (Path(tmpdir) / run.data_filename).write_text(run.data_content, encoding="utf-8")
+ 
+-    # k6 --out json=- streams one JSON object per line to stdout.
+-    cmd = [k6_path, "run", "--out", "json=-", "--quiet", str(script_path)]
++    cmd = _k6_command(k6_path, script_path)
+ 
+     try:
+         proc = subprocess.Popen(
+@@ -174,13 +370,37 @@ def _run_worker(run: RunState, content: str) -> None:
+             cwd=tmpdir,
+         )
+     except Exception as e:  # noqa: BLE001
+-        run.status = "error"
+-        run.message = f"failed to launch k6: {e}"
+-        run.ended_at = time.time()
++        _finish(run, "error", f"failed to launch k6: {e}")
+         return
+ 
+-    run._proc = proc
+-    run.status = "running"
++    with run._lock:
++        run._proc = proc
++        run.k6_pid = proc.pid
++        try:
++            run.k6_started = psutil.Process(proc.pid).create_time()
++        except (psutil.Error, OSError):
++            run.k6_started = time.time()
++        cancelled = run._cancel
++        if not cancelled:
++            run.status = "running"
++    if cancelled:                             # stop arrived while k6 was launching
++        try:
++            proc.terminate()
++        except OSError:
++            pass
++    store.save(run)                           # record the pid straight away
++
++    # ---- safety: a watchdog for the duration cap (covers a hung k6 too) ----
++    watchdog = None
++    if policy.max_duration_seconds:
++        limit = (policy.max_duration_seconds + safety.DURATION_GRACE_SECONDS
++                 + _WATCHDOG_SLACK_SECONDS)
++        watchdog = threading.Timer(limit, _terminate, args=(
++            run, f"Stopped by safety limits: the run exceeded the "
++                 f"{policy.max_duration_seconds}s duration limit."),
++            kwargs={"audit_action": "run.safety_stop"})
++        watchdog.daemon = True
++        watchdog.start()
+ 
+     # Read k6's human output (console.*, thresholds, checks summary) in a thread,
+     # so we don't block the metrics loop below. These feed the "Live run logs" panel.
+@@ -188,6 +408,7 @@ def _run_worker(run: RunState, content: str) -> None:
+     stderr_thread = threading.Thread(target=_pump_stderr, args=(run, proc), daemon=True)
+     stderr_thread.start()
+ 
++    checked_origins: set[str] = set()         # origins already checked on the allow-list
+     last_snapshot = 0.0
+     assert proc.stdout is not None
+     for line in proc.stdout:
+@@ -203,6 +424,17 @@ def _run_worker(run: RunState, content: str) -> None:
+         # k6 json output: {"type":"Point","metric":"http_req_duration","data":{...}}
+         if obj.get("type") == "Point":
+             run._agg.add_point(obj)
++            # ---- safety: runtime allow-list guard on the hosts actually hit ----
++            if policy.allowed_hosts and obj.get("metric") == "http_reqs":
++                url = ((obj.get("data") or {}).get("tags") or {}).get("url") or ""
++                host, port = safety.host_port(url)
++                origin = f"{host}:{port}"
++                if host and origin not in checked_origins:
++                    checked_origins.add(origin)
++                    if not safety.host_allowed(url, policy.allowed_hosts):
++                        _terminate(run, f"Stopped by safety limits: the script sent a "
++                                        f"request to {host}, which is not on the allow-list.",
++                                   audit_action="run.safety_stop")
+         # refresh the public snapshot at most ~4x/sec
+         now = time.time()
+         if now - last_snapshot > 0.25:
+@@ -210,12 +442,15 @@ def _run_worker(run: RunState, content: str) -> None:
+             last_snapshot = now
+ 
+     proc.wait()
++    if watchdog is not None:
++        watchdog.cancel()
+     stderr_thread.join(timeout=2)
+     run.snapshot = run._agg.snapshot()
+-    if run.status != "stopped":
+-        run.status = "finished" if proc.returncode in (0, 99) else "error"
+-        # k6 exits 99 when a threshold fails — that's a completed run, not a crash.
+-        if proc.returncode not in (0, 99):
+-            run.message = f"k6 exited {proc.returncode}. See the run logs for details."
++    # k6 exits 99 when a threshold fails — that's a completed run, not a crash.
++    if proc.returncode in (0, 99):
++        _finish(run, "finished")
++    else:
++        _finish(run, "error", f"k6 exited {proc.returncode}. See the run logs for details.")
+     _append_log(run, f"— k6 exited {proc.returncode} —")
+-    run.ended_at = time.time()
+\ No newline at end of file
++    if run.ended_at is None:
++        run.ended_at = time.time()
+diff --git a/src/perfagent/runner/store.py b/src/perfagent/runner/store.py
+new file mode 100644
+index 0000000..3e92a8e
+--- /dev/null
++++ b/src/perfagent/runner/store.py
+@@ -0,0 +1,271 @@
++"""Durable run state — the database side of the runner.
++
++The runner keeps a live RunState in memory for speed and mirrors it to the `runs`
++table: once when the run is created, about once a second while it runs (the
++"heartbeat"), and once when it ends. This module is that mirror, plus recovery:
++
++  - ``load``     rebuild a RunState from the table (a finished run after a restart).
++  - ``recover``  find runs that were in flight when their app process went away,
++                 mark them 'interrupted' (keeping the metrics they had), and stop a
++                 k6 process that was left behind — load must never keep firing with
++                 nothing watching it.
++
++Every write is best-effort: a database hiccup is logged and never breaks a run.
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import socket
++import time
++
++import psutil
++
++from perfagent.db import RunRow, get_session
++from perfagent.logging_config import get_logger
++
++_log = get_logger("perfagent.runs")
++
++ACTIVE = ("starting", "preparing", "running")
++TERMINAL = ("finished", "error", "stopped", "blocked", "interrupted")
++
++# A run whose owner we cannot check directly (another machine) is treated as
++# orphaned once it has not saved its state for this long.
++STALE_AFTER_SECONDS = 30.0
++
++INTERRUPTED_MESSAGE = ("The app restarted while this run was in progress. The run was "
++                       "stopped; the results up to that point are kept.")
++
++
++# ---------- who owns a run ----------
++
++def _process_started(pid: int) -> int:
++    try:
++        return int(psutil.Process(pid).create_time())
++    except (psutil.Error, OSError):
++        return 0
++
++
++_HOST = socket.gethostname()
++_OWNER = f"{_HOST}|{os.getpid()}|{_process_started(os.getpid())}"
++
++
++def owner_id() -> str:
++    """This app process: host|pid|process-start-time (the start time guards against
++    a recycled pid)."""
++    return _OWNER
++
++
++def _owner_state(owner: str) -> str:
++    """'me' | 'alive' | 'dead' | 'unknown' (another machine, or unreadable)."""
++    if owner == _OWNER:
++        return "me"
++    try:
++        host, pid_s, started_s = owner.split("|")
++        pid, started = int(pid_s), int(started_s)
++    except ValueError:
++        return "unknown"
++    if host != _HOST:
++        return "unknown"
++    if psutil.pid_exists(pid) and _process_started(pid) == started:
++        return "alive"
++    return "dead"
++
++
++# ---------- write ----------
++
++def _apply(row: RunRow, run, *, with_logs: bool = True) -> None:
++    row.status = run.status
++    row.message = run.message or ""
++    row.started_at = float(run.started_at or 0.0)
++    row.ended_at = float(run.ended_at or 0.0)
++    row.heartbeat_at = time.time()
++    row.snapshot_json = json.dumps(run.snapshot or {})
++    if with_logs:
++        row.logs_json = json.dumps(list(run.logs or []))
++    row.max_vus = int(run.max_vus or 0)
++    row.total_seconds = float(run.total_seconds or 0.0)
++    row.k6_pid = int(run.k6_pid or 0)
++    row.k6_started = float(run.k6_started or 0.0)
++
++
++def insert(run) -> bool:
++    """Create the run's row. Returns False if it could not be written."""
++    try:
++        with get_session() as s:
++            row = RunRow(
++                id=run.run_id, script_id=run.script_id or "", plan_id=run.plan_id or "",
++                tool=run.tool, target=run.target or "",
++                load_model_json=run.load_model_json or "", owner=_OWNER,
++            )
++            _apply(row, run)
++            s.add(row)
++            s.commit()
++        return True
++    except Exception as e:  # noqa: BLE001
++        _log.warning("runs.insert_failed", run_id=run.run_id, error=str(e))
++        return False
++
++
++def save(run, *, with_logs: bool = True) -> bool:
++    """Save the run's current state (the heartbeat). Returns True if the row asks
++    this run to stop (a stop requested from another process)."""
++    try:
++        with get_session() as s:
++            row = s.get(RunRow, run.run_id)
++            if row is None:
++                return False
++            _apply(row, run, with_logs=with_logs)
++            stop = bool(row.stop_requested)
++            s.commit()
++            return stop
++    except Exception as e:  # noqa: BLE001
++        _log.warning("runs.save_failed", run_id=run.run_id, error=str(e))
++        return False
++
++
++def request_stop(run_id: str) -> bool:
++    """Ask the process that owns an active run to stop it. True if it was active."""
++    try:
++        with get_session() as s:
++            row = s.get(RunRow, run_id)
++            if row is None or row.status not in ACTIVE:
++                return False
++            row.stop_requested = True
++            s.commit()
++            return True
++    except Exception as e:  # noqa: BLE001
++        _log.warning("runs.request_stop_failed", run_id=run_id, error=str(e))
++        return False
++
++
++# ---------- read ----------
++
++def _to_state(row: RunRow):
++    from perfagent.runner.k6_runner import RunState
++
++    def _json(text: str, default):
++        try:
++            return json.loads(text) if text else default
++        except json.JSONDecodeError:
++            return default
++
++    return RunState(
++        run_id=row.id, script_id=row.script_id, tool=row.tool, target=row.target,
++        status=row.status, started_at=row.started_at or 0.0,
++        ended_at=(row.ended_at or None), message=row.message or "",
++        load_model_json=row.load_model_json or "",
++        snapshot=_json(row.snapshot_json, {}), logs=_json(row.logs_json, []),
++        plan_id=row.plan_id or "", max_vus=row.max_vus or 0,
++        total_seconds=row.total_seconds or 0.0,
++        k6_pid=row.k6_pid or 0, k6_started=row.k6_started or 0.0,
++    )
++
++
++def load(run_id: str, local_ids: set[str] | frozenset[str] = frozenset()):
++    """Rebuild a RunState from the database, or None. An in-flight run whose owner
++    is gone is marked interrupted first."""
++    try:
++        with get_session() as s:
++            row = s.get(RunRow, run_id)
++            if row is None:
++                return None
++            if row.status in ACTIVE and _is_orphan(row, local_ids):
++                _interrupt(row)
++                s.commit()
++            return _to_state(row)
++    except Exception as e:  # noqa: BLE001
++        _log.warning("runs.load_failed", run_id=run_id, error=str(e))
++        return None
++
++
++def active(local_ids: set[str] | frozenset[str] = frozenset()) -> list[dict]:
++    """Runs in progress (after recovering orphans), newest first."""
++    recover(local_ids)
++    try:
++        with get_session() as s:
++            rows = (s.query(RunRow).filter(RunRow.status.in_(ACTIVE))
++                    .order_by(RunRow.created_at.desc()).all())
++            return [
++                {
++                    "run_id": r.id, "script_id": r.script_id, "plan_id": r.plan_id,
++                    "tool": r.tool, "target": r.target, "status": r.status,
++                    "started_at": r.started_at, "max_vus": r.max_vus,
++                    "total_seconds": r.total_seconds,
++                    "local": r.id in local_ids,
++                }
++                for r in rows
++            ]
++    except Exception as e:  # noqa: BLE001
++        _log.warning("runs.active_failed", error=str(e))
++        return []
++
++
++# ---------- recovery ----------
++
++def _is_orphan(row: RunRow, local_ids) -> bool:
++    if row.id in local_ids:
++        return False                               # running right here
++    state = _owner_state(row.owner or "")
++    if state in ("me", "dead"):
++        return True                                # this process has no such run / owner gone
++    stale = (time.time() - (row.heartbeat_at or 0.0)) > STALE_AFTER_SECONDS
++    return stale                                   # alive/unknown owner: trust the heartbeat
++
++
++def _looks_like_k6(proc: psutil.Process) -> bool:
++    try:
++        return "k6" in (proc.name() or "").lower()
++    except (psutil.Error, OSError):
++        return False
++
++
++def stop_leftover_process(pid: int, started: float) -> bool:
++    """Terminate the k6 process a dead app process left behind. Only if it is
++    provably the same process (same pid AND start time AND it is k6)."""
++    if not pid:
++        return False
++    try:
++        proc = psutil.Process(pid)
++        if abs(proc.create_time() - (started or 0.0)) > 2.0 or not _looks_like_k6(proc):
++            return False
++        proc.terminate()
++        _log.warning("runs.leftover_k6_stopped", pid=pid)
++        return True
++    except (psutil.Error, OSError):
++        return False
++
++
++def _interrupt(row: RunRow) -> None:
++    host = (row.owner or "").split("|")[0]
++    if host == _HOST:
++        stop_leftover_process(row.k6_pid or 0, row.k6_started or 0.0)
++    row.status = "interrupted"
++    row.message = INTERRUPTED_MESSAGE
++    row.ended_at = row.heartbeat_at or time.time()
++    _log.warning("runs.interrupted", run_id=row.id, target=row.target)
++
++
++def recover(local_ids: set[str] | frozenset[str] = frozenset()) -> int:
++    """Mark every orphaned in-flight run as interrupted. Returns how many."""
++    try:
++        with get_session() as s:
++            rows = s.query(RunRow).filter(RunRow.status.in_(ACTIVE)).all()
++            n = 0
++            for row in rows:
++                if _is_orphan(row, local_ids):
++                    _interrupt(row)
++                    n += 1
++            if n:
++                s.commit()
++            return n
++    except Exception as e:  # noqa: BLE001
++        _log.warning("runs.recover_failed", error=str(e))
++        return 0
++
++
++__all__ = [
++    "ACTIVE", "TERMINAL", "owner_id", "insert", "save", "request_stop", "load", "active",
++    "recover", "stop_leftover_process", "INTERRUPTED_MESSAGE", "STALE_AFTER_SECONDS",
++]
+diff --git a/src/perfagent/safety.py b/src/perfagent/safety.py
+new file mode 100644
+index 0000000..5091738
+--- /dev/null
++++ b/src/perfagent/safety.py
+@@ -0,0 +1,343 @@
++"""Safety rails on load — the active guards in front of every run.
++
++Four rules, all decided in code (never by the AI) and enforced at the lowest level
++(the runner), so the UI, the API and — later — the agent's own orchestration all go
++through the same gate:
++
++  1. Target allow-list   load may only be sent to approved hosts.
++  2. Load caps           a run may not exceed a maximum number of virtual users or a
++                         maximum duration. Both are read from the SCRIPT ITSELF with
++                         `k6 inspect`, not from the plan — scripts can be edited or
++                         uploaded, so the plan is not proof of what will run.
++  3. Concurrency cap     only so many runs at once.
++  4. Kill switch         one durable flag that stops every run in progress and
++                         refuses new ones until it is released.
++
++Fail closed: if a cap is configured and the script's real load cannot be determined,
++the run is refused.
++
++The allow-list scan of a script is a static check of the URLs written in it; the
++runner adds a runtime guard that stops a run the moment a request goes to a host
++that is not allowed (see runner/k6_runner.py).
++"""
++
++from __future__ import annotations
++
++import json
++import re
++import shutil
++import subprocess
++import tempfile
++from dataclasses import dataclass, field
++from pathlib import Path
++from urllib.parse import urlsplit
++
++from perfagent.config import Settings, get_settings
++from perfagent.db import AppStateRow, get_session
++from perfagent.logging_config import get_logger
++
++_log = get_logger("perfagent.safety")
++
++# Slack allowed on top of the duration cap: k6 adds a graceful-stop period (30s by
++# default) after the last stage, which is wind-down, not load.
++DURATION_GRACE_SECONDS = 60
++
++_KILL_SWITCH_KEY = "run_kill_switch"
++
++
++class RunBlocked(Exception):
++    """A run (or pre-flight) was refused by the safety rails."""
++
++    def __init__(self, reasons: list[str]):
++        super().__init__("; ".join(reasons))
++        self.reasons = reasons
++
++
++# ---------- policy ----------
++
++@dataclass(frozen=True)
++class Policy:
++    allowed_hosts: tuple[str, ...] = ()     # empty = any host
++    max_users: int = 0                      # 0 = no cap
++    max_duration_seconds: int = 0           # 0 = no cap
++    max_concurrent: int = 0                 # 0 = no limit
++
++    def to_dict(self) -> dict:
++        return {
++            "allowed_hosts": list(self.allowed_hosts),
++            "max_users": self.max_users,
++            "max_duration_seconds": self.max_duration_seconds,
++            "max_concurrent": self.max_concurrent,
++        }
++
++
++def get_policy(settings: Settings | None = None) -> Policy:
++    s = settings or get_settings()
++    hosts = tuple(h.strip().lower() for h in s.run_allowed_hosts.split(",") if h.strip())
++    return Policy(
++        allowed_hosts=hosts,
++        max_users=s.run_max_users,
++        max_duration_seconds=s.run_max_duration_seconds,
++        max_concurrent=s.run_max_concurrent,
++    )
++
++
++# ---------- hosts ----------
++
++def host_port(url: str) -> tuple[str, str]:
++    """('host', 'port') of a URL, lower-cased; port is '' when not given."""
++    try:
++        parts = urlsplit(url if "://" in url else "//" + url)
++        return (parts.hostname or "").lower(), str(parts.port or "")
++    except ValueError:
++        return "", ""
++
++
++def host_allowed(url: str, allowed: tuple[str, ...] | list[str]) -> bool:
++    """True if the URL's host is on the allow-list (an empty list allows any host).
++
++    An entry may be a host ("staging.example.com"), a host with a port
++    ("127.0.0.1:8000" — that port only) or a wildcard ("*.example.com" — any
++    sub-domain, not the bare domain).
++    """
++    if not allowed:
++        return True
++    host, port = host_port(url)
++    if not host:
++        return False
++    for entry in allowed:
++        entry = entry.strip().lower()
++        if not entry:
++            continue
++        e_host, e_port = entry, ""
++        # split a trailing :port (but leave bare IPv6 alone)
++        if entry.count(":") == 1:
++            e_host, e_port = entry.split(":")
++        if e_port and e_port != port:
++            continue
++        if e_host.startswith("*."):
++            if host.endswith(e_host[1:]):
++                return True
++        elif host == e_host:
++            return True
++    return False
++
++
++_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
++_LINE_COMMENT = re.compile(r"^\s*//.*$", re.M)
++_IMPORT_LINE = re.compile(r"^\s*import\b.*$", re.M)
++_URL = re.compile(r"https?://[A-Za-z0-9.\-]+(?::\d+)?", re.I)
++
++
++def script_urls(content: str) -> list[str]:
++    """The distinct http(s) origins written in a script (comments and module
++    imports ignored — an import fetches code, it does not send load)."""
++    text = _BLOCK_COMMENT.sub("", content or "")
++    text = _LINE_COMMENT.sub("", text)
++    text = _IMPORT_LINE.sub("", text)
++    seen: list[str] = []
++    for m in _URL.finditer(text):
++        u = m.group(0).lower()
++        if u not in seen:
++            seen.append(u)
++    return seen
++
++
++def check_target(url: str, policy: Policy | None = None) -> list[str]:
++    """Reasons the target is not allowed (empty list = allowed)."""
++    policy = policy or get_policy()
++    if host_allowed(url, policy.allowed_hosts):
++        return []
++    host, port = host_port(url)
++    shown = f"{host}:{port}" if port else (host or url or "(no target)")
++    return [f"the target host {shown} is not on the allow-list "
++            f"({', '.join(policy.allowed_hosts)})"]
++
++
++# ---------- what a script will really do ----------
++
++@dataclass
++class ScriptLoad:
++    """A script's real load, as k6 itself reports it."""
++
++    max_vus: int | None = None
++    total_seconds: float | None = None
++    error: str = ""
++
++    @property
++    def known(self) -> bool:
++        return self.max_vus is not None and self.total_seconds is not None
++
++
++_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ns|us|µs|ms|h|m|s)")
++_UNIT_SECONDS = {"ns": 1e-9, "us": 1e-6, "µs": 1e-6, "ms": 1e-3, "s": 1.0, "m": 60.0, "h": 3600.0}
++
++
++def parse_duration(text: str) -> float | None:
++    """Seconds in a k6/Go duration such as '1m31s', '2h', '500ms'. None if unparseable."""
++    text = (text or "").strip()
++    if not text:
++        return None
++    if text == "0":
++        return 0.0
++    parts = _DURATION_PART.findall(text)
++    if not parts or "".join(n + u for n, u in parts) != text:
++        return None
++    return sum(float(n) * _UNIT_SECONDS[u] for n, u in parts)
++
++
++def inspect_script_load(content: str, data_filename: str = "", data_content: str = "",
++                        timeout: float = 30.0) -> ScriptLoad:
++    """Ask k6 what the script will do: its peak VUs and total duration. No load is sent.
++
++    Uses `k6 inspect --execution-requirements`, which evaluates the script's options
++    and scenarios without running them.
++    """
++    from perfagent.runner.k6_binary import K6Unavailable, ensure_k6
++
++    try:
++        k6_path = ensure_k6()
++    except K6Unavailable as e:
++        return ScriptLoad(error=f"the load engine is not available: {e}")
++
++    tmpdir = tempfile.mkdtemp(prefix="perfagent_inspect_")
++    try:
++        script = Path(tmpdir) / "loadtest.js"
++        script.write_text(content, encoding="utf-8")
++        if data_filename and data_content:
++            (Path(tmpdir) / data_filename).write_text(data_content, encoding="utf-8")
++        try:
++            proc = subprocess.run(
++                [k6_path, "inspect", "--execution-requirements", str(script)],
++                cwd=tmpdir, capture_output=True, text=True, encoding="utf-8",
++                errors="replace", timeout=timeout,
++            )
++        except subprocess.TimeoutExpired:
++            return ScriptLoad(error=f"inspecting the script timed out after {int(timeout)}s")
++        if proc.returncode != 0:
++            tail = (proc.stderr or proc.stdout or "").strip()[-300:]
++            return ScriptLoad(error=f"the script could not be inspected: {tail}")
++        try:
++            data = json.loads(proc.stdout)
++        except json.JSONDecodeError:
++            return ScriptLoad(error="the script could not be inspected: unreadable k6 output")
++        max_vus = data.get("maxVUs")
++        total = parse_duration(str(data.get("totalDuration") or ""))
++        return ScriptLoad(
++            max_vus=int(max_vus) if isinstance(max_vus, (int, float)) else None,
++            total_seconds=total,
++            error="" if (isinstance(max_vus, (int, float)) and total is not None)
++            else "k6 did not report the script's peak users and duration",
++        )
++    except Exception as e:  # noqa: BLE001
++        return ScriptLoad(error=f"the script could not be inspected: {e}")
++    finally:
++        shutil.rmtree(tmpdir, ignore_errors=True)
++
++
++def check_load(load: ScriptLoad, policy: Policy | None = None) -> list[str]:
++    """Reasons the script's load breaks the caps (empty list = within limits).
++
++    Fail closed: with a cap configured, an unknown load is itself a reason.
++    """
++    policy = policy or get_policy()
++    if not policy.max_users and not policy.max_duration_seconds:
++        return []
++    if not load.known:
++        return ["the run's size could not be checked against the safety limits — "
++                + (load.error or "unknown script load")]
++    reasons: list[str] = []
++    if policy.max_users and load.max_vus > policy.max_users:
++        reasons.append(f"the script reaches {load.max_vus} virtual users; "
++                       f"the limit is {policy.max_users}")
++    if policy.max_duration_seconds and (
++            load.total_seconds > policy.max_duration_seconds + DURATION_GRACE_SECONDS):
++        reasons.append(f"the script runs for {int(round(load.total_seconds))}s "
++                       f"(including k6's wind-down); the limit is "
++                       f"{policy.max_duration_seconds}s")
++    return reasons
++
++
++# ---------- the gate used before a run starts ----------
++
++@dataclass
++class Precheck:
++    reasons: list[str] = field(default_factory=list)
++
++    @property
++    def ok(self) -> bool:
++        return not self.reasons
++
++
++def precheck_run(*, target: str, content: str, active_runs: int,
++                 policy: Policy | None = None) -> Precheck:
++    """The instant checks: kill switch, allow-list (target + script URLs), concurrency.
++
++    The load caps need k6 and are checked by the runner just before launch.
++    """
++    policy = policy or get_policy()
++    out = Precheck()
++
++    ks = kill_switch()
++    if ks["engaged"]:
++        out.reasons.append("the kill switch is on — runs are paused"
++                           + (f" ({ks['reason']})" if ks.get("reason") else ""))
++        return out                      # nothing else matters
++
++    if policy.allowed_hosts:
++        out.reasons.extend(check_target(target, policy))
++        for url in script_urls(content):
++            if not host_allowed(url, policy.allowed_hosts):
++                reason = f"the script sends requests to {url}, which is not on the allow-list"
++                if reason not in out.reasons:
++                    out.reasons.append(reason)
++
++    if policy.max_concurrent and active_runs >= policy.max_concurrent:
++        out.reasons.append(f"{active_runs} run{'s are' if active_runs != 1 else ' is'} "
++                           f"already in progress; the limit is {policy.max_concurrent}")
++    return out
++
++
++# ---------- kill switch (durable, shared by every app process) ----------
++
++def kill_switch() -> dict:
++    """{'engaged': bool, 'reason': str, 'since': iso-time|''}. Fails closed to
++    'not engaged' only if the flag has never been set; a read error is treated as
++    engaged, because the switch exists for emergencies."""
++    try:
++        with get_session() as s:
++            row = s.get(AppStateRow, _KILL_SWITCH_KEY)
++            if row is None:
++                return {"engaged": False, "reason": "", "since": ""}
++            data = json.loads(row.value_json or "{}")
++            return {
++                "engaged": bool(data.get("engaged")),
++                "reason": str(data.get("reason") or ""),
++                "since": row.updated_at.isoformat() if data.get("engaged") else "",
++            }
++    except Exception as e:  # noqa: BLE001
++        _log.error("safety.kill_switch_read_failed", error=str(e))
++        return {"engaged": True, "reason": "safety state could not be read", "since": ""}
++
++
++def set_kill_switch(engaged: bool, reason: str = "") -> dict:
++    """Turn the kill switch on or off. Stopping the runs in progress is done by the
++    caller (the runner), which also polls this flag on every heartbeat."""
++    with get_session() as s:
++        row = s.get(AppStateRow, _KILL_SWITCH_KEY)
++        value = json.dumps({"engaged": bool(engaged), "reason": reason.strip()[:200]})
++        if row is None:
++            s.add(AppStateRow(key=_KILL_SWITCH_KEY, value_json=value))
++        else:
++            row.value_json = value
++        s.commit()
++    _log.warning("safety.kill_switch", engaged=bool(engaged), reason=reason)
++    return kill_switch()
++
++
++__all__ = [
++    "RunBlocked", "Policy", "get_policy", "host_allowed", "host_port", "script_urls",
++    "check_target", "ScriptLoad", "parse_duration", "inspect_script_load", "check_load",
++    "Precheck", "precheck_run", "kill_switch", "set_kill_switch",
++    "DURATION_GRACE_SECONDS",
++]
+diff --git a/src/perfagent/web/index.html b/src/perfagent/web/index.html
+index 2024a34..7bff3b1 100644
+--- a/src/perfagent/web/index.html
++++ b/src/perfagent/web/index.html
+@@ -238,6 +238,15 @@
+   .dropzone:hover{background:#dcefe8;border-color:var(--teal)}
+   .dz-icon{font-size:18px}
+ 
++  /* ---- safety rails: kill switch + banners ---- */
++  .ks-btn{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:999px;
++        padding:6px 13px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
++  .ks-btn:hover{background:rgba(255,255,255,.24)}
++  .ks-btn.on{background:#b4342b;border-color:#e59a93}
++  .ks-banner{display:none;background:#b4342b;color:#fff;padding:10px 28px;font-size:13px;font-weight:500;
++        align-items:center;gap:12px;flex-wrap:wrap}
++  .ks-banner button{background:#fff;color:#b4342b;border:none;border-radius:8px;padding:5px 12px;font:inherit;
++        font-size:12.5px;font-weight:700;cursor:pointer}
+   .usage-chip{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.25);
+               border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;white-space:nowrap;
+               display:flex;align-items:center;gap:6px;letter-spacing:-.01em}
+@@ -295,12 +304,19 @@
+     <p>AI drafts the plan · you approve · code generates, runs &amp; reports</p>
+   </div>
+   <div style="flex:1"></div>
++  <button class="ks-btn" id="ksBtn" onclick="toggleKillSwitch()" title="Emergency stop: stops every run in progress and pauses new runs until you release it">🛑 Kill switch</button>
+   <div class="usage-chip" id="sessionUsage" title="Total AI tokens used this session (rough cost estimate)">
+     🪙 <span id="sessionTokens">0</span> tokens
+     <span id="sessionCost" style="opacity:.8"></span>
+   </div>
+ </div>
+ 
++<!-- KILL SWITCH BANNER (shown while runs are paused) -->
++<div class="ks-banner" id="ksBanner" role="alert">
++  <span id="ksBannerText">🛑 Kill switch is on — all runs are stopped and new runs are paused.</span>
++  <button onclick="toggleKillSwitch()">Allow runs again</button>
++</div>
++
+ <!-- STEPPER -->
+ <div class="stepper" id="stepper">
+   <div class="step" data-step="1"><div class="num">1</div><div><div class="lbl">Describe</div><div class="sub">target &amp; endpoints</div></div></div>
+@@ -312,6 +328,9 @@
+ 
+ <div class="wrap">
+ 
++  <!-- RECONNECT (a run is in progress that this page isn't showing) -->
++  <div class="note info" id="reconnectNote" style="display:none;margin:0 0 14px;align-items:center"></div>
++
+   <!-- ===== STEP 1: DESCRIBE ===== -->
+   <div class="panel show" id="panel1">
+     <div class="card" id="gitImportCard" style="padding:0">
+@@ -592,6 +611,7 @@
+         <button class="btn ghost" id="preflightBtn" onclick="doPreflight()" disabled>✈ Pre-flight check</button>
+         <button class="btn" id="runBtn" onclick="runScript()" disabled>▶ Run &amp; monitor live</button>
+       </div>
++      <p class="hint" id="safetyLine" style="margin:10px 0 0;display:none"></p>
+       <div class="note warn" id="runHint" style="margin-top:10px;display:none"></div>
+       <div class="note" id="validateResult" style="display:none"></div>
+       <div class="note" id="preflightResult" style="display:none"></div>
+@@ -2084,14 +2104,14 @@ async function runScript(){
+     if(!r.ok) throw new Error(j.detail||'run failed');
+     currentRunId=j.run_id; resetChart(); document.getElementById('runBtn').disabled=true;
+     document.getElementById('stopBtn').disabled=false; pollTimer=setInterval(pollRun,500);
+-  }catch(e){ rs.className='statusline err'; rs.textContent='Error: '+e.message; }
++  }catch(e){ rs.className='statusline err'; rs.textContent=(e.message||'').startsWith('Blocked')?e.message:('Error: '+e.message); refreshSafety(); }
+ }
+ async function pollRun(){
+   if(!currentRunId) return;
+   try{
+     const j=await (await fetch(`/api/runs/${currentRunId}`)).json();
+     const rs=document.getElementById('runStatus'); const pill=document.getElementById('runPill');
+-    pill.textContent=j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':j.status==='error'?'fail':'ghost');
++    pill.textContent=j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':(j.status==='error'||j.status==='blocked')?'fail':j.status==='interrupted'?'na':'ghost');
+     const s=j.snapshot||{}; const lat=s.latency||{}; window._lastSnap=s; window._lastElapsed=j.elapsed_s;
+     document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
+     document.getElementById('mReqs').textContent=s.requests??0;
+@@ -2117,11 +2137,82 @@ async function pollRun(){
+       clearInterval(pollTimer); pollTimer=null;
+       document.getElementById('runBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
+       if(j.status==='finished'){ rs.className='statusline ok'; rs.textContent='Run finished.'; loadReport(); }
+-      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent='Run stopped.'; loadReport(); }
++      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent=j.message||'Run stopped.'; loadReport(); }
++      else if(j.status==='interrupted'){ rs.className='statusline err'; rs.textContent=j.message||'Run interrupted.'; loadReport(); }
++      else if(j.status==='blocked'){ rs.className='statusline err'; rs.textContent=j.message||'Blocked by safety limits.'; }
+       else{ rs.className='statusline err'; rs.textContent='Run error: '+(j.message||'unknown'); }
++      refreshSafety();
+     }
+   }catch(e){}
+ }
++
++/* ---------- safety rails: limits, kill switch, reconnect ----------
++   The limits are enforced on the server (perfagent/safety.py); this only shows
++   them, drives the kill switch, and lets a refreshed page rejoin a live run. */
++let safetyState=null;
++async function refreshSafety(){
++  try{ safetyState=await (await fetch('/api/safety')).json(); renderSafety(); }catch(e){}
++}
++function renderSafety(){
++  const st=safetyState; if(!st) return;
++  const on=st.kill_switch.engaged;
++  const btn=document.getElementById('ksBtn');
++  btn.classList.toggle('on', on);
++  btn.textContent = on ? '🛑 Runs paused' : '🛑 Kill switch';
++  document.getElementById('ksBanner').style.display = on ? 'flex' : 'none';
++  document.getElementById('ksBannerText').textContent =
++    '🛑 Kill switch is on — all runs are stopped and new runs are paused.'+
++    (st.kill_switch.reason ? ' Reason: '+st.kill_switch.reason : '');
++  const p=st.policy, bits=[];
++  bits.push(p.allowed_hosts.length ? ('only '+p.allowed_hosts.join(', ')) : 'any host');
++  if(p.max_users) bits.push('up to '+p.max_users.toLocaleString()+' users');
++  if(p.max_duration_seconds) bits.push('up to '+(p.max_duration_seconds>=120 ? Math.round(p.max_duration_seconds/60)+' min' : p.max_duration_seconds+' s'));
++  if(p.max_concurrent) bits.push(p.max_concurrent+' run'+(p.max_concurrent===1?'':'s')+' at once');
++  const line=document.getElementById('safetyLine');
++  line.style.display='block';
++  line.textContent='🛡 Safety limits on every run: '+bits.join(' · ')+'. A run outside them is blocked.';
++}
++async function toggleKillSwitch(){
++  const on=!!(safetyState && safetyState.kill_switch.engaged);
++  let body;
++  if(!on){
++    const reason=prompt('Stop every run in progress and pause new runs?\n\nOptional: say why, so others know.','');
++    if(reason===null) return;
++    body={engaged:true, reason};
++  } else {
++    if(!confirm('Allow runs again?')) return;
++    body={engaged:false};
++  }
++  try{
++    const r=await fetch('/api/safety/kill-switch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
++    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'could not change the kill switch');
++    safetyState=j; renderSafety();
++  }catch(e){ alert(e.message); }
++}
++/* A run that is in progress but not on screen (page refreshed, or started elsewhere). */
++async function checkActiveRuns(){
++  const note=document.getElementById('reconnectNote');
++  try{
++    const j=await (await fetch('/api/runs/active')).json();
++    const run=(j.runs||[]).find(r=>r.run_id!==currentRunId);
++    if(!run || pollTimer){ note.style.display='none'; return; }
++    note.style.display='flex'; note.innerHTML='';
++    const t=document.createElement('span');
++    t.textContent='▶ A run is in progress against '+(run.target||'the target')+
++      (run.max_vus?(' ('+run.max_vus+' users)'):'')+'.';
++    const b=document.createElement('button'); b.className='btn sm'; b.style.marginLeft='12px';
++    b.textContent='View it live'; b.onclick=()=>reconnectRun(run.run_id);
++    note.appendChild(t); note.appendChild(b);
++  }catch(e){ note.style.display='none'; }
++}
++function reconnectRun(id){
++  document.getElementById('reconnectNote').style.display='none';
++  if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
++  currentRunId=id; resetChart(); goStep(4);
++  document.getElementById('stopBtn').disabled=false;
++  const rs=document.getElementById('runStatus'); rs.className='statusline'; rs.textContent='Reconnecting…';
++  pollTimer=setInterval(pollRun,500);
++}
+ async function stopRun(){ if(currentRunId){ try{await fetch(`/api/runs/${currentRunId}/stop`,{method:'POST'})}catch(e){} } }
+ 
+ /* ---------- report ---------- */
+@@ -2561,6 +2652,8 @@ loadRuns();
+ loadAudit();
+ refreshUsage();
+ initConversation();
++refreshSafety(); checkActiveRuns();
++setInterval(()=>{ refreshSafety(); checkActiveRuns(); }, 15000);
+ loadSlaProfiles();
+ loadTraces();
+ goStep(1);
+diff --git a/tests/test_safety_and_durable_runs.py b/tests/test_safety_and_durable_runs.py
+new file mode 100644
+index 0000000..3d3f1b6
+--- /dev/null
++++ b/tests/test_safety_and_durable_runs.py
+@@ -0,0 +1,510 @@
++"""Safety rails on load + durable run state.
++
++The runner is driven with a small fake k6 (a Python script that prints k6-style JSON
++points), so these tests run anywhere without the real engine. One test uses the real
++k6 if it is already on the machine.
++"""
++
++from __future__ import annotations
++
++import json
++import subprocess
++import sys
++import time
++import uuid
++
++import pytest
++
++from perfagent import safety
++from perfagent.config import Settings
++from perfagent.safety import Policy, RunBlocked, ScriptLoad
++
++# ---------------------------------------------------------------- fixtures ----
++
++FAKE_K6 = r'''
++import json, re, sys, time
++src = open(sys.argv[1], encoding="utf-8").read()
++secs = float(re.search(r"FAKE secs=([\d.]+)", src).group(1))
++urls = re.findall(r"FAKE url=(\S+)", src) or ["http://127.0.0.1:8000/x"]
++sys.stderr.write("fake k6 starting\n"); sys.stderr.flush()
++end = time.time() + secs
++while time.time() < end:
++    for u in urls:
++        points = (("http_reqs", 1), ("http_req_duration", 12.5), ("http_req_failed", 0))
++        for metric, value in points:
++            print(json.dumps({"type": "Point", "metric": metric,
++                              "data": {"time": "t", "value": value,
++                                       "tags": {"name": "x", "url": u, "status": "200"}}}),
++                  flush=True)
++    time.sleep(0.05)
++'''
++
++
++def script(secs=0.4, vus=2, total=None, urls=()):
++    """A 'script' the fake engine and the fake inspector both understand."""
++    total = secs if total is None else total
++    lines = [f"// FAKE secs={secs}", f"// LOAD vus={vus} total={total}"]
++    lines += [f"// FAKE url={u}" for u in urls]
++    return "\n".join(lines) + "\nexport default function () {}\n"
++
++
++def _fake_inspect(content, *_a, **_k):
++    import re
++    m = re.search(r"LOAD vus=(\d+) total=([\d.]+)", content)
++    if not m:
++        return ScriptLoad(error="not inspectable")
++    return ScriptLoad(max_vus=int(m.group(1)), total_seconds=float(m.group(2)))
++
++
++@pytest.fixture()
++def db(tmp_path, monkeypatch):
++    from sqlalchemy import create_engine
++
++    from perfagent.db import models as dbmodels
++    dbmodels._engine = None
++    eng = create_engine(f"sqlite:///{tmp_path / 't.db'}")
++    dbmodels.Base.metadata.create_all(eng)
++    monkeypatch.setattr(dbmodels, "get_engine", lambda *a, **k: eng)
++    yield tmp_path
++    eng.dispose()
++
++
++@pytest.fixture()
++def settings(monkeypatch):
++    from perfagent.runner import k6_runner
++    s = Settings(_env_file=None, run_heartbeat_seconds=0.05)
++    monkeypatch.setattr(safety, "get_settings", lambda: s)
++    monkeypatch.setattr(k6_runner, "get_settings", lambda: s)
++    return s
++
++
++@pytest.fixture()
++def runner(db, settings, monkeypatch):
++    """The runner wired to the fake engine, with a clean registry."""
++    from perfagent.runner import k6_runner
++    fake = db / "fake_k6.py"
++    fake.write_text(FAKE_K6, encoding="utf-8")
++    monkeypatch.setattr(k6_runner, "ensure_k6", lambda: sys.executable)
++    monkeypatch.setattr(k6_runner, "find_k6", lambda: sys.executable)
++    monkeypatch.setattr(k6_runner, "_k6_command",
++                        lambda _k6, path: [sys.executable, str(fake), str(path)])
++    monkeypatch.setattr(safety, "inspect_script_load", _fake_inspect)
++    k6_runner._RUNS.clear()
++    yield k6_runner
++    for r in list(k6_runner._RUNS.values()):        # never leave a child running
++        k6_runner._terminate(r, "test cleanup")
++        r._done.wait(5)
++    k6_runner._RUNS.clear()
++
++
++def _start(runner, content, target="http://127.0.0.1:8000", **kw):
++    return runner.start_run(run_id=uuid.uuid4().hex, script_id="s1", tool="k6",
++                            target=target, content=content, **kw)
++
++
++def _settle(run, timeout=15):
++    assert run._done.wait(timeout), f"run did not finish (status {run.status})"
++    return run
++
++
++def _wait_running(run, timeout=10):
++    end = time.time() + timeout
++    while time.time() < end and run.status != "running":
++        time.sleep(0.02)
++    assert run.status == "running", run.status
++
++
++# ------------------------------------------------------------ safety: unit ----
++
++def test_host_allow_list_matching():
++    assert safety.host_allowed("http://anything.example", ())            # empty = any
++    allowed = ("127.0.0.1:8000", "staging.example.com", "*.test.example.com")
++    assert safety.host_allowed("http://127.0.0.1:8000/x", allowed)
++    assert not safety.host_allowed("http://127.0.0.1:9000/x", allowed)   # other port
++    assert safety.host_allowed("https://STAGING.example.com/a?b=1", allowed)
++    assert safety.host_allowed("https://staging.example.com:8443", allowed)  # any port
++    assert safety.host_allowed("https://api.test.example.com", allowed)
++    assert not safety.host_allowed("https://test.example.com", allowed)  # bare domain
++    assert not safety.host_allowed("https://evil.com/staging.example.com", allowed)
++    assert not safety.host_allowed("https://staging.example.com.evil.com", allowed)
++    assert not safety.host_allowed("", allowed)
++
++
++def test_script_urls_ignore_comments_and_imports():
++    src = """// see https://k6.io/docs for help
++/* block https://block.example */
++import { uuidv4 } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
++const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8000';
++http.get('https://API.other.example:8443/x');
++"""
++    assert safety.script_urls(src) == ["http://127.0.0.1:8000", "https://api.other.example:8443"]
++
++
++@pytest.mark.parametrize("text,secs", [
++    ("1m31s", 91), ("30s", 30), ("2h", 7200), ("1h2m3.5s", 3723.5), ("500ms", 0.5), ("0", 0),
++])
++def test_parse_duration(text, secs):
++    assert safety.parse_duration(text) == pytest.approx(secs)
++
++
++def test_parse_duration_rejects_garbage():
++    assert safety.parse_duration("soon") is None and safety.parse_duration("") is None
++
++
++def test_load_caps():
++    p = Policy(max_users=100, max_duration_seconds=600)
++    assert safety.check_load(ScriptLoad(100, 600), p) == []
++    assert safety.check_load(ScriptLoad(100, 600 + safety.DURATION_GRACE_SECONDS), p) == []
++    r = safety.check_load(ScriptLoad(101, 600 + safety.DURATION_GRACE_SECONDS + 1), p)
++    assert len(r) == 2 and "101 virtual users" in r[0] and "limit is 600s" in r[1]
++
++
++def test_load_caps_fail_closed_when_load_is_unknown():
++    r = safety.check_load(ScriptLoad(error="could not inspect"), Policy(max_users=10))
++    assert len(r) == 1 and "could not be checked" in r[0]
++    # no caps configured -> nothing to check, so an unknown load is fine
++    assert safety.check_load(ScriptLoad(error="x"), Policy()) == []
++
++
++def test_kill_switch_is_durable(db):
++    assert safety.kill_switch()["engaged"] is False
++    st = safety.set_kill_switch(True, "incident 42")
++    assert st["engaged"] and st["reason"] == "incident 42" and st["since"]
++    assert safety.kill_switch()["engaged"] is True              # read back from the DB
++    assert safety.set_kill_switch(False)["engaged"] is False
++
++
++def test_precheck(db):
++    p = Policy(allowed_hosts=("127.0.0.1",), max_concurrent=1)
++    ok = safety.precheck_run(target="http://127.0.0.1:8000", content=script(),
++                             active_runs=0, policy=p)
++    assert ok.ok
++    bad = safety.precheck_run(target="http://prod.example.com",
++                              content="http.get('http://other.example/x')", active_runs=1, policy=p)
++    assert len(bad.reasons) == 3
++    safety.set_kill_switch(True)
++    ks = safety.precheck_run(target="http://127.0.0.1", content="", active_runs=0, policy=p)
++    assert len(ks.reasons) == 1 and "kill switch" in ks.reasons[0]
++
++
++def test_inspect_with_the_real_engine_if_present():
++    from perfagent.runner.k6_binary import find_k6
++    if find_k6() is None:
++        pytest.skip("k6 is not on this machine yet")
++    load = safety.inspect_script_load(
++        "import http from 'k6/http';\n"
++        "export const options = { vus: 7, duration: '45s' };\n"
++        "export default function () { http.get('http://127.0.0.1:8000/'); }\n")
++    assert load.known and load.max_vus == 7 and 45 <= load.total_seconds <= 90
++    assert not safety.inspect_script_load("this is not javascript (").known
++
++
++# ------------------------------------------------------ runner: durability ----
++
++def test_run_is_saved_and_survives_a_restart(runner):
++    run = _settle(_start(runner, script(secs=0.5), plan_id="p1"))
++    assert run.status == "finished" and run.snapshot["requests"] > 0
++    assert run.max_vus == 2 and run.k6_pid > 0
++
++    runner._RUNS.clear()                              # "restart": memory is gone
++    again = runner.get_run(run.run_id)
++    assert again is not None and again is not run
++    assert again.status == "finished" and again.plan_id == "p1"
++    assert again.snapshot["requests"] == run.snapshot["requests"]
++    assert any("fake k6 starting" in line for line in again.logs)
++    assert again.ended_at and again.max_vus == 2
++    assert runner.get_run("nope") is None
++
++
++def test_state_is_saved_while_running(runner):
++    from perfagent.db import RunRow, get_session
++    run = _start(runner, script(secs=3))
++    _wait_running(run)
++    time.sleep(0.5)                                   # a few heartbeats
++    with get_session() as s:
++        row = s.get(RunRow, run.run_id)
++        assert row.status == "running" and row.k6_pid == run.k6_pid
++        assert json.loads(row.snapshot_json).get("requests", 0) > 0
++        assert time.time() - row.heartbeat_at < 2
++    assert [r["run_id"] for r in runner.active_runs()] == [run.run_id]
++    assert runner.stop_run(run.run_id)
++    _settle(run)
++    assert run.status == "stopped" and run.message == "Stopped by user."
++    assert runner.active_runs() == []
++
++
++def _orphan_row(owner, heartbeat_age=0.0, pid=0, started=0.0):
++    from perfagent.db import RunRow, get_session
++    rid = uuid.uuid4().hex
++    with get_session() as s:
++        s.add(RunRow(id=rid, status="running", target="http://x", owner=owner,
++                     heartbeat_at=time.time() - heartbeat_age, started_at=time.time() - 5,
++                     snapshot_json=json.dumps({"requests": 42}), k6_pid=pid, k6_started=started))
++        s.commit()
++    return rid
++
++
++def test_runs_orphaned_by_a_dead_process_are_interrupted(runner):
++    from perfagent.runner import store
++    host = store.owner_id().split("|")[0]
++    dead = _orphan_row(f"{host}|999999|1")                       # that process is gone
++    elsewhere_fresh = _orphan_row("other-host|1|1", heartbeat_age=1)
++    elsewhere_stale = _orphan_row("other-host|1|1", heartbeat_age=store.STALE_AFTER_SECONDS + 5)
++
++    assert runner.recover_interrupted_runs() == 2
++    r = runner.get_run(dead)
++    assert r.status == "interrupted" and r.snapshot == {"requests": 42} and r.ended_at
++    assert "restarted" in r.message
++    assert runner.get_run(elsewhere_stale).status == "interrupted"
++    assert runner.get_run(elsewhere_fresh).status == "running"   # still owned and alive
++    assert [a["run_id"] for a in runner.active_runs()] == [elsewhere_fresh]
++
++
++def test_get_run_recovers_lazily(runner):
++    from perfagent.runner import store
++    rid = _orphan_row(store.owner_id())        # "ours", but this process has no such run
++    assert runner.get_run(rid).status == "interrupted"
++
++
++def test_leftover_engine_process_is_stopped_only_if_it_is_provably_ours(runner, monkeypatch):
++    import psutil
++
++    from perfagent.runner import store
++    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
++    try:
++        started = psutil.Process(child.pid).create_time()
++        assert not store.stop_leftover_process(child.pid, started)        # not k6 -> untouched
++        monkeypatch.setattr(store, "_looks_like_k6", lambda _p: True)
++        assert not store.stop_leftover_process(child.pid, started - 100)  # pid reused -> untouched
++        assert child.poll() is None
++        assert store.stop_leftover_process(child.pid, started)            # same process -> stopped
++        child.wait(10)
++        assert not store.stop_leftover_process(0, 0)
++    finally:
++        if child.poll() is None:
++            child.kill()
++
++
++# ---------------------------------------------------------- runner: safety ----
++
++def test_run_over_the_caps_is_blocked_before_any_load(runner, settings):
++    settings.run_max_users = 10
++    run = _settle(_start(runner, script(vus=50)))
++    assert run.status == "blocked" and "50 virtual users" in run.message
++    assert run.k6_pid == 0 and run.snapshot == {}                # the engine never started
++    assert runner.get_run(run.run_id).status == "blocked"
++
++    settings.run_max_users, settings.run_max_duration_seconds = 0, 60
++    run = _settle(_start(runner, script(total=600)))
++    assert run.status == "blocked" and "limit is 60s" in run.message
++
++
++def test_unknown_load_is_blocked_when_a_cap_is_set(runner, settings):
++    run = _settle(_start(runner, "// FAKE secs=0.2\n"))          # the inspector can't read it
++    assert run.status == "blocked" and "could not be checked" in run.message
++    settings.run_max_users = settings.run_max_duration_seconds = 0
++    assert _settle(_start(runner, "// FAKE secs=0.2\n")).status == "finished"
++
++
++def test_allow_list_blocks_target_and_script_urls(runner, settings):
++    settings.run_allowed_hosts = "127.0.0.1"
++    with pytest.raises(RunBlocked) as e:
++        _start(runner, script(), target="http://prod.example.com")
++    assert "prod.example.com" in e.value.reasons[0]
++    with pytest.raises(RunBlocked):
++        _start(runner, script() + "http.get('http://other.example/x');")
++    assert runner._RUNS == {} and runner.active_runs() == []     # nothing was started
++    assert _settle(_start(runner, script())).status == "finished"
++
++
++def test_request_to_a_host_off_the_allow_list_stops_the_run(runner, settings):
++    settings.run_allowed_hosts = "127.0.0.1"
++    # the URL is not written in the script, so only the runtime guard can catch it
++    run = _settle(_start(runner, script(secs=20, urls=["http://127.0.0.1:8000/a",
++                                                       "http://sneaky.example/b"])))
++    assert run.status == "stopped" and "sneaky.example" in run.message
++    assert (run.ended_at - run.started_at) < 10                  # stopped early, not after 20s
++
++
++def test_concurrency_cap(runner, settings):
++    settings.run_max_concurrent = 1
++    first = _start(runner, script(secs=5))
++    with pytest.raises(RunBlocked) as e:
++        _start(runner, script())
++    assert "already in progress" in e.value.reasons[0]
++    runner.stop_run(first.run_id)
++    _settle(first)
++    assert _settle(_start(runner, script())).status == "finished"   # slot is free again
++
++
++def test_kill_switch_blocks_new_runs_and_stops_live_ones(runner):
++    run = _start(runner, script(secs=20))
++    _wait_running(run)
++    safety.set_kill_switch(True, "incident")           # only the flag: the heartbeat must act
++    _settle(run)
++    assert run.status == "stopped" and run.message == "Stopped by the kill switch."
++    with pytest.raises(RunBlocked) as e:
++        _start(runner, script())
++    assert "kill switch" in e.value.reasons[0] and "incident" in e.value.reasons[0]
++    safety.set_kill_switch(False)
++    assert _settle(_start(runner, script())).status == "finished"
++
++
++def test_stop_all_runs(runner):
++    a, b = _start(runner, script(secs=20)), _start(runner, script(secs=20))
++    _wait_running(a)
++    _wait_running(b)
++    assert runner.stop_all_runs("Stopped by the kill switch.") == 2
++    _settle(a)
++    _settle(b)
++    assert a.status == b.status == "stopped"
++
++
++def test_stop_requested_from_another_process_is_honoured(runner):
++    from perfagent.runner import store
++    run = _start(runner, script(secs=20))
++    _wait_running(run)
++    assert store.request_stop(run.run_id)              # what a different app process would do
++    _settle(run)
++    assert run.status == "stopped"
++    assert not store.request_stop(run.run_id)          # already over
++
++
++def test_watchdog_stops_a_run_that_outlives_the_duration_cap(runner, settings, monkeypatch):
++    settings.run_max_duration_seconds = 1
++    monkeypatch.setattr(safety, "DURATION_GRACE_SECONDS", 0)
++    monkeypatch.setattr(runner, "_WATCHDOG_SLACK_SECONDS", 0)
++    # claims 1s (passes the pre-check) but actually keeps going for 30s
++    run = _settle(_start(runner, script(secs=30, total=1)))
++    assert run.status == "stopped" and "duration limit" in run.message
++    assert (run.ended_at - run.started_at) < 15
++
++
++def test_stop_before_the_engine_starts(runner, monkeypatch):
++    gate = __import__("threading").Event()
++
++    def slow_inspect(content, *a, **k):
++        gate.wait(5)
++        return _fake_inspect(content)
++    monkeypatch.setattr(safety, "inspect_script_load", slow_inspect)
++    run = _start(runner, script(secs=20))
++    assert runner.stop_run(run.run_id)
++    gate.set()
++    _settle(run)
++    assert run.status == "stopped" and run.k6_pid == 0           # never launched
++
++
++# --------------------------------------------------------------------- API ----
++
++@pytest.fixture()
++def client(runner, monkeypatch):
++    from fastapi.testclient import TestClient
++
++    from perfagent.api import app as appmod
++
++    def _no_llm(*_a, **_k):                 # reports fall back to the deterministic text
++        raise ValueError("no LLM in tests")
++    monkeypatch.setattr(appmod, "build_provider", _no_llm)
++    return TestClient(appmod.app)
++
++
++def _upload(client, content, target="http://127.0.0.1:8000"):
++    r = client.post("/api/scripts/upload", json={"content": content, "target_base_url": target})
++    assert r.status_code == 200
++    return r.json()["script_id"]
++
++
++def _wait_api(client, run_id, timeout=15):
++    end = time.time() + timeout
++    while time.time() < end:
++        j = client.get(f"/api/runs/{run_id}").json()
++        if j["status"] not in ("starting", "preparing", "running"):
++            return j
++        time.sleep(0.05)
++    raise AssertionError("run did not finish")
++
++
++def test_api_safety_state_and_blocked_run(client, settings):
++    st = client.get("/api/safety").json()
++    assert st["policy"]["max_users"] == 1000 and st["kill_switch"]["engaged"] is False
++    assert st["active_runs"] == 0
++
++    settings.run_allowed_hosts = "127.0.0.1"
++    sid = _upload(client, script(), target="http://prod.example.com")
++    r = client.post(f"/api/scripts/{sid}/run")
++    assert r.status_code == 403 and r.json()["detail"].startswith("Blocked by safety limits")
++    assert client.get("/api/runs/active").json()["runs"] == []
++    actions = [e["action"] for e in client.get("/api/audit").json()["events"]]
++    assert "run.blocked" in actions and "run.started" not in actions
++
++
++def test_api_preflight_respects_the_allow_list(client, settings):
++    settings.run_allowed_hosts = "127.0.0.1"
++    body = {"load_model": {
++        "target_base_url": "http://prod.example.com",
++        "scenarios": [{"name": "s", "steps": [{"name": "x", "path": "/"}]}],
++        "load_profile": {"stages": [{"duration_seconds": 1, "target_users": 1}]}}}
++    r = client.post("/api/preflight", json=body)
++    assert r.status_code == 403 and "allow-list" in r.json()["detail"]
++
++
++def test_api_kill_switch_stops_runs_and_is_audited(client):
++    sid = _upload(client, script(secs=20))
++    rid = client.post(f"/api/scripts/{sid}/run").json()["run_id"]
++    end = time.time() + 10
++    while time.time() < end and client.get(f"/api/runs/{rid}").json()["status"] != "running":
++        time.sleep(0.05)
++    assert [r["run_id"] for r in client.get("/api/runs/active").json()["runs"]] == [rid]
++
++    j = client.post("/api/safety/kill-switch", json={"engaged": True, "reason": "drill"}).json()
++    assert j["stopped"] == 1 and j["kill_switch"]["engaged"] is True
++    assert _wait_api(client, rid)["status"] == "stopped"
++    assert client.post(f"/api/scripts/{sid}/run").status_code == 403
++
++    j = client.post("/api/safety/kill-switch", json={"engaged": False}).json()
++    assert j["kill_switch"]["engaged"] is False
++    actions = [e["action"] for e in client.get("/api/audit").json()["events"]]
++    for a in ("safety.kill_switch_on", "run.safety_stop", "safety.kill_switch_off"):
++        assert a in actions
++
++
++def test_report_of_a_stopped_run_is_never_a_pass(client):
++    """Fail closed: a run cut short measured only part of the test."""
++    sid = _upload(client, script(secs=20))
++    rid = client.post(f"/api/scripts/{sid}/run").json()["run_id"]
++    end = time.time() + 10
++    while time.time() < end:
++        if client.get(f"/api/runs/{rid}").json()["snapshot"].get("requests"):
++            break
++        time.sleep(0.05)
++    assert client.post(f"/api/runs/{rid}/stop").status_code == 200
++    rep = client.get(f"/api/runs/{rid}/report").json()
++    v = rep["verdict"]
++    assert v["incomplete"] is True and v["overall_passed"] is None
++    assert v["incomplete_reason"] == "Stopped by user"
++    assert all(c["passed"] for c in v["checks"])              # the checks themselves passed
++    assert "inconclusive" in rep["narrative"]["headline"].lower()
++    assert rep["snapshot"]["requests"] > 0
++
++
++def test_report_works_after_a_restart_and_a_finished_run_can_pass(client, runner):
++    sid = _upload(client, script(secs=0.5))
++    rid = client.post(f"/api/scripts/{sid}/run").json()["run_id"]
++    assert _wait_api(client, rid)["status"] == "finished"
++    runner._RUNS[rid]._done.wait(5)
++    runner._RUNS.clear()                                       # "restart"
++    j = client.get(f"/api/runs/{rid}").json()
++    assert j["status"] == "finished" and j["snapshot"]["requests"] > 0 and j["max_vus"] == 2
++    rep = client.get(f"/api/runs/{rid}/report")
++    assert rep.status_code == 200
++    verdict = rep.json()["verdict"]
++    assert verdict["overall_passed"] is True and "incomplete" not in verdict
++
++
++def test_blocked_run_has_no_report(client, settings):
++    settings.run_max_users = 1
++    sid = _upload(client, script(vus=5))
++    rid = client.post(f"/api/scripts/{sid}/run").json()["run_id"]
++    assert _wait_api(client, rid)["status"] == "blocked"
++    r = client.get(f"/api/runs/{rid}/report")
++    assert r.status_code == 400 and "blocked" in r.json()["detail"]
+diff --git a/uv.lock b/uv.lock
+index ac6093a..100dae5 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -2065,6 +2065,7 @@ dependencies = [
+     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+     { name = "openai" },
++    { name = "psutil" },
+     { name = "pydantic" },
+     { name = "pydantic-settings" },
+     { name = "python-multipart" },
+@@ -2097,6 +2098,7 @@ requires-dist = [
+     { name = "locust", marker = "extra == 'run'", specifier = ">=2.29" },
+     { name = "numpy", specifier = ">=1.26" },
+     { name = "openai", specifier = ">=1.40" },
++    { name = "psutil", specifier = ">=5.9" },
+     { name = "pydantic", specifier = ">=2.7,<3" },
+     { name = "pydantic-settings", specifier = ">=2.3,<3" },
+     { name = "python-multipart", specifier = ">=0.0.32" },
+-- 
+2.43.0
+

@@ -1,0 +1,3116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Performance Testing Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#16201c; --muted:#6a7570; --line:#e7e9e5; --bg:#f4f6f4; --card:#ffffff;
+    --teal:#0f7a5f; --teal-d:#0a5a46; --teal-l:#e8f5ef; --teal-ring:#b3e2d2;
+    --amber:#9a6412; --amber-l:#fcf2dd; --amber-line:#ecd29c;
+    --red:#b4342b; --red-l:#fcebe8; --blue:#2563a8; --blue-l:#e9f0f9;
+    --shadow-sm:0 1px 2px rgba(16,32,26,.05);
+    --shadow:0 1px 3px rgba(16,32,26,.06), 0 6px 20px rgba(16,32,26,.05);
+    --shadow-lg:0 10px 40px rgba(16,32,26,.12);
+    --radius:14px; --radius-sm:10px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+       color:var(--ink);background:var(--bg);font-size:14px;line-height:1.55;
+       -webkit-font-smoothing:antialiased;letter-spacing:-0.01em;}
+  /* ---- info tooltip (ℹ️ what's this?) ---- */
+  .infohint{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+        border-radius:50%;background:var(--teal-l);color:var(--teal-d);font-size:10px;font-weight:700;
+        cursor:help;margin-left:6px;position:relative;border:1px solid var(--teal-ring);font-style:normal}
+  .infohint:hover::after{content:attr(data-tip);position:absolute;left:50%;bottom:140%;transform:translateX(-50%);
+        background:#16201c;color:#fff;padding:8px 11px;border-radius:8px;font-size:11.5px;font-weight:400;
+        line-height:1.45;width:max-content;max-width:260px;white-space:normal;z-index:3000;
+        box-shadow:0 6px 20px rgba(0,0,0,.25);letter-spacing:0;text-align:left}
+  .infohint:hover::before{content:'';position:absolute;left:50%;bottom:140%;transform:translateX(-50%) translateY(6px);
+        border:5px solid transparent;border-top-color:#16201c;z-index:3000}
+  a{color:var(--teal)}
+  .topbar{background:linear-gradient(100deg,#0f6e56,#0a5343);color:#fff;padding:14px 28px;
+          display:flex;align-items:center;gap:12px;}
+  .topbar .logo{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.16);
+                display:flex;align-items:center;justify-content:center;font-size:16px;}
+  .topbar h1{margin:0;font-size:16px;font-weight:650;letter-spacing:.1px}
+  .topbar p{margin:0;font-size:12px;opacity:.85}
+
+  /* stepper */
+  .stepper{display:flex;gap:6px;max-width:1120px;margin:20px auto 0;padding:0 24px;flex-wrap:wrap}
+  .step{flex:1;min-width:130px;display:flex;align-items:center;gap:10px;padding:10px 12px;
+        background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+        opacity:.55;transition:.15s}
+  .step.active{opacity:1;border-color:var(--teal-ring);background:var(--teal-l)}
+  .step.done{opacity:1}
+  .step .num{width:26px;height:26px;border-radius:50%;background:#eef0ee;color:var(--muted);
+             display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:none}
+  .step.active .num{background:var(--teal);color:#fff}
+  .step.done .num{background:var(--teal-l);color:var(--teal-d);border:1px solid var(--teal-ring)}
+  .step .lbl{font-size:12.5px;font-weight:600}
+  .step .sub{font-size:11px;color:var(--muted);font-weight:500}
+
+  .wrap{max-width:1120px;margin:20px auto 60px;padding:0 24px}
+  .panel{display:none}
+  .panel.show{display:block;animation:fade .2s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;
+        box-shadow:var(--shadow);margin-bottom:18px}
+  .card h2{margin:0 0 4px;font-size:16px;font-weight:650}
+  .card .hint{color:var(--muted);font-size:12.5px;margin:0 0 16px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+
+  label{display:block;font-size:12px;color:var(--muted);font-weight:600;margin:0 0 5px}
+  input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+        font-size:13.5px;font-family:inherit;background:#fff;color:var(--ink);transition:.12s}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-ring)}
+  .field{margin-bottom:14px}
+
+  .btn{display:inline-flex;align-items:center;gap:7px;background:var(--teal);color:#fff;border:none;
+       padding:11px 18px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;transition:.12s}
+  .btn:hover{background:var(--teal-d)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.ghost{background:#fff;color:var(--teal-d);border:1px solid var(--teal-ring)}
+  .btn.ghost:hover{background:var(--teal-l)}
+  .btn.amber{background:var(--amber)}.btn.amber:hover{filter:brightness(.95)}
+  .btn.sm{padding:7px 12px;font-size:12.5px}
+  .btn.danger{background:var(--red-l);color:var(--red);border:1px solid #f0c8c3}
+  .btn.danger:hover{background:#f7ddd9}
+  .btnrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .spacer{flex:1}
+
+  .endpoint{display:grid;grid-template-columns:96px 1fr 1.3fr 34px;gap:8px;margin-bottom:8px}
+  .endpoint input,.endpoint select{margin:0}
+  .iconbtn{border:none;border-radius:9px;cursor:pointer;color:var(--red);
+           background:var(--red-l);font-size:15px;line-height:1}
+  .iconbtn:hover{background:#f7ddd9}
+
+  .dz{border:1.5px dashed var(--teal-ring);border-radius:12px;padding:14px;text-align:center;
+      background:var(--teal-l);cursor:pointer;transition:.12s;font-size:13px;color:var(--teal-d)}
+  .dz:hover{background:#dcefe8}
+  .note{font-size:12.5px;border-radius:10px;padding:10px 13px;margin-top:10px;display:flex;gap:8px;align-items:flex-start}
+  .note.info{background:var(--blue-l);color:#1d4e82;border:1px solid #c9dcf0}
+  .note.ok{background:var(--teal-l);color:var(--teal-d);border:1px solid var(--teal-ring)}
+  .note.warn{background:var(--amber-l);color:var(--amber);border:1px solid var(--amber-line)}
+  .note.err{background:var(--red-l);color:var(--red);border:1px solid #f0c8c3}
+  code.k{background:#eef1ee;padding:1px 6px;border-radius:5px;font-size:12px;font-family:ui-monospace,Menlo,monospace}
+
+  /* plan editor */
+  .scn{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px;background:#fcfcfb}
+  .scn-head{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+  .scn-head input.name{font-weight:650;font-size:14px}
+  .weightwrap{display:flex;align-items:center;gap:8px;min-width:170px}
+  .weightwrap input[type=range]{accent-color:var(--teal)}
+  .wbadge{font-size:11px;font-weight:700;color:var(--teal-d);background:var(--teal-l);
+          border:1px solid var(--teal-ring);border-radius:999px;padding:2px 8px;white-space:nowrap}
+  .stepline{display:grid;grid-template-columns:90px 1fr 1.1fr 30px;gap:7px;margin-bottom:6px;align-items:center}
+  .stepline input,.stepline select{margin:0;font-size:12.5px;padding:7px 9px}
+  .mini{font-size:11px;color:var(--muted);margin:10px 0 4px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+  .thr{display:grid;grid-template-columns:1fr 70px 1fr 30px;gap:7px;margin-bottom:6px;align-items:center}
+  .thr input,.thr select{margin:0;font-size:12.5px;padding:7px 9px}
+  .toggle{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+
+  /* script */
+  pre{background:#10211b;color:#cfe7dd;padding:16px;border-radius:12px;overflow:auto;font-size:12px;
+      line-height:1.6;max-height:440px;font-family:ui-monospace,Menlo,Consolas,monospace;margin:0}
+  pre .kw{color:#7fd6b4}pre .str{color:#e6c07b}pre .com{color:#6b8277}
+
+  /* metrics */
+  .tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:4px 0 16px}
+  .tile{background:#fcfcfb;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .tile .v{font-size:22px;font-weight:750;color:var(--teal-d);letter-spacing:-.3px}
+  .tile .l{font-size:11px;color:var(--muted);font-weight:600;margin-top:2px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700}
+  .pill.pass{background:var(--teal-l);color:var(--teal-d)}
+  .pill.fail{background:var(--red-l);color:var(--red)}
+  .pill.na{background:var(--amber-l);color:var(--amber)}
+  .pill.ghost{background:#eef0ee;color:var(--muted)}
+  .verdict-hero{display:flex;align-items:center;gap:14px;padding:16px 18px;border-radius:14px;margin-bottom:14px}
+  .verdict-hero.pass{background:var(--teal-l);border:1px solid var(--teal-ring)}
+  .verdict-hero.fail{background:var(--red-l);border:1px solid #f0c8c3}
+  .verdict-hero.na{background:var(--amber-l);border:1px solid var(--amber-line)}
+  .verdict-hero .big{font-size:20px}
+  .statusline{font-size:12.5px;color:var(--muted);min-height:18px;margin-top:8px}
+  .statusline.ok{color:var(--teal-d)}.statusline.err{color:var(--red)}
+  .histrow td{font-size:12.5px}
+  details summary{cursor:pointer;font-size:12.5px;color:var(--teal-d);font-weight:600}
+  @media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr}.tiles{grid-template-columns:repeat(3,1fr)}
+    .stepper{flex-direction:column}}
+  .modeswitch{display:inline-flex;gap:4px;background:#eef0ee;border-radius:10px;padding:4px;margin-bottom:16px}
+  .modebtn{border:none;background:transparent;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;
+           color:#6b7280;cursor:pointer;transition:.12s;font-family:inherit}
+  .modebtn.active{background:#fff;color:#0a5343;box-shadow:0 1px 2px rgba(20,30,26,.08)}
+
+  /* ---- review step: summary first, details on demand ---- */
+  .modeswitch{flex-wrap:wrap}
+  .rv-trust{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 2px}
+  .rv-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;border-radius:999px;
+        padding:3px 10px;background:#eef0ee;color:var(--muted);cursor:default}
+  .rv-chip.ok{background:var(--teal-l);color:var(--teal-d)}
+  .rv-chip.warn{background:var(--amber-l);color:var(--amber)}
+  .rv-sec{border-top:1px solid var(--line);margin-top:18px;padding-top:16px}
+  .rv-sec h3{margin:0 0 10px;font-size:14.5px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:9px;letter-spacing:-.01em}
+  .rv-n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;
+        background:var(--teal);color:#fff;font-size:12px;font-weight:700;flex:none}
+  .rv-opt{font-size:11.5px;font-weight:500;color:var(--muted)}
+  .rv-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .rv-grid .field{margin-bottom:4px}
+  .rv-shape{font-size:12px;color:var(--muted);margin:6px 0 2px}
+  .rv-more{margin-top:10px;font-size:13px}
+  .rv-more>summary{cursor:pointer;color:var(--teal-d);font-weight:600;font-size:12.5px;user-select:none}
+  .rv-actions{position:sticky;bottom:0;z-index:5;background:#fff;
+        border-top:1px solid var(--line);margin:18px -22px -22px;padding:12px 22px;border-radius:0 0 var(--radius) var(--radius);
+        box-shadow:0 -6px 14px -10px rgba(20,30,26,.25)}
+  .rv-actions-row{display:flex;align-items:center;gap:12px}
+  .rv-actions .statusline{min-height:0;margin:0 0 6px;text-align:right}
+  .rv-actions .statusline:empty{display:none}
+  /* a step: one quiet line; its details open on click */
+  .stp{border:1px solid var(--line);border-radius:10px;background:#fff;margin-bottom:6px;overflow:hidden}
+  .stp.open{border-color:var(--teal-ring);box-shadow:0 1px 6px rgba(20,30,26,.06)}
+  .stp-head{display:flex;align-items:center;gap:9px;padding:8px 10px;cursor:pointer;user-select:none}
+  .stp-head:hover{background:#f7faf8}
+  .stp-chev{color:var(--muted);font-size:11px;width:12px;transition:transform .15s;flex:none}
+  .stp.open .stp-chev{transform:rotate(90deg)}
+  .stp-m{font:700 11px ui-monospace,Menlo,Consolas,monospace;color:#fff;background:var(--blue);border-radius:5px;padding:2px 7px;flex:none;min-width:46px;text-align:center}
+  .stp-m.GET{background:#2f7d5b}.stp-m.POST{background:#2a6fb0}.stp-m.PUT,.stp-m.PATCH{background:#a8731a}.stp-m.DELETE{background:#b4342b}
+  .stp-path{font:600 12.5px ui-monospace,Menlo,Consolas,monospace;color:var(--ink);overflow-wrap:anywhere}
+  .stp-tags{display:flex;gap:5px;flex-wrap:wrap;margin-left:auto;justify-content:flex-end}
+  .stp-tag{font-size:10.5px;font-weight:600;color:var(--muted);background:#eef0ee;border-radius:999px;padding:1px 8px;white-space:nowrap}
+  .stp-tag.dyn{background:var(--teal-l);color:var(--teal-d)}
+  .stp-tag.warn{background:var(--amber-l);color:var(--amber)}
+  .stp-body{padding:4px 12px 12px;border-top:1px solid var(--line);background:#fcfdfc}
+  .stp-req{display:grid;grid-template-columns:110px 1fr;gap:8px;margin:10px 0 2px}
+  .stp-req select,.stp-req input{margin:0;font-size:12.5px;padding:7px 9px}
+  .stp-h{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px;display:flex;align-items:center;gap:8px}
+  /* request data: one row per body field */
+  .rd{width:100%;border-collapse:collapse;font-size:12.5px}
+  .rd th{text-align:left;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:0 6px 4px 0}
+  .rd td{padding:3px 6px 3px 0;vertical-align:middle}
+  .rd td.f{font:600 12px ui-monospace,Menlo,Consolas,monospace;color:var(--ink);white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis}
+  .rd select,.rd input{margin:0;font-size:12.5px;padding:6px 8px}
+  .rd td.src{width:176px}.rd td.x{width:30px}
+  .rd-val{display:flex;gap:6px;align-items:center}
+  .rd-val input.sm{width:74px;flex:none}
+  .rd-val select.sm{width:auto;flex:none}
+  .rd tr.file td.src select{background:#eaf3fb;border-color:#c9dcf0}
+  .rd tr.generated td.src select{background:var(--teal-l);border-color:var(--teal-ring)}
+  .rd-empty{font-size:12.5px;color:var(--muted);padding:2px 0 6px}
+  /* thresholds as sentences */
+  .rule{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+  .rule select,.rule input{margin:0;font-size:13px;padding:7px 9px;width:auto}
+  .rule input[type=number]{width:96px}
+  .rule .unit{font-size:13px;color:var(--muted)}
+  /* data file card */
+  .dfile{border:1px solid var(--teal-ring);background:#f6fbf9;border-radius:12px;padding:12px 14px}
+  .dfile-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .dfile table{border-collapse:collapse;font-size:12px;margin-top:8px}
+  .dfile th,.dfile td{border:1px solid var(--line);padding:3px 9px;text-align:left;background:#fff;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dfile th{background:#eef4f1;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .dfile-mode{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;font-size:12.5px}
+  .dfile-mode select{width:auto;margin:0;padding:6px 9px;font-size:12.5px}
+  /* request preview */
+  .pv{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:10px;background:#fbfcfb}
+  .pv-step{margin-top:10px}
+  .pv-step:first-of-type{margin-top:4px}
+  .pv-req{margin:5px 0;border:1px solid var(--line);border-radius:8px;background:#fff;overflow:hidden}
+  .pv-url{font:600 12px ui-monospace,Menlo,Consolas,monospace;padding:5px 9px;background:#f3f6f4;overflow-wrap:anywhere}
+  .pv-req pre{margin:0;padding:7px 9px;font-size:11.5px;max-height:190px;overflow:auto;background:#fff;border:0;border-radius:0;color:var(--ink)}
+  .dfile-scroll{overflow-x:auto}
+  @media(max-width:860px){
+    .rv-grid{grid-template-columns:1fr 1fr}.stp-tags{display:none}
+    .scn-head{flex-wrap:wrap}.scn-head input.name{flex:1 1 100%}
+    /* request data: each field becomes a small stacked block instead of a table row */
+    .rd,.rd tbody{display:block}.rd thead{display:none}
+    .rd tr{display:grid;grid-template-columns:minmax(0,1fr) 34px;gap:5px;padding:9px 0;border-bottom:1px dashed var(--line)}
+    .rd td{padding:0;min-width:0}
+    .rd td.f{grid-column:1;max-width:none;white-space:normal;overflow-wrap:anywhere}
+    .rd td.x{grid-column:2;grid-row:1;width:auto}
+    .rd td.src{grid-column:1/-1;width:auto}
+    .rd td:nth-child(3){grid-column:1/-1}
+    .rd-val{flex-wrap:wrap}.rd-val>input:not(.sm),.rd-val>select:not(.sm){flex:1 1 150px;min-width:0}
+    .rule select{flex:1 1 100%}
+  }
+
+  /* ---- conversation mode (multi-turn planning chat) ---- */
+  .conv{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(250px,1fr);gap:16px;align-items:start}
+  .conv-main{border:1px solid var(--line);border-radius:12px;background:#fff;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .conv-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .conv-head select{width:auto;max-width:230px;padding:6px 9px;font-size:12.5px}
+  .conv-log{height:380px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;background:#fafbfa}
+  .msg{max-width:86%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+  .msg.user{align-self:flex-end;background:var(--teal);color:#fff;border-bottom-right-radius:4px}
+  .msg.assistant{align-self:flex-start;background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}
+  .msg.assistant.error{background:var(--red-l);color:var(--red);border-color:#f0c8c3}
+  .msg.assistant.plan{background:var(--teal-l);color:var(--teal-d);border-color:var(--teal-ring)}
+  .msg.user.attachment{background:#eef0ee;color:var(--muted);font-size:12px;padding:5px 11px}
+  .msg.typing{color:var(--muted);font-style:italic}
+  .conv-empty{margin:auto;text-align:center;color:var(--muted);max-width:440px;font-size:13px}
+  .conv-empty b{display:block;color:var(--ink);font-size:14.5px;margin-bottom:4px}
+  .conv-chip{display:block;width:100%;text-align:left;margin-top:8px;padding:8px 12px;border:1px solid var(--teal-ring);
+        border-radius:10px;background:var(--teal-l);color:var(--teal-d);font:inherit;font-size:12.5px;cursor:pointer}
+  .conv-chip:hover{background:#dcf0e8}
+  .conv-compose{padding:12px 14px;border-top:1px solid var(--line)}
+  .conv-compose textarea{min-height:58px;resize:vertical}
+  .conv-draft{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff;position:sticky;top:12px}
+  .conv-draft-title{font-weight:650;font-size:13.5px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .drow{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+  .drow .dk{color:var(--muted);flex:none}
+  .drow .dv{font-weight:600;text-align:right;overflow-wrap:anywhere}
+  .drow .dv.todo{color:var(--amber);font-weight:600}
+  .dtag{font-size:10.5px;font-weight:600;color:var(--muted);background:#eef0ee;border-radius:999px;padding:1px 7px;margin-left:5px}
+  .dep{display:flex;gap:7px;align-items:baseline;font-size:12px;padding:3px 0;font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+  .dep .m{font-weight:700;color:var(--blue);flex:none;min-width:44px}
+  .dsec{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px}
+  .dlist{margin:0;padding-left:18px;font-size:12.5px}
+  .dlist li{margin:2px 0}
+  @media(max-width:860px){.conv{grid-template-columns:1fr}.conv-draft{position:static}.conv-log{height:320px}}
+  .endpoint{grid-template-columns:86px 1fr 1.3fr 32px 32px !important}
+  .gbtn{background:#eef4f1;color:#0a5343;font-size:14px}
+  .gbtn:hover{background:#dcefe8}
+  .genmenu{position:absolute;z-index:1000;background:#fff;border:1px solid #d7dbd8;border-radius:10px;
+           box-shadow:0 6px 24px rgba(20,30,26,.14);width:290px;max-height:340px;overflow-y:auto;font-size:12.5px}
+  .genmenu-h{padding:8px 12px;background:#f1f8f5;color:#0a5343;font-weight:600;font-size:11.5px;border-bottom:1px solid #e2e0d8}
+  .genmenu-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;cursor:pointer}
+  .genmenu-item:hover{background:#f1f8f5}
+  .genmenu-item code{background:#eef1ee;padding:1px 6px;border-radius:5px;font-size:11px;color:#0a5343;white-space:nowrap}
+  .genmenu-item span{color:#6b7280;font-size:11.5px;text-align:right}
+
+  /* ---- modern polish layer ---- */
+  .topbar{background:linear-gradient(105deg,#0f7a5f 0%,#0a5a46 100%);box-shadow:0 2px 12px rgba(10,90,70,.18)}
+  .card{border-radius:var(--radius);box-shadow:var(--shadow);border-color:var(--line);transition:box-shadow .15s}
+  .card h2{letter-spacing:-.02em}
+  .btn{border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);transition:all .14s;letter-spacing:-.01em}
+  .btn:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+  .btn:active{transform:translateY(0)}
+  input,select,textarea{border-radius:var(--radius-sm);transition:border-color .12s, box-shadow .12s}
+  .step{border-radius:var(--radius);transition:all .18s}
+  .step.active{box-shadow:var(--shadow)}
+  .modeswitch{border-radius:12px}
+  .modebtn{transition:all .14s;border-radius:9px}
+  .pill{letter-spacing:-.01em}
+  .genmenu{border-radius:12px;box-shadow:var(--shadow-lg)}
+  .note{border-radius:var(--radius-sm)}
+  ::selection{background:var(--teal-ring)}
+  /* section label with info */
+  .lblrow{display:flex;align-items:center;margin:10px 0 4px}
+  .lblrow label{margin:0}
+
+
+  /* ---- run-existing-script panel ---- */
+  .existing-divider{display:flex;align-items:center;gap:12px;margin:22px 0 16px;color:var(--muted);font-size:12px;font-weight:600}
+  .existing-divider::before,.existing-divider::after{content:'';flex:1;height:1px;background:var(--line)}
+  .existing-panel{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#fcfdfc}
+  .existing-head{display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;transition:background .12s}
+  .existing-head:hover{background:var(--teal-l)}
+  .existing-icon{width:38px;height:38px;border-radius:10px;background:var(--teal-l);border:1px solid var(--teal-ring);
+                 display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+  .existing-title{font-weight:650;font-size:14px;color:var(--ink)}
+  .existing-sub{font-size:12.5px;color:var(--muted)}
+  .existing-chevron{color:var(--muted);font-size:14px;transition:transform .18s}
+  .existing-panel.open .existing-chevron{transform:rotate(180deg)}
+  .existing-body{padding:0 16px 16px;border-top:1px solid var(--line)}
+  .muted{color:var(--muted)}
+  .chk{display:inline-flex;align-items:center;gap:6px;font-weight:400;margin:0 16px 0 0;color:var(--ink)}
+  .chk input{width:auto;margin:0}
+  .existing-body label{margin-top:10px}
+  .dropzone{display:flex;align-items:center;gap:10px;border:1.5px dashed var(--teal-ring);border-radius:var(--radius-sm);
+            padding:14px 16px;background:var(--teal-l);color:var(--teal-d);cursor:pointer;font-size:13px;transition:.12s}
+  .dropzone:hover{background:#dcefe8;border-color:var(--teal)}
+  .dz-icon{font-size:18px}
+
+  .usage-chip{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.25);
+              border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;white-space:nowrap;
+              display:flex;align-items:center;gap:6px;letter-spacing:-.01em}
+
+  /* ---- report page layout fix (prevent overlap/collapse) ---- */
+  .mini{display:block;width:100%}
+  #baseline, #diagnostics, #reportObs, #reportRecs, #reportSummary{display:block;width:100%;clear:both}
+  #diagnostics{margin-bottom:16px}
+  #reportSummary{margin-top:10px}
+  #baseline > *, #diagnostics > *{display:block;width:100%}
+  #baseline .note, #diagnostics .note, #reportEval{display:block;line-height:1.5}
+  .finding{display:block !important;width:100% !important;height:auto !important;border-radius:var(--radius-sm);
+           padding:11px 14px;margin-bottom:8px;font-size:13px;border:1px solid}
+  .finding.high{background:var(--red-l);border-color:#f0c8c3}
+  .finding.medium{background:var(--amber-l);border-color:var(--amber-line)}
+  .finding.low{background:var(--blue-l);border-color:#cadbf0}
+  .finding.info{background:var(--teal-l);border-color:var(--teal-ring)}
+  .finding .ttl{font-weight:650;margin-bottom:2px}
+  .finding .rec{margin-top:4px;font-size:12px;color:#4a4f57}
+  .finding .rec b{color:var(--teal-d)}
+  .sevdot{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;text-transform:uppercase;color:#fff}
+  .sevdot.high{background:var(--red)}.sevdot.medium{background:var(--amber)}
+  .sevdot.low{background:var(--blue)}.sevdot.info{background:var(--teal)}
+  .finding .ttl{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  #reportObs ul, #reportRecs ul{margin:4px 0 12px;padding-left:20px}
+  #reportObs li, #reportRecs li{margin:2px 0}
+
+
+  /* ---- report dashboard ---- */
+  .rpt-hero{display:flex;align-items:center;gap:18px;padding:22px 26px;color:#fff}
+  .rpt-hero.pass{background:linear-gradient(105deg,#0f7a5f,#0a5a46)}
+  .rpt-hero.fail{background:linear-gradient(105deg,#c0392b,#962a1e)}
+  .rpt-hero.na{background:linear-gradient(105deg,#9a6412,#7a4e0d)}
+  .rpt-hero-emoji{font-size:34px;line-height:1}
+  .rpt-hero-title{font-size:19px;font-weight:700;letter-spacing:-.02em}
+  .rpt-hero-sub{font-size:13px;opacity:.9;margin-top:2px}
+  .kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line)}
+  .kpi{background:var(--card);padding:16px 14px;text-align:center}
+  .kpi-v{font-size:22px;font-weight:750;color:var(--teal-d);letter-spacing:-.03em}
+  .kpi-v.bad{color:var(--red)}
+  .kpi-l{font-size:11px;color:var(--muted);font-weight:600;margin-top:3px;text-transform:uppercase;letter-spacing:.3px}
+  .rpt-section-h{font-size:14px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;letter-spacing:-.01em}
+  .rpt-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+  .panel#panel5 .card{margin-bottom:18px}
+  @media(max-width:860px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.rpt-cols{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">⚡</div>
+  <div>
+    <h1>AI Performance Testing Agent</h1>
+    <p>AI drafts the plan · you approve · code generates, runs &amp; reports</p>
+  </div>
+  <div style="flex:1"></div>
+  <div class="usage-chip" id="sessionUsage" title="Total AI tokens used this session (rough cost estimate)">
+    🪙 <span id="sessionTokens">0</span> tokens
+    <span id="sessionCost" style="opacity:.8"></span>
+  </div>
+</div>
+
+<!-- STEPPER -->
+<div class="stepper" id="stepper">
+  <div class="step" data-step="1"><div class="num">1</div><div><div class="lbl">Describe</div><div class="sub">target &amp; endpoints</div></div></div>
+  <div class="step" data-step="2"><div class="num">2</div><div><div class="lbl">Review plan</div><div class="sub">edit &amp; approve</div></div></div>
+  <div class="step" data-step="3"><div class="num">3</div><div><div class="lbl">Script</div><div class="sub">generated code</div></div></div>
+  <div class="step" data-step="4"><div class="num">4</div><div><div class="lbl">Run</div><div class="sub">live metrics</div></div></div>
+  <div class="step" data-step="5"><div class="num">5</div><div><div class="lbl">Report</div><div class="sub">verdict</div></div></div>
+</div>
+
+<div class="wrap">
+
+  <!-- ===== STEP 1: DESCRIBE ===== -->
+  <div class="panel show" id="panel1">
+    <div class="card">
+      <h2>How do you want to start?</h2>
+
+      <!-- ONE ROW OF TABS: every way to begin a test -->
+      <div class="modeswitch" role="tablist" aria-label="How to start">
+        <button class="modebtn" role="tab" id="modeConvBtn" onclick="setMode('conv')" style="display:none">💬 Conversation</button>
+        <button class="modebtn active" role="tab" id="modeManualBtn" onclick="setMode('manual')">📝 Manual form</button>
+        <button class="modebtn" role="tab" id="modeScriptBtn" onclick="setMode('script')">⚡ My k6 script</button>
+        <button class="modebtn" role="tab" id="modeGitBtn" onclick="setMode('git')">📂 Import from Git</button>
+      </div>
+      <p class="hint" id="modeHint" style="margin:-4px 0 14px"></p>
+
+      <!-- ===== CONVERSATION MODE (multi-turn; shown when /api/chat/config says enabled) ===== -->
+      <div id="modeConv" style="display:none">
+        <div class="conv">
+          <div class="conv-main">
+            <div class="conv-head">
+              <b style="color:var(--teal-d)">Plan it in a conversation</b>
+              <span class="pill ghost" id="convStatus">new</span>
+              <div class="spacer"></div>
+              <select id="convHistory" onchange="convPick(this.value)" aria-label="Recent conversations">
+                <option value="">Recent conversations…</option>
+              </select>
+              <button class="btn ghost sm" onclick="convNew()">＋ New</button>
+            </div>
+            <div class="conv-log" id="convLog" aria-live="polite"></div>
+            <div class="conv-compose">
+              <textarea id="convInput" placeholder="Say what you want to test, answer a question, or ask for a change…" aria-label="Message"></textarea>
+              <details style="margin-top:6px">
+                <summary style="cursor:pointer;font-size:12.5px;color:var(--teal-d)">+ attach a Postman / OpenAPI / HAR collection to this message (optional)</summary>
+                <textarea id="convCollection" style="min-height:90px;margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px" placeholder="Paste collection JSON here (optional)"></textarea>
+              </details>
+              <div class="btnrow">
+                <button class="btn" id="convSendBtn" onclick="convSend()">Send</button>
+                <span class="muted" style="font-size:12px" id="convHint">Enter to send · Shift+Enter for a new line</span>
+                <div class="spacer"></div>
+                <button class="btn danger sm" id="convDeleteBtn" onclick="convDelete()" style="display:none">Delete conversation</button>
+              </div>
+              <div class="note err" id="convError" style="display:none"></div>
+            </div>
+          </div>
+
+          <aside class="conv-draft">
+            <div class="conv-draft-title">📝 Draft so far</div>
+            <div id="convDraft"></div>
+            <div class="note ok" id="convGuard" style="display:none"></div>
+            <div class="btnrow" style="margin-top:12px">
+              <button class="btn" id="convBuildBtn" onclick="convBuild()" disabled>Build plan &rarr;</button>
+            </div>
+            <p class="hint" style="margin:8px 0 0">Builds a plan for you to review and edit. Nothing is generated or run until you approve it.</p>
+          </aside>
+        </div>
+      </div>
+
+      <!-- ===== MANUAL FORM ===== -->
+      <div id="modeManual">
+      <p class="hint">Fill in the target and its endpoints. The AI drafts a plan from them; you add test data, checks and limits on the next step.</p>
+
+      <div class="grid2">
+        <div class="field"><label>Target base URL</label><input id="target" value="http://127.0.0.1:8000" /></div>
+        <div class="field"><label>Goal (plain language)</label><input id="goal" value="Realistic load test of browsing and checkout" /></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Max users</label><input id="maxUsers" type="number" value="50" /></div>
+        <div class="field"><label>Duration (seconds)</label><input id="duration" type="number" value="60" /></div>
+      </div>
+      <div class="field">
+        <div class="lblrow"><label>Test type</label><i class="infohint" data-tip="Ramp = gradual up/steady/down. Spike = sudden burst. Soak = long steady load (find leaks). Stress = step past the limit to find the breaking point.">i</i></div>
+        <select id="profileType">
+          <option value="ramp">Ramp — up, steady, down (balanced, default)</option>
+          <option value="spike">Spike — sudden sharp burst to peak</option>
+          <option value="soak">Soak — long steady hold (endurance)</option>
+          <option value="stress">Stress — step up past the target to find limits</option>
+        </select>
+      </div>
+
+      <div class="field" style="margin-top:4px">
+        <div class="lblrow"><label>Import endpoints (optional)</label><i class="infohint" data-tip="Load endpoints automatically from an OpenAPI/Swagger spec, a Postman collection, or a HAR capture — instead of typing them.">i</i></div>
+        <div class="dz" id="impdz" onclick="document.getElementById('importFile').click()" style="padding:10px">
+          📥 Click to import from OpenAPI / Postman / HAR
+        </div>
+        <input type="file" id="importFile" accept=".json,.har" style="display:none" onchange="importEndpoints()" />
+        <div class="note info" id="importInfo" style="display:none"></div>
+      </div>
+
+      <div class="lblrow"><label>Endpoints</label><i class="infohint" data-tip="The API paths to test (method + path, e.g. POST /login). Add a body for POST/PUT. These become the requests each virtual user sends.">i</i></div>
+      <div id="endpoints"></div>
+      <button class="btn ghost sm" onclick="addEndpoint()">+ Add endpoint</button>
+
+
+      <div class="btnrow">
+        <button class="btn" id="planBtn" onclick="doPlan()">✨ Draft plan with AI</button>
+        <span class="hint" style="margin:0">Calls your configured LLM (key in .env)</span>
+      </div>
+      <div class="statusline" id="planStatus"></div>
+      </div><!-- /modeManual -->
+
+      <!-- ===== MY K6 SCRIPT (run an existing script; skips AI planning) ===== -->
+      <div id="modeScript" style="display:none">
+          <div class="lblrow"><label>Target base URL</label><i class="infohint" data-tip="Where the script sends traffic — used for the report. The script's own BASE_URL still applies at run time.">i</i></div>
+          <input id="exTarget" value="http://127.0.0.1:8000" />
+
+          <label style="margin-top:12px">Your k6 script</label>
+          <label class="dropzone" for="exFile">
+            <span class="dz-icon">📄</span>
+            <span id="exFileName">Choose a <b>.js</b> file — or paste the script below</span>
+          </label>
+          <input type="file" id="exFile" accept=".js" onchange="loadExistingFile()" style="display:none"/>
+          <textarea id="exContent" style="min-height:150px;margin-top:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px" placeholder="// paste your k6 script here, or choose a file above"></textarea>
+
+          <div class="btnrow">
+            <button class="btn" onclick="uploadExisting()">Use this script &rarr;</button>
+            <span class="hint" style="margin:0">Goes straight to the Script step, ready to validate &amp; run.</span>
+          </div>
+          <div class="statusline" id="exStatus"></div>
+      </div>
+
+      <!-- ===== IMPORT FROM GIT ===== -->
+      <div id="modeGit" style="display:none">
+          <div class="grid3" style="margin-top:14px">
+            <div class="field"><label>Repository URL</label><input id="impRepo" placeholder="https://github.com/org/perf-tests.git" autocomplete="off" /></div>
+            <div class="field"><label>Branch</label><input id="impBranch" value="main" autocomplete="off" /></div>
+            <div class="field"><label>Access token</label><input id="impToken" type="password" placeholder="Token with read access" autocomplete="new-password" spellcheck="false" /></div>
+          </div>
+          <p class="hint" style="margin:6px 0 0">The token is used only to read the repository and is never saved. Not needed for public repositories or SSH URLs (git@…).</p>
+          <div class="btnrow" style="margin-top:10px">
+            <button class="btn ghost" id="impBrowseBtn" onclick="gitBrowse()">🔍 Browse repository</button>
+          </div>
+          <div class="statusline" id="impStatus"></div>
+          <div id="impResults"></div>
+          <div id="impScriptView" style="display:none;margin-top:12px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <b id="impScriptTitle"></b><span class="pill ghost" id="impScriptTool"></span>
+              <div class="spacer"></div>
+              <button class="btn ghost sm" onclick="document.getElementById('impScriptView').style.display='none'">Close</button>
+            </div>
+            <pre id="impScriptBody" style="max-height:340px"></pre>
+            <div id="impUseRow" style="display:none">
+              <div class="grid2" style="align-items:end">
+                <div class="field"><label>Target base URL for this script</label><input id="impUseTarget" value="http://127.0.0.1:8000" /></div>
+                <div class="btnrow" style="margin:0 0 14px"><button class="btn" onclick="gitUseScript()">Use this script &rarr;</button></div>
+              </div>
+              <p class="hint" style="margin:0">Loads it like the "My k6 script" tab: you can validate and run it, but it isn't linked to a PerfAgent plan.</p>
+            </div>
+            <p class="hint" id="impViewOnly" style="display:none;margin:0">Shown for reference — only k6 scripts can be run in PerfAgent.</p>
+          </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== STEP 2: REVIEW PLAN =====
+       Summary first, details on demand. The four numbered sections are everything a
+       plan needs; each step's details stay closed until it is clicked. -->
+  <div class="panel" id="panel2">
+    <div class="card rv">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap">
+        <h2 style="margin:0">Review &amp; approve the plan</h2>
+        <span class="pill ghost" id="planMeta" style="display:none"></span>
+      </div>
+      <p class="hint">Read the summary. Open a section only if you want to change it. Nothing is sent to the target on this page.</p>
+
+      <div class="note" id="importNote" style="display:none"></div>
+
+      <div id="planSummary" style="display:none;background:#f1f8f5;border:1px solid #cbe8dc;border-radius:12px;padding:14px 16px;margin:10px 0 6px"></div>
+
+      <!-- one quiet line: what the guardrails did, whether the plan is grounded, tokens used -->
+      <div class="rv-trust">
+        <span class="rv-chip" id="guardrailBadge" style="display:none"></span>
+        <span class="rv-chip" id="planEval" style="display:none"></span>
+        <span class="rv-chip" id="usagePill" style="display:none"></span>
+      </div>
+
+      <!-- form editor -->
+      <div id="planForm">
+
+        <section class="rv-sec">
+          <h3><span class="rv-n">1</span>Target &amp; load</h3>
+          <div class="rv-grid">
+            <div class="field" style="grid-column:span 2"><label for="pfTarget">Target base URL</label>
+              <input id="pfTarget" oninput="planModel.target_base_url=this.value.trim();renderSummary()" /></div>
+            <div class="field"><label for="pfUsers">Peak users</label>
+              <input id="pfUsers" type="number" min="1" onchange="updateLoad()" /></div>
+            <div class="field"><label for="pfDuration">Duration (seconds)</label>
+              <input id="pfDuration" type="number" min="3" onchange="updateLoad()" /></div>
+            <div class="field" style="grid-column:span 2">
+              <div class="lblrow" style="margin-top:0"><label for="pfType">Test type</label><i class="infohint" data-tip="Ramp = gradual up/steady/down. Spike = sudden burst. Soak = long steady load (find leaks). Stress = step past the limit to find the breaking point.">i</i></div>
+              <select id="pfType" onchange="updateLoad()">
+                <option value="ramp">Ramp — up, steady, down (balanced)</option>
+                <option value="spike">Spike — sudden sharp burst to peak</option>
+                <option value="soak">Soak — long steady hold (endurance)</option>
+                <option value="stress">Stress — step up past the target to find limits</option>
+              </select></div>
+            <div class="field" style="grid-column:span 2"><label for="tool">Load tool</label><select id="tool" onchange="if(planModel) renderDataCard()"></select></div>
+          </div>
+          <div class="rv-shape" id="pfShape"></div>
+
+          <details class="rv-more" id="connDetails">
+            <summary>Connection options — headers, environment, TLS <span class="muted" id="connCount"></span></summary>
+            <div class="rv-grid" style="margin-top:10px">
+              <div class="field" style="grid-column:span 2"><label for="environment">Environment <span class="muted" style="font-weight:400">(optional label)</span></label>
+                <input id="environment" placeholder="dev / staging / prod" oninput="planModel.environment=this.value.trim();renderConnCount()" /></div>
+              <div class="field" style="grid-column:span 2;align-self:end">
+                <label style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:13px;margin-bottom:9px"><input type="checkbox" id="insecureTls" style="width:auto" onchange="planModel.insecure_tls=this.checked;renderConnCount()"/> Skip TLS certificate verification<i class="infohint" data-tip="For test or dev hosts whose HTTPS certificate does not match the hostname. Never use against production.">i</i></label></div>
+            </div>
+            <div class="lblrow"><label>Custom headers</label><i class="infohint" data-tip="Headers added to every request, e.g. Authorization: Bearer TOKEN or an API key. Values can reference a captured token as ${token}.">i</i></div>
+            <div id="headersList"></div>
+            <button class="btn ghost sm" onclick="addHeader()">+ Add header</button>
+          </details>
+        </section>
+
+        <section class="rv-sec">
+          <h3><span class="rv-n">2</span>Test data file <span class="rv-opt">optional</span></h3>
+          <p class="hint" style="margin:0 0 8px">Real values your API expects, such as user names or branch codes. Each column can then be used in a request below.</p>
+          <div class="dz" id="dz" onclick="document.getElementById('dataFile').click()">📁 Click to upload a CSV / TSV / TXT / JSON file</div>
+          <input type="file" id="dataFile" accept=".csv,.tsv,.txt,.json,.jsonl" style="display:none" onchange="uploadData()" />
+          <div class="note err" id="dataInfo" style="display:none"></div>
+          <div id="dataCard" style="display:none"></div>
+        </section>
+
+        <section class="rv-sec">
+          <h3><span class="rv-n">3</span>Journeys <span class="rv-opt">what each virtual user does</span></h3>
+          <div id="scenarios"></div>
+          <div class="btnrow" style="margin-top:4px">
+            <button class="btn ghost sm" onclick="addScenario()">+ Add journey</button>
+            <div class="spacer"></div>
+            <button class="btn ghost sm" id="previewBtn" onclick="previewRequests()">🔍 Preview the requests</button>
+          </div>
+          <div id="previewBox" style="display:none"></div>
+        </section>
+
+        <section class="rv-sec">
+          <h3><span class="rv-n">4</span>Pass / fail rules</h3>
+          <p class="hint" style="margin:0 0 8px">The test passes only if every rule holds.</p>
+          <div id="thresholds"></div>
+          <div class="btnrow" style="margin-top:4px;flex-wrap:wrap">
+            <button class="btn ghost sm" onclick="addThreshold()">+ Add rule</button>
+            <div class="spacer"></div>
+            <span class="muted" style="font-size:12px">Saved rule sets:</span>
+            <select id="slaSelect" style="width:auto;padding:5px 8px"><option value="">— choose —</option></select>
+            <button class="btn ghost sm" onclick="applySla()">Apply</button>
+            <button class="btn ghost sm" onclick="saveSla()">Save these…</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- raw editor -->
+      <textarea id="planJson" style="display:none;min-height:340px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px"></textarea>
+
+      <label class="toggle" style="margin:14px 0 4px">
+        <input type="checkbox" id="rawToggle" style="width:auto" onchange="toggleRaw()" /> Advanced: edit the whole plan as raw JSON
+      </label>
+
+      <!-- always in view -->
+      <div class="rv-actions">
+        <div class="statusline" id="genStatus"></div>
+        <div class="rv-actions-row">
+          <button class="btn ghost sm" onclick="goStep(1)">← Back</button>
+          <div class="spacer"></div>
+          <button class="btn amber" id="genBtn" onclick="doGenerate()">✓ Approve &amp; generate script</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== STEP 3: SCRIPT ===== -->
+  <div class="panel" id="panel3">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="margin:0">Generated script</h2>
+        <span class="pill ghost" id="scriptPill" style="display:none"></span>
+      </div>
+      <p class="hint" id="scriptMeta">Deterministic — same plan always produces the same script. You can edit it below to add custom logging or debugging.</p>
+      <pre id="scriptOut">The generated script appears here.</pre>
+      <textarea id="scriptEdit" style="display:none;min-height:360px;width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5"></textarea>
+      <div class="note info" id="editNote" style="display:none;margin-top:8px">✏️ Editing mode — your changes (e.g. extra console.log for debugging) will be used when you validate or run. Click "Regenerate" to discard edits and restore the generated script.</div>
+      <div class="btnrow">
+        <button class="btn ghost sm" onclick="goStep(2)">← Back to plan</button>
+        <button class="btn ghost sm" id="editBtn" onclick="toggleEditScript()">✏️ Edit script</button>
+        <button class="btn ghost sm" id="regenBtn" onclick="regenScript()" style="display:none">↻ Regenerate</button>
+        <button class="btn ghost sm" id="dlBtn" onclick="download()" disabled>⬇ Download</button>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="validateBtn" onclick="doValidate()" disabled>✓ Validate script</button>
+        <button class="btn ghost" id="preflightBtn" onclick="doPreflight()" disabled>✈ Pre-flight check</button>
+        <button class="btn" id="runBtn" onclick="runScript()" disabled>▶ Run &amp; monitor live</button>
+      </div>
+      <div class="note warn" id="runHint" style="margin-top:10px;display:none"></div>
+      <div class="note" id="validateResult" style="display:none"></div>
+      <div class="note" id="preflightResult" style="display:none"></div>
+    </div>
+
+    <div class="card" id="gitCard">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">Save to Git for CI/CD</h2>
+        <span class="muted" id="gitSaved" style="font-size:12px;display:none"></span>
+      </div>
+      <p class="hint">Saves this test into a named k6 framework with ready-made pipelines. Secrets (auth headers) are never committed; CI provides them.</p>
+      <div class="grid2">
+        <div class="field"><label>Framework name</label><input id="gitFw" placeholder="e.g. payments-perf" /></div>
+        <div class="field"><label>Test name</label><input id="gitTest" placeholder="e.g. checkout-peak" /></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>Repository URL</label><input id="gitRepo" placeholder="https://github.com/org/perf-tests.git" autocomplete="off" /></div>
+        <div class="field"><label>Branch</label><input id="gitBranch" value="main" autocomplete="off" /></div>
+        <div class="field"><label>Access token</label><input id="gitToken" type="password" placeholder="Token with push access" autocomplete="new-password" spellcheck="false" /></div>
+      </div>
+      <p class="hint" id="gitHint" style="margin:-6px 0 12px">The token is used only for this push and is never saved. Not needed for SSH URLs (git@…). Use a new framework name for a new folder — PerfAgent never writes into folders it didn't create.</p>
+      <div class="field">
+        <label>Pipelines to include</label>
+        <label class="chk"><input type="checkbox" class="gitCi" value="github" checked> GitHub Actions</label>
+        <label class="chk"><input type="checkbox" class="gitCi" value="jenkins" checked> Jenkins</label>
+        <label class="chk"><input type="checkbox" class="gitCi" value="azure" checked> Azure DevOps</label>
+        <label class="chk"><input type="checkbox" class="gitCi" value="gitlab" checked> GitLab</label>
+      </div>
+      <div class="field">
+        <label class="chk"><input type="checkbox" id="gitData"> Also commit the test-data file (only if it holds no real customer data)</label>
+      </div>
+      <div class="btnrow">
+        <button class="btn ghost sm" id="gitZipBtn" onclick="exportZip()" disabled>⬇ Download framework (.zip)</button>
+        <div class="spacer"></div>
+        <button class="btn" id="gitBtn" onclick="exportGit()" disabled>⇪ Push to Git</button>
+      </div>
+      <div class="statusline" id="gitStatus"></div>
+    </div>
+
+    <div class="card" id="jenkinsCard">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="margin:0">Run in Jenkins</h2>
+        <span class="pill ghost" id="jkPill" style="display:none"></span>
+        <a id="jkLink" href="#" target="_blank" rel="noopener" style="display:none;font-size:12.5px">Open build in Jenkins ↗</a>
+        <span class="muted" id="jkSaved" style="font-size:12px;display:none"></span>
+      </div>
+      <p class="hint">Triggers the Jenkins pipeline for a test you saved to Git and follows it here. Jenkins runs the version in Git — push your latest changes first.</p>
+      <div class="grid3">
+        <div class="field"><label>Jenkins URL</label><input id="jkUrl" placeholder="https://jenkins.mycompany.com" autocomplete="off" /></div>
+        <div class="field"><label>Jenkins user name</label><input id="jkUser" autocomplete="off" /></div>
+        <div class="field"><label>API token</label><input id="jkToken" type="password" placeholder="Jenkins → your name → Security → API Token" autocomplete="new-password" spellcheck="false" /></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>Job name</label><input id="jkJob" placeholder="e.g. demo-perf  (folders: perf/demo-perf)" autocomplete="off" /></div>
+        <div class="field"><label>Test</label><input id="jkTest" placeholder="test name, or all" autocomplete="off" /></div>
+        <div class="field"><label>Environment</label><input id="jkEnv" value="dev" autocomplete="off" /></div>
+      </div>
+      <p class="hint" id="jkHint" style="margin:-6px 0 12px">The API token is used only for these calls and is never saved. The job needs Jenkins credentials for the test's secrets (e.g. PERF_HEADER_AUTHORIZATION).</p>
+
+      <div id="jkSetup" style="display:none;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px">
+        <b style="font-size:13px">Set up the Jenkins job</b>
+        <p class="hint" style="margin:4px 0 10px">Creates the Pipeline job (or updates it if it exists) so it builds <code class="k">&lt;framework&gt;/ci/Jenkinsfile</code> from your repository, with the Test and Environment parameters ready — no manual first build. Needs the Job/Create permission.</p>
+        <div class="grid2">
+          <div class="field"><label>Repository URL</label><input id="jkRepo" placeholder="https://github.com/org/perf-tests.git" autocomplete="off" /></div>
+          <div class="field"><label>Branch</label><input id="jkBranch" value="main" autocomplete="off" /></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Framework name</label><input id="jkFw" placeholder="e.g. demo-perf" autocomplete="off" /></div>
+          <div class="field"><label>Git credentials ID in Jenkins (private repositories)</label><input id="jkGitCred" placeholder="optional, e.g. github-pat" autocomplete="off" /></div>
+        </div>
+        <div class="btnrow" style="margin-top:4px"><button class="btn ghost sm" onclick="jenkinsSetup()">Create / update job</button></div>
+      </div>
+
+      <div class="btnrow">
+        <button class="btn ghost sm" onclick="toggleJenkinsSetup()">⚙ Set up Jenkins job</button>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="jkStopBtn" onclick="jenkinsStop()" disabled>■ Stop</button>
+        <button class="btn" id="jkRunBtn" onclick="jenkinsRun()">▶ Run in Jenkins</button>
+      </div>
+      <div class="statusline" id="jkStatus"></div>
+      <div id="jkResults" style="display:none;margin-top:12px"></div>
+      <pre id="jkLog" style="display:none;max-height:260px;margin-top:12px;font-size:11.5px"></pre>
+    </div>
+  </div>
+
+  <!-- ===== STEP 4: RUN ===== -->
+  <div class="panel" id="panel4">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 style="margin:0">Live run</h2>
+        <span class="pill ghost" id="runPill">idle</span>
+        <div class="spacer"></div>
+        <button class="btn danger sm" id="stopBtn" onclick="stopRun()" disabled>■ Stop</button>
+      </div>
+      <div class="statusline" id="runStatus"></div>
+            <canvas id="liveChart" height="120" style="width:100%;margin:6px 0 14px;border:1px solid var(--line);border-radius:12px;background:#fcfcfb"></canvas>
+      <div class="tiles">
+        <div class="tile"><div class="v" id="mElapsed">0s</div><div class="l">Elapsed</div></div>
+        <div class="tile"><div class="v" id="mReqs">0</div><div class="l">Requests</div></div>
+        <div class="tile"><div class="v" id="mRps">0</div><div class="l">Req/sec</div></div>
+        <div class="tile"><div class="v" id="mErr">0%</div><div class="l">Error rate</div></div>
+        <div class="tile"><div class="v" id="mP95">0 ms</div><div class="l">p95 latency</div></div>
+        <div class="tile"><div class="v" id="mP99">0 ms</div><div class="l">p99 latency</div></div>
+      </div>
+      <table id="epTable"><thead><tr><th>Endpoint</th><th>Requests</th><th>Failed</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead><tbody></tbody></table>
+
+      <details style="margin-top:14px" id="logDetails">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--teal-d)">📜 Live run logs <span class="muted" id="logCount"></span></summary>
+        <pre id="runLogs" style="margin-top:8px;background:#16201c;color:#d7e4dd;padding:12px 14px;border-radius:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;max-height:280px;overflow:auto;white-space:pre-wrap"></pre>
+      </details>
+    </div>
+  </div>
+
+  <!-- ===== STEP 5: REPORT ===== -->
+  <div class="panel" id="panel5">
+    <!-- verdict hero + actions -->
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="rpt-hero na" id="verdictHero">
+        <div class="rpt-hero-emoji" id="verdictEmoji">⏳</div>
+        <div style="flex:1">
+          <div class="rpt-hero-title" id="verdictHeadline">Waiting for a finished run…</div>
+          <div class="rpt-hero-sub" id="verdictSub"></div>
+        </div>
+        <button class="btn" onclick="downloadReport()" style="background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.3)">⬇ Download report</button>
+      </div>
+
+      <!-- KPI tiles -->
+      <div class="kpi-grid" id="kpiGrid">
+        <div class="kpi"><div class="kpi-v" id="kRequests">—</div><div class="kpi-l">Requests</div></div>
+        <div class="kpi"><div class="kpi-v" id="kErr">—</div><div class="kpi-l">Error rate</div></div>
+        <div class="kpi"><div class="kpi-v" id="kRps">—</div><div class="kpi-l">Throughput</div></div>
+        <div class="kpi"><div class="kpi-v" id="kP95">—</div><div class="kpi-l">p95 latency</div></div>
+        <div class="kpi"><div class="kpi-v" id="kP99">—</div><div class="kpi-l">p99 latency</div></div>
+        <div class="kpi"><div class="kpi-v" id="kAvg">—</div><div class="kpi-l">Avg latency</div></div>
+      </div>
+    </div>
+
+    <!-- time-series + trend charts -->
+    <div class="rpt-cols">
+      <div class="card">
+        <div class="rpt-section-h">📉 During this run</div>
+        <canvas id="tsChart" height="150" style="width:100%;margin-top:10px"></canvas>
+        <div class="muted" style="font-size:11.5px;margin-top:4px">RPS (teal) · p95 ms (amber) · error % (red) over time</div>
+      </div>
+      <div class="card">
+        <div class="rpt-section-h">📊 Trend across runs</div>
+        <canvas id="trendChart" height="150" style="width:100%;margin-top:10px"></canvas>
+        <div class="muted" style="font-size:11.5px;margin-top:4px" id="trendNote">p95 latency across recent runs of this plan</div>
+      </div>
+    </div>
+
+    <!-- executive summary -->
+    <div class="card">
+      <div class="rpt-section-h">📝 Executive summary <span class="note ok" id="reportEval" style="display:none;margin:0;padding:3px 9px;font-size:11px"></span></div>
+      <p id="reportSummary" style="font-size:14px;line-height:1.6;margin:8px 0 0"></p>
+    </div>
+
+    <!-- two-column: diagnosis + baseline -->
+    <div class="rpt-cols">
+      <div class="card">
+        <div class="rpt-section-h">🔍 Diagnosis</div>
+        <div id="diagnostics"></div>
+      </div>
+      <div class="card">
+        <div class="rpt-section-h">📈 vs. previous run</div>
+        <div id="baseline"></div>
+      </div>
+    </div>
+
+    <!-- response checks / assertions -->
+    <div class="card" id="checksCard" style="display:none">
+      <div class="rpt-section-h">✔ Response checks</div>
+      <div id="checksBody" style="margin-top:8px"></div>
+    </div>
+
+    <!-- run logs -->
+    <div class="card" id="reportLogsCard" style="display:none">
+      <div class="rpt-section-h">📜 Run logs <button class="btn ghost sm" style="margin-left:8px" onclick="downloadRunLogs()">⬇ Download</button></div>
+      <pre id="reportLogs" style="margin-top:8px;background:#16201c;color:#d7e4dd;padding:12px 14px;border-radius:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5;max-height:300px;overflow:auto;white-space:pre-wrap"></pre>
+    </div>
+
+    <!-- observations + recommendations -->
+    <div class="rpt-cols">
+      <div class="card"><div id="reportObs"></div></div>
+      <div class="card"><div id="reportRecs"></div></div>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:14px">Saved plans</h2>
+      <button class="btn ghost sm" onclick="loadPlans()">↻ Refresh</button>
+    </div>
+    <table id="plansTable" style="margin-top:10px"><thead><tr><th>Created</th><th>Target</th><th>Goal</th><th>Scripts</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- RUNS / REPORTS HISTORY -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:14px">Runs &amp; reports</h2>
+      <button class="btn ghost sm" onclick="loadRuns()">↻ Refresh</button>
+      <span class="muted">every finished run — click to reopen its report</span>
+    </div>
+    <table id="runsTable" style="margin-top:10px"><thead><tr><th>When</th><th>Verdict</th><th>Target</th><th>Goal</th><th>Requests</th><th>Errors</th><th>p95</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- ACTIVITY LOG -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:14px">Activity log</h2>
+      <button class="btn ghost sm" onclick="loadAudit()">↻ Refresh</button>
+      <span class="muted">who did what, when — for debugging &amp; audit</span>
+    </div>
+    <table id="auditTable" style="margin-top:10px"><thead><tr><th>When</th><th>Action</th><th>Target</th><th>Details</th><th>AI usage</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <!-- AI TRACES -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:14px">AI call traces</h2>
+      <button class="btn ghost sm" onclick="loadTraces()">↻ Refresh</button>
+      <span class="muted">each AI call — step, model, tokens, latency, status (for debugging)</span>
+    </div>
+    <table id="tracesTable" style="margin-top:10px"><thead><tr><th>When</th><th>Step</th><th>Model</th><th>Tokens</th><th>Latency</th><th>Redactions</th><th>Status</th></tr></thead><tbody></tbody></table>
+  </div>
+
+</div>
+
+<script>
+let currentPlanId=null, currentScriptId=null, currentDataFileId=null, currentRunId=null, pollTimer=null;
+let planModel=null;        // the editable plan object
+let dataColumns=[];        // uploaded data file columns
+
+/* ---------- stepper ---------- */
+function goStep(n){
+  for(let i=1;i<=5;i++){
+    document.getElementById('panel'+i).classList.toggle('show', i===n);
+  }
+  document.querySelectorAll('.step').forEach(s=>{
+    const si=+s.dataset.step;
+    s.classList.toggle('active', si===n);
+    s.classList.toggle('done', si<n);
+  });
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+document.querySelectorAll('.step').forEach(s=>s.addEventListener('click',()=>{
+  const n=+s.dataset.step;
+  // allow going back, or forward only if that step is reachable
+  if(n===1) goStep(1);
+  else if(n===2 && planModel) goStep(2);
+  else if(n===3 && currentScriptId) goStep(3);
+  else if(n===4 && currentRunId) goStep(4);
+  else if(n===5 && currentRunId) goStep(5);
+}));
+
+
+
+/* ---------- step 1 mode toggle (chat / manual) ---------- */
+const MODES={
+  conv:  ['modeConv','modeConvBtn','Talk it through with the AI. It asks for what it needs and builds the plan with you.'],
+  manual:['modeManual','modeManualBtn','Enter the target and endpoints yourself; the AI drafts the plan from them.'],
+  script:['modeScript','modeScriptBtn','Already have a k6 script? Upload or paste it and go straight to validating and running it — no AI planning.'],
+  git:   ['modeGit','modeGitBtn','Pull a test that PerfAgent saved to Git back as an editable plan, or pick up another k6 script from the repository.'],
+};
+function setMode(m){
+  for(const k in MODES){
+    document.getElementById(MODES[k][0]).style.display = (k===m)?'block':'none';
+    const b=document.getElementById(MODES[k][1]);
+    b.classList.toggle('active', k===m); b.setAttribute('aria-selected', k===m?'true':'false');
+  }
+  document.getElementById('modeHint').textContent=MODES[m][2];
+}
+
+/* ---------- conversation mode (multi-turn planning chat) ----------
+   Talks to /api/chat/sessions. The server keeps the conversation (LangGraph,
+   checkpointed), so a refresh or restart resumes it. The chat only builds the
+   draft; "Build plan" hands it to the normal Review step. */
+let convId=null, convView=null, convBusy=false;
+const CONV_KEY='perfagent.conversation';
+const CONV_EXAMPLES=[
+  'Load test login and products at http://127.0.0.1:8000 with 10 users for 20 seconds',
+  'Stress test POST /checkout on https://staging.example.com — each order needs a unique id',
+  'I want to soak test my API for 10 minutes. What do you need from me?'
+];
+
+async function convApi(path, opts){
+  const r=await fetch('/api/chat'+path, opts||{});
+  let j={}; try{ j=await r.json(); }catch(e){}
+  if(!r.ok){ const err=new Error(j.detail||('request failed ('+r.status+')')); err.status=r.status; throw err; }
+  return j;
+}
+function convRemember(id){ try{ if(id) localStorage.setItem(CONV_KEY,id); else localStorage.removeItem(CONV_KEY); }catch(e){} }
+function convRecall(){ try{ return localStorage.getItem(CONV_KEY); }catch(e){ return null; } }
+
+async function initConversation(){
+  let cfg; try{ cfg=await convApi('/config'); }catch(e){ return; }
+  if(!cfg.enabled) return;                       // switched off -> the other three tabs
+  document.getElementById('modeConvBtn').style.display='';
+  document.getElementById('convInput').addEventListener('keydown', e=>{
+    if(e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); convSend(); }
+  });
+  const saved=convRecall();                      // read before the empty render clears it
+  setMode('conv');
+  convRender(null);
+  convLoadHistory();
+  if(saved) convOpen(saved, true);
+}
+
+async function convLoadHistory(){
+  try{
+    const j=await convApi('/sessions?limit=20');
+    const sel=document.getElementById('convHistory');
+    const label={collecting:'gathering',ready:'ready',planned:'plan built'};
+    sel.innerHTML='<option value="">Recent conversations…</option>'+j.sessions.map(x=>{
+      const t=(x.title||'Untitled').slice(0,48)+((x.title||'').length>48?'…':'');
+      return '<option value="'+esc(x.session_id)+'">'+esc(t)+' · '+(label[x.status]||x.status)+'</option>';
+    }).join('');
+    sel.value='';
+  }catch(e){}
+}
+function convPick(id){ if(id) convOpen(id,false); document.getElementById('convHistory').value=''; }
+
+async function convOpen(id, quiet){
+  try{ convRender(await convApi('/sessions/'+encodeURIComponent(id))); }
+  catch(e){
+    if(e.status===404){ convRemember(null); convRender(null); }
+    if(!quiet) convShowError(e.status===404?'That conversation no longer exists.':e.message);
+  }
+}
+function convNew(){ convRemember(null); convShowError(''); convRender(null); document.getElementById('convInput').focus(); }
+
+async function convDelete(){
+  if(!convId || convBusy) return;
+  if(!confirm('Delete this conversation? Plans already built from it are kept.')) return;
+  try{ await convApi('/sessions/'+encodeURIComponent(convId),{method:'DELETE'}); }
+  catch(e){ if(e.status!==404){ convShowError(e.message); return; } }
+  convNew(); convLoadHistory();
+}
+
+function convShowError(msg){
+  const el=document.getElementById('convError');
+  el.style.display=msg?'flex':'none'; el.textContent=msg||'';
+}
+function convSetBusy(b){
+  convBusy=b;
+  document.getElementById('convSendBtn').disabled=b;
+  document.getElementById('convBuildBtn').disabled=b || !(convView&&convView.ready);
+}
+function convBubble(role, kind, text){
+  const d=document.createElement('div');
+  d.className='msg '+(role==='user'?'user':'assistant')+(kind&&kind!=='text'?(' '+kind):'');
+  d.textContent=text;                               // textContent: never interpreted as HTML
+  return d;
+}
+function convScroll(){ const log=document.getElementById('convLog'); log.scrollTop=log.scrollHeight; }
+
+function convRender(v){
+  convView=v; convId=v?v.session_id:null; convRemember(convId);
+  const log=document.getElementById('convLog'); log.innerHTML='';
+  if(!v){
+    const e=document.createElement('div'); e.className='conv-empty';
+    e.innerHTML='<b>What would you like to load test?</b>Describe it in your own words. I\'ll ask for anything I still need, and you can keep refining before a plan is built.';
+    CONV_EXAMPLES.forEach(t=>{
+      const b=document.createElement('button'); b.type='button'; b.className='conv-chip'; b.textContent=t;
+      b.onclick=()=>{ const i=document.getElementById('convInput'); i.value=t; i.focus(); };
+      e.appendChild(b);
+    });
+    log.appendChild(e);
+  } else {
+    v.messages.forEach(m=>log.appendChild(convBubble(m.role, m.kind, m.content)));
+  }
+  const st=document.getElementById('convStatus');
+  const names={collecting:['gathering details','pill na'],ready:['ready to build','pill pass'],planned:['plan built','pill pass']};
+  const n=v?names[v.status]:null;
+  st.textContent=n?n[0]:'new'; st.className=n?n[1]:'pill ghost';
+  document.getElementById('convDeleteBtn').style.display=v?'':'none';
+  document.getElementById('convHint').textContent=(v && v.turns_left<=3)
+    ? (v.turns_left+' message'+(v.turns_left===1?'':'s')+' left in this conversation')
+    : 'Enter to send · Shift+Enter for a new line';
+  convRenderDraft(v);
+  convSetBusy(convBusy);
+  convScroll();
+}
+
+function convRenderDraft(v){
+  const el=document.getElementById('convDraft');
+  const guard=document.getElementById('convGuard');
+  const btn=document.getElementById('convBuildBtn');
+  if(!v){
+    el.innerHTML='<p class="muted" style="margin:0;font-size:12.5px">The target, endpoints and load size appear here as we talk, so you can see exactly what the plan will be built from.</p>';
+    guard.style.display='none'; btn.innerHTML='Build plan &rarr;'; return;
+  }
+  const d=v.draft, miss=v.missing||[];
+  const dur=s=>s>=60 ? (Math.floor(s/60)+' min'+(s%60?(' '+(s%60)+' s'):'')) : (s+' s');
+  const tag=a=>a?'<span class="dtag" title="You didn\'t say, so this default will be used">default</span>':'';
+  let h='';
+  h+='<div class="drow"><span class="dk">Target</span>'+(d.target_base_url
+      ? '<span class="dv">'+esc(d.target_base_url)+'</span>'
+      : '<span class="dv todo">needed</span>')+'</div>';
+  h+='<div class="drow"><span class="dk">Test type</span><span class="dv">'+esc(d.profile_type)+'</span></div>';
+  h+='<div class="drow"><span class="dk">Peak users</span><span class="dv">'+d.max_users+tag(d.assumed.max_users)+'</span></div>';
+  h+='<div class="drow"><span class="dk">Duration</span><span class="dv">'+dur(d.duration_seconds)+tag(d.assumed.duration_seconds)+'</span></div>';
+  h+='<div class="dsec">Endpoints</div>';
+  if(d.endpoints.length){
+    h+=d.endpoints.map(e=>'<div class="dep"><span class="m">'+esc(e.method)+'</span><span>'+esc(e.path)+
+        (e.example_body?' <span class="dtag">body</span>':'')+'</span></div>').join('');
+  } else { h+='<div class="drow" style="border:0"><span class="dv todo">needed</span></div>'; }
+  const open=(v.questions||[]);
+  if(open.length){
+    h+='<div class="dsec">'+(miss.length?'Still needed':'Open questions')+'</div><ul class="dlist">'+
+       open.map(q=>'<li>'+esc(q)+'</li>').join('')+'</ul>';
+  }
+  if(d.notes){ h+='<div class="dsec">Assumptions</div><div style="font-size:12.5px">'+esc(d.notes)+'</div>'; }
+  if(d.secrets_masked){
+    h+='<div class="note warn" style="margin-top:10px">🔒 A secret value was masked before the AI saw it. Set the real value in the review step, or use a data file.</div>';
+  }
+  el.innerHTML=h;
+  const g=v.guardrail;
+  if(g && g.total>0){ guard.style.display='flex';
+    guard.innerHTML='🛡 <span><b>'+g.total+' sensitive value'+(g.total!==1?'s':'')+'</b> masked before the AI saw them ('+esc(g.detail)+')</span>'; }
+  else guard.style.display='none';
+  btn.innerHTML = v.plan_current ? 'Open plan in review &rarr;' : (v.plan ? 'Rebuild plan &rarr;' : 'Build plan &rarr;');
+}
+
+async function convSend(){
+  if(convBusy) return;
+  const input=document.getElementById('convInput'), coll=document.getElementById('convCollection');
+  const text=input.value.trim(); if(!text){ input.focus(); return; }
+  convShowError('');
+  const log=document.getElementById('convLog');
+  if(!convId) log.innerHTML='';
+  log.appendChild(convBubble('user','text',text));           // show it straight away
+  const typing=convBubble('assistant','typing','Thinking…'); log.appendChild(typing); convScroll();
+  convSetBusy(true);
+  const hadPlan=!!(convView&&convView.plan_current);
+  const starting=!convId;
+  try{
+    const body=JSON.stringify({message:text, collection_text:coll.value.trim()});
+    const opts={method:'POST',headers:{'Content-Type':'application/json'},body};
+    const v=await convApi(starting?'/sessions':('/sessions/'+encodeURIComponent(convId)+'/messages'), opts);
+    input.value=''; coll.value='';
+    convBusy=false; convRender(v); refreshUsage();
+    if(starting) convLoadHistory();
+    // "go ahead" in chat built a fresh plan -> take the user to review it
+    if(v.plan_current && !hadPlan) convOpenPlan(v.plan);
+  }catch(e){
+    typing.remove(); convBusy=false; convSetBusy(false);
+    if(convView) convRender(convView); else if(starting) convRender(null);
+    input.value=text;                                          // keep what they typed
+    convShowError(e.message);
+  }
+  input.focus();
+}
+
+async function convBuild(){
+  if(convBusy || !convView || !convView.ready) return;
+  if(convView.plan_current){ convOpenPlan(convView.plan); return; }   // already built, nothing changed
+  convShowError('');
+  const log=document.getElementById('convLog');
+  const typing=convBubble('assistant','typing','Drafting the plan…'); log.appendChild(typing); convScroll();
+  convSetBusy(true);
+  try{
+    const v=await convApi('/sessions/'+encodeURIComponent(convId)+'/build',{method:'POST'});
+    convBusy=false; convRender(v); refreshUsage(); convLoadHistory();
+    if(v.plan_current) convOpenPlan(v.plan);
+    else if(v.error) convShowError('The plan could not be drafted. Try again in a moment.');
+  }catch(e){ typing.remove(); convBusy=false; convSetBusy(false); convShowError(e.message); }
+}
+
+/* Hand a conversation-built plan to the Review step — same as the other two modes. */
+function convOpenPlan(p){
+  if(!p) return;
+  if(currentPlanId!==p.plan_id){                    // don't overwrite edits made in review
+    currentPlanId=p.plan_id; planModel=p.load_model; planRationale=p.rationale||'';
+    document.getElementById('importNote').style.display='none';
+    applyIntegrations(p.plan_id);
+    renderPlanForm(); renderRawFromModel();
+    showGuardrail(p.guardrail); showPlanEval(p.evaluation); showUsage(p.usage);
+    document.getElementById('planMeta').style.display='inline-flex';
+    document.getElementById('planMeta').textContent='drafted by '+p.provider+' (from conversation)';
+    loadPlans();
+  }
+  goStep(2);
+}
+
+
+/* ---------- endpoints (step 1) ---------- */
+function addEndpoint(method="GET",path="",body=""){
+  const d=document.createElement('div');d.className='endpoint';
+  d.innerHTML=`<select>${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${m===method?'selected':''}>${m}</option>`).join('')}</select>
+    <input placeholder="/path" value="${path}" />
+    <input class="bodyInput" placeholder='body JSON e.g. {"user":"demo"}' value='${body}' />
+    <button class="iconbtn gbtn" title="Edit body + add dynamic data" onclick="openBodyEditor(this)">✏️</button>
+    <button class="iconbtn" onclick="this.parentElement.remove()">×</button>`;
+  document.getElementById('endpoints').appendChild(d);
+}
+
+
+/* ---------- body editor modal + AI dynamize ---------- */
+let _bodyTargetInput = null;
+function openBodyEditor(btn){
+  const row = btn.parentElement;
+  _bodyTargetInput = row.querySelector('.bodyInput');
+  const path = row.querySelectorAll('input')[0].value || '(no path)';
+  document.getElementById('bodyModalPath').textContent = path;
+  // pretty-print existing JSON if possible
+  let v = _bodyTargetInput.value.trim();
+  try { v = JSON.stringify(JSON.parse(v), null, 2); } catch(e) {}
+  document.getElementById('bodyModalText').value = v;
+  const hint=document.getElementById('bodyModalNote');
+  if(currentDataFileId && dataColumns && dataColumns.length){
+    hint.style.display='flex'; hint.className='note info';
+    hint.innerHTML='📁 Data file columns available — the AI can pull real values from: '+
+      dataColumns.map(c=>'<code class="k">${'+esc(c)+'}</code>').join(' ');
+  } else { hint.style.display='none'; }
+  document.getElementById('bodyModal').style.display='flex';
+}
+function closeBodyEditor(){ document.getElementById('bodyModal').style.display='none'; _bodyTargetInput=null; }
+function saveBodyEditor(){
+  const txt = document.getElementById('bodyModalText').value.trim();
+  if(txt){
+    try { JSON.parse(txt); } catch(e){
+      const n=document.getElementById('bodyModalNote'); n.style.display='flex'; n.className='note err';
+      n.textContent='Body is not valid JSON: '+e.message; return;
+    }
+  }
+  if(_bodyTargetInput){ _bodyTargetInput.value = txt ? JSON.stringify(JSON.parse(txt)) : ''; }
+  closeBodyEditor();
+}
+async function dynamizeBody(){
+  const n=document.getElementById('bodyModalNote');
+  const txt=document.getElementById('bodyModalText').value.trim();
+  let parsed;
+  try { parsed = JSON.parse(txt); } catch(e){
+    n.style.display='flex'; n.className='note err'; n.textContent='Enter a valid JSON body first: '+e.message; return;
+  }
+  n.style.display='flex'; n.className='note info'; n.textContent='AI is adding dynamic data to the fields that should vary...';
+  document.getElementById('dynBtn').disabled=true;
+  try{
+    const payload={body:parsed}; if(currentDataFileId) payload.data_file_id=currentDataFileId;
+    const r=await fetch('/api/dynamize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'failed');
+    document.getElementById('bodyModalText').value = JSON.stringify(j.body, null, 2);
+    n.className='note ok';
+    n.innerHTML = '✅ '+esc(j.notes||'Dynamic data added')+
+      (j.changed_fields&&j.changed_fields.length ? '<br><span class="muted">Changed: '+j.changed_fields.map(esc).join(', ')+'</span>' : '');
+  }catch(e){ n.className='note err'; n.textContent='Error: '+e.message; }
+  finally{ document.getElementById('dynBtn').disabled=false; }
+}
+
+/* ---------- generator helper (insert dynamic data tokens) ---------- */
+const GENERATORS = [
+  ["${uuid}",                 "Unique ID (uuid)"],
+  ["${randomEmail}",          "Unique email"],
+  ["${randomFullName}",       "Random full name"],
+  ["${randomCompanyName}",    "Random company"],
+  ["${randomStreetAddress}",  "Random street address"],
+  ["${randomCity}",           "Random city"],
+  ["${randomState}",          "Random state"],
+  ["${randomZipCode}",        "Random zip code"],
+  ["${randomPhone}",          "Random phone"],
+  ["${randomCatchPhrase}",    "Random phrase / note"],
+  ["${randomBic}",            "Random code (BIC-like)"],
+  ["${randomInt(1,100)}",     "Random number 1–100"],
+  ["${randomString(8)}",      "Random text (8 chars)"],
+  ["${dateOffset(3,'days')}", "Date N days from now"],
+  ["${timestamp}",            "Current timestamp"],
+  ["${randomFrom(a,b,c)}",    "Random choice from a list"],
+  ["${sequential}",           "Unique per user+iteration"],
+];
+function toggleGenMenu(btn){
+  // close any open menu first
+  document.querySelectorAll('.genmenu').forEach(m=>m.remove());
+  const existing = btn._menuOpen;
+  if(existing){ btn._menuOpen=false; return; }
+  const bodyInput = btn.parentElement.querySelector('.bodyInput');
+  const menu=document.createElement('div'); menu.className='genmenu';
+  menu.innerHTML = '<div class="genmenu-h">Insert dynamic value — each request gets a fresh one</div>' +
+    GENERATORS.map(([tok,label])=>
+      `<div class="genmenu-item" onmousedown="insertGen(event,this,'${tok.replace(/'/g,"\\'")}')">`+
+      `<code>${tok}</code><span>${label}</span></div>`).join('');
+  document.body.appendChild(menu);
+  const r=btn.getBoundingClientRect();
+  menu.style.left=(r.left-240+window.scrollX)+'px';
+  menu.style.top=(r.bottom+4+window.scrollY)+'px';
+  menu._bodyInput=bodyInput; btn._menuOpen=true;
+  // close on outside click
+  setTimeout(()=>{document.addEventListener('mousedown',closeGenMenus,{once:true});},0);
+}
+function closeGenMenus(){ document.querySelectorAll('.genmenu').forEach(m=>m.remove());
+  document.querySelectorAll('.gbtn').forEach(b=>b._menuOpen=false); }
+function insertGen(ev, item, token){
+  ev.preventDefault();
+  const menu=item.closest('.genmenu'); const inp=menu._bodyInput;
+  // if the body is empty, start a JSON object with a field; else insert at cursor
+  let v=inp.value;
+  if(!v.trim()){
+    const field = token.includes('Email')?'email':token.includes('uuid')?'id':'value';
+    inp.value = `{"${field}": "${token}"}`;
+  } else {
+    const start=inp.selectionStart ?? v.length;
+    inp.value = v.slice(0,start) + token + v.slice(inp.selectionEnd ?? start);
+  }
+  inp.focus();
+  closeGenMenus();
+}
+function readEndpoints(){
+  return [...document.querySelectorAll('#endpoints .endpoint')].map(d=>{
+    const method=d.querySelector('select').value;
+    const ins=d.querySelectorAll('input');
+    const path=ins[0].value.trim(); const bodyRaw=ins[1].value.trim();
+    if(!path) return null;
+    const ep={method,path};
+    if(bodyRaw){ try{ep.example_body=JSON.parse(bodyRaw)}catch(e){throw new Error(`Body for ${method} ${path} isn't valid JSON: ${e.message}`)} }
+    return ep;
+  }).filter(Boolean);
+}
+
+async function loadTools(){
+  const j=await (await fetch('/api/tools')).json();
+  document.getElementById('tool').innerHTML=j.tools.map(t=>`<option value="${t}">${t}</option>`).join('');
+}
+
+/* ---------- draft plan ---------- */
+async function doPlan(){
+  const status=document.getElementById('planStatus');
+  let eps; try{eps=readEndpoints()}catch(e){status.className='statusline err';status.textContent=e.message;return;}
+  if(!eps.length){status.className='statusline err';status.textContent='Add at least one endpoint.';return;}
+  status.className='statusline';status.textContent='Asking the AI to draft a plan…';
+  document.getElementById('planBtn').disabled=true;
+  try{
+    const body={target_base_url:document.getElementById('target').value.trim(),
+      goal:document.getElementById('goal').value.trim(),
+      max_users:parseInt(document.getElementById('maxUsers').value),
+      duration_seconds:parseInt(document.getElementById('duration').value),
+      profile_type:document.getElementById('profileType').value,
+      endpoints:eps};
+    const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
+    currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
+    document.getElementById('importNote').style.display='none';
+    applyIntegrations(j.plan_id);
+    renderPlanForm(); renderRawFromModel();
+    showGuardrail(j.guardrail); showPlanEval(j.evaluation); showUsage(j.usage); refreshUsage();
+    document.getElementById('planMeta').style.display='inline-flex';
+    document.getElementById('planMeta').textContent='drafted by '+j.provider;
+    goStep(2); loadPlans();
+  }catch(e){ status.className='statusline err'; status.textContent='Error: '+e.message; }
+  finally{ document.getElementById('planBtn').disabled=false; }
+}
+
+function showGuardrail(g){
+  const b=document.getElementById('guardrailBadge'); b.style.display='inline-flex';
+  if(g&&g.total>0){ b.className='rv-chip ok'; b.textContent='🛡 '+g.total+' sensitive value'+(g.total!==1?'s':'')+' hidden from the AI';
+    b.title='Redacted before the AI saw them: '+g.detail; }
+  else { b.className='rv-chip'; b.textContent='🛡 Nothing sensitive in the inputs'; b.title='The guardrail found nothing to redact.'; }
+}
+function showPlanEval(e){
+  const el=document.getElementById('planEval'); if(!e){el.style.display='none';return;} el.style.display='inline-flex';
+  if(e.grounded){ el.className='rv-chip ok'; el.textContent='✅ Plan matches what you asked for ('+e.passed+'/'+e.total+' checks)';
+    el.title='Grounding checks: the plan only uses the target and endpoints you gave.'; }
+  else { const f=(e.checks||[]).filter(c=>!c.passed).map(c=>c.name).join(', ');
+         el.className='rv-chip warn'; el.textContent='⚠ Review needed — '+e.passed+'/'+e.total+' checks passed';
+         el.title='Issues: '+(f||'see the plan'); }
+}
+
+/* ---------- session token usage (top bar) ---------- */
+async function refreshUsage(){
+  try{
+    const j=await (await fetch('/api/usage/total')).json();
+    const t=document.getElementById('sessionTokens'); const c=document.getElementById('sessionCost');
+    if(t) t.textContent=(j.tokens||0).toLocaleString();
+    if(c) c.textContent = j.cost_usd ? ('· ~$'+j.cost_usd.toFixed(4)) : '';
+  }catch(e){}
+}
+
+/* ---------- token usage display ---------- */
+function showUsage(u){
+  const pill=document.getElementById('usagePill'); if(!pill) return;
+  if(u && u.total_tokens){
+    pill.style.display='inline-flex';
+    const cost = u.cost_usd ? ' (~$'+u.cost_usd.toFixed(4)+')' : '';
+    pill.className='rv-chip';
+    pill.textContent = '🪙 '+u.total_tokens.toLocaleString()+' tokens'+cost;
+    pill.title = (u.prompt_tokens||0)+' in + '+(u.completion_tokens||0)+' out · '+(u.model||'');
+  } else { pill.style.display='none'; }
+}
+
+
+
+/* ---------- suggest checks from a response (Option B) ---------- */
+let _suggestTarget=null; let _suggested=[];
+function openSuggestChecks(si,sti){
+  _suggestTarget={si,sti};
+  document.getElementById('suggestSample').value='';
+  document.getElementById('suggestNote').style.display='none';
+  document.getElementById('suggestResults').style.display='none';
+  document.getElementById('applySuggestBtn').style.display='none';
+  document.getElementById('suggestModal').style.display='flex';
+}
+function closeSuggestChecks(){ document.getElementById('suggestModal').style.display='none'; _suggestTarget=null; _suggested=[]; }
+async function runSuggestChecks(){
+  const sample=document.getElementById('suggestSample').value.trim();
+  const n=document.getElementById('suggestNote');
+  if(!sample){ n.style.display='flex'; n.className='note err'; n.textContent='Paste a response first.'; return; }
+  n.style.display='flex'; n.className='note info'; n.textContent='AI is analyzing the response and suggesting checks...';
+  document.getElementById('suggestBtn').disabled=true;
+  try{
+    const r=await fetch('/api/suggest-checks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sample_response:sample})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'failed');
+    _suggested=j.checks||[];
+    if(!_suggested.length){ n.className='note warn'; n.textContent='No checks suggested — try a fuller response.'; return; }
+    n.style.display='none';
+    const res=document.getElementById('suggestResults'); res.style.display='block';
+    res.innerHTML='<div class="mini">Suggested checks — untick any you don\'t want</div>'+
+      _suggested.map((c,i)=>{
+        const label=checkLabel(c);
+        return `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 8px;background:#f7faf8;border-radius:8px;margin-bottom:4px;cursor:pointer">`+
+          `<input type="checkbox" checked data-ci="${i}" style="margin-top:3px"/>`+
+          `<div><div style="font-size:12.5px"><b>${esc(label)}</b></div>`+
+          (c.reason?`<div class="muted" style="font-size:11px">${esc(c.reason)}</div>`:'')+`</div></label>`;
+      }).join('');
+    document.getElementById('applySuggestBtn').style.display='inline-flex';
+  }catch(e){ n.className='note err'; n.textContent='Error: '+e.message; }
+  finally{ document.getElementById('suggestBtn').disabled=false; }
+}
+function checkLabel(c){
+  if(c.kind==='body_contains') return 'Body contains "'+c.value+'"';
+  if(c.kind==='not_contains')  return 'Body does NOT contain "'+c.value+'"';
+  if(c.kind==='status')        return 'Status is '+c.value;
+  if(c.kind==='response_time') return 'Response under '+c.value+'ms';
+  if(c.kind==='json_path')     return 'Field '+c.path+' '+c.op+' '+c.value;
+  return c.kind;
+}
+function applySuggestedChecks(){
+  if(!_suggestTarget) return;
+  const picks=[...document.querySelectorAll('#suggestResults input[type=checkbox]:checked')].map(cb=>_suggested[+cb.dataset.ci]);
+  const st=planModel.scenarios[_suggestTarget.si].steps[_suggestTarget.sti];
+  if(!st.assertions) st.assertions=[];
+  picks.forEach(c=>st.assertions.push({kind:c.kind,op:c.op||'eq',path:c.path||'',value:c.value||''}));
+  closeSuggestChecks(); renderPlanForm();
+}
+
+/* ---------- SLA / threshold profiles ---------- */
+async function loadSlaProfiles(){
+  try{
+    const j=await (await fetch('/api/sla')).json();
+    window._slaProfiles=j.profiles||[];
+    const sel=document.getElementById('slaSelect'); if(!sel) return;
+    sel.innerHTML='<option value="">— choose —</option>'+
+      window._slaProfiles.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  }catch(e){}
+}
+function applySla(){
+  const id=document.getElementById('slaSelect').value; if(!id||!planModel) return;
+  const p=(window._slaProfiles||[]).find(x=>x.id===id); if(!p) return;
+  planModel.thresholds=JSON.parse(JSON.stringify(p.thresholds||[]));
+  renderPlanForm();
+}
+async function saveSla(){
+  if(!planModel||!planModel.thresholds||!planModel.thresholds.length){ alert('Add some thresholds first.'); return; }
+  const name=prompt('Name this SLA profile (e.g. "API SLA — p95<300, err<1%"):');
+  if(!name) return;
+  try{
+    const r=await fetch('/api/sla',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name, thresholds:planModel.thresholds})});
+    if(!r.ok){ const j=await r.json(); throw new Error(j.detail||'failed'); }
+    await loadSlaProfiles();
+  }catch(e){ alert('Could not save SLA: '+e.message); }
+}
+
+/* ---------- plain-English plan summary ---------- */
+let planRationale = "";   // the AI's "why", set when a plan is drafted
+function renderSummary(){
+  const el=document.getElementById('planSummary'); if(!el||!planModel) return;
+  el.style.display='block';
+  const scs=planModel.scenarios||[];
+  const total=scs.reduce((a,s)=>a+(s.weight||0),0)||1;
+  // peak users + duration from the load profile
+  const stages=(planModel.load_profile&&planModel.load_profile.stages)||[];
+  const peak=stages.reduce((m,s)=>Math.max(m,s.target_users||0),0);
+  const dur=stages.reduce((a,s)=>a+(s.duration_seconds||0),0);
+  // journeys
+  const journeys=scs.map(s=>{
+    const pct=Math.round((s.weight/total)*100);
+    const steps=(s.steps||[]).map(st=>st.path).join(' → ');
+    return `<li><b>${pct}%</b> will do <b>${esc(s.name)}</b> <span class="muted">(${esc(steps)})</span></li>`;
+  }).join('');
+  // thresholds in plain words
+  const thr=(planModel.thresholds||[]).map(t=>{
+    const m={p95_ms:'95% of responses',p99_ms:'99% of responses',p50_ms:'half of responses',
+             avg_ms:'average response',error_rate:'error rate'}[t.metric]||t.metric;
+    if(t.metric==='error_rate'){ const pct=(t.value*100).toFixed(t.value<0.01?1:0);
+      return `the ${m} stays ${t.op.includes('<')?'under':'over'} ${pct}%`; }
+    return `${m} ${t.op.includes('<')?'stay under':'exceed'} ${t.value} ms`;
+  });
+  const thrText = thr.length ? ('It <b>passes</b> if '+thr.join(' and ')+'.') :
+    'No pass/fail thresholds are set yet — add some below so the result can be judged.';
+  // auth note
+  const hasAuth = Object.keys(planModel.headers||{}).some(k=>k.toLowerCase()==='authorization');
+  const authNote = hasAuth ? ' It logs in first and carries the login token through the protected steps automatically.' : '';
+  el.innerHTML =
+    `<h4>📋 What this test will do</h4>`+
+    `<p>It simulates up to <b>${peak||'?'} users</b> over <b>${dur||'?'} seconds</b> doing ${scs.length} ${scs.length===1?'journey':'journeys'}:${authNote}</p>`+
+    `<ul>${journeys}</ul>`+
+    `<p>${thrText}</p>`+
+    (planRationale ? `<div class="why"><b>Why the AI planned it this way:</b> ${esc(planRationale)}</div>` : '');
+}
+
+/* ---------- editable plan form (review step) ----------
+   Summary first, details on demand: each journey lists its steps as one line each;
+   clicking a step opens its request data, checks and advanced options. */
+const METHODS=["GET","POST","PUT","PATCH","DELETE"];
+let _reviewPlanId=null;                 // which plan the review state below belongs to
+let openSteps=new Set();                // "si:sti" of steps whose details are open
+let jsonSteps=new Set();                // steps whose body is being edited as raw JSON
+let advSteps=new Set();                 // steps whose "Advanced" block is open
+let dynUndo={};                         // "si:sti" -> body before the last AI suggestion
+let dataFileInfo=null;                  // {filename,row_count,sample_rows} of the attached file
+let dataRowMode='random';               // random | sequential | unique
+let _loadAsked=null;                    // {users,duration} as typed on this page, if changed
+
+function stepKey(si,sti){ return si+':'+sti; }
+
+/* A different plan was opened: start its review from a clean slate. */
+function resetReviewState(){
+  openSteps=new Set(); jsonSteps=new Set(); advSteps=new Set(); dynUndo={}; _loadAsked=null;
+  document.getElementById('previewBox').style.display='none';
+  // data file: use what the plan itself says (a file uploaded for another plan is dropped)
+  const df=planModel.data_file;
+  currentDataFileId=null;
+  dataColumns = df ? (df.fields||[]) : [];
+  dataFileInfo = df ? {filename:df.filename,row_count:df.row_count||0,sample_rows:[]} : null;
+  dataRowMode = (df&&df.row_mode)||'random';
+  // connection options come from the plan too
+  document.getElementById('headersList').innerHTML='';
+  Object.entries(planModel.headers||{}).forEach(([k,v])=>addHeader(k,v));
+  document.getElementById('connDetails').open=false;
+}
+
+function renderPlanForm(){
+  _rdPaths=[];
+  if(_reviewPlanId!==currentPlanId){ _reviewPlanId=currentPlanId; resetReviewState(); }
+  document.getElementById('pfTarget').value=planModel.target_base_url||'';
+  document.getElementById('environment').value=planModel.environment||'';
+  document.getElementById('insecureTls').checked=!!planModel.insecure_tls;
+  renderLoad(); renderDataCard(); renderConnCount();
+  const host=document.getElementById('scenarios'); host.innerHTML='';
+  (planModel.scenarios||[]).forEach((sc,si)=>host.appendChild(scenarioCard(sc,si)));
+  const th=document.getElementById('thresholds'); th.innerHTML='';
+  (planModel.thresholds||[]).forEach((t,ti)=>th.appendChild(thresholdRow(t,ti)));
+  if(!(planModel.thresholds||[]).length){
+    th.innerHTML='<div class="note warn">No rules yet — without at least one, the result cannot be judged pass or fail.</div>';
+  }
+  updateWeightBadges();
+  renderSummary();
+}
+
+/* ----- 1 · target & load ----- */
+function loadOfProfile(lp){
+  const stages=(lp&&lp.stages)||[];
+  const type=(lp&&lp.type)||'ramp';
+  const peak=stages.reduce((m,s)=>Math.max(m,s.target_users||0),0);
+  // a stress test steps past the number asked for; the 4th of its 6 stages is that number
+  const users=(type==='stress'&&stages.length===6) ? (stages[3].target_users||peak) : peak;
+  return {type, users, duration:stages.reduce((a,s)=>a+(s.duration_seconds||0),0), stages};
+}
+function renderLoad(){
+  const l=loadOfProfile(planModel.load_profile);
+  const asked=_loadAsked||{};
+  document.getElementById('pfType').value=l.type;
+  document.getElementById('pfUsers').value=asked.users||l.users||'';
+  document.getElementById('pfDuration').value=asked.duration||l.duration||'';
+  document.getElementById('pfShape').textContent = l.stages.length
+    ? 'Load shape: '+l.stages.map(s=>s.target_users+' users for '+s.duration_seconds+'s').join(' → ') : '';
+}
+async function updateLoad(){
+  const users=parseInt(document.getElementById('pfUsers').value,10);
+  const duration=parseInt(document.getElementById('pfDuration').value,10);
+  const status=document.getElementById('genStatus');
+  if(!(users>0) || !(duration>0)){ status.className='statusline err'; status.textContent='Peak users and duration must be whole numbers above 0.'; return; }
+  try{
+    const r=await fetch('/api/load-profile',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({type:document.getElementById('pfType').value,max_users:users,duration_seconds:duration})});
+    const j=await r.json(); if(!r.ok) throw new Error('that load size is not valid');
+    planModel.load_profile=j.load_profile;
+    _loadAsked={users,duration};                 // what was asked for, not the rounded total
+    status.className='statusline'; status.textContent='';
+    renderLoad(); renderSummary();
+  }catch(e){ status.className='statusline err'; status.textContent='Could not update the load: '+e.message; }
+}
+function renderConnCount(){
+  const n=document.querySelectorAll('#headersList .endpoint').length;
+  const bits=[]; if(n) bits.push(n+' header'+(n===1?'':'s'));
+  if(planModel.environment) bits.push(planModel.environment);
+  if(planModel.insecure_tls) bits.push('TLS check off');
+  document.getElementById('connCount').textContent = bits.length ? '· '+bits.join(' · ') : '';
+}
+
+/* ----- 2 · test data file ----- */
+const ROW_MODES=[
+  ['random','In random order — a row can be used more than once'],
+  ['sequential','In file order — starts again at the top when rows run out'],
+  ['unique','Each row once — the test stops when rows run out'],
+];
+function renderDataCard(){
+  const card=document.getElementById('dataCard'), dz=document.getElementById('dz');
+  if(!dataFileInfo){ card.style.display='none'; dz.style.display='block';
+    dz.innerHTML='📁 Click to upload a CSV / TSV / TXT / JSON file'; return; }
+  dz.style.display='none'; card.style.display='block';
+  const cols=dataColumns||[], rows=dataFileInfo.sample_rows||[];
+  let table='';
+  if(cols.length && rows.length){
+    table='<div class="dfile-scroll"><table><thead><tr>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>'+
+      rows.map(r=>'<tr>'+cols.map(c=>'<td>'+esc(r[c]===undefined||r[c]===null?'':r[c])+'</td>').join('')+'</tr>').join('')+
+      '</tbody></table></div><div class="muted" style="font-size:11.5px;margin-top:4px">First '+rows.length+' of '+dataFileInfo.row_count+' rows.</div>';
+  } else if(cols.length){
+    table='<div style="margin-top:8px;font-size:12.5px">Columns: '+cols.map(c=>'<code class="k">'+esc(c)+'</code>').join(' ')+'</div>';
+  }
+  const tool=document.getElementById('tool').value;
+  card.innerHTML='<div class="dfile"><div class="dfile-head">📁 <b>'+esc(dataFileInfo.filename)+'</b>'+
+    '<span class="muted">'+(dataFileInfo.row_count||0).toLocaleString()+' rows · '+cols.length+' column'+(cols.length===1?'':'s')+'</span>'+
+    '<div class="spacer"></div>'+
+    '<button class="btn ghost sm" onclick="document.getElementById(\'dataFile\').click()">Replace</button>'+
+    '<button class="btn danger sm" onclick="removeDataFile()">Remove</button></div>'+table+
+    '<div class="dfile-mode"><label for="rowMode" style="margin:0">Use the rows</label>'+
+    '<select id="rowMode" onchange="dataRowMode=this.value;renderDataCard()">'+
+      ROW_MODES.map(m=>'<option value="'+m[0]+'" '+(m[0]===dataRowMode?'selected':'')+'>'+m[1]+'</option>').join('')+'</select></div>'+
+    (dataRowMode==='unique' ? '<div class="muted" style="font-size:11.5px;margin-top:6px">With more than one journey, each journey gets its own share of the rows. '+(dataFileInfo.row_count||0).toLocaleString()+' rows allow that many journey runs in total.</div>' : '')+
+    (tool && tool!=='k6' ? '<div class="note warn" style="margin-top:8px">Data files are only built into k6 scripts. A '+esc(tool)+' script will not read this file.</div>' : '')+
+    '</div>';
+}
+async function uploadData(){
+  const input=document.getElementById('dataFile'); const info=document.getElementById('dataInfo');
+  if(!input.files||!input.files.length) return;
+  const fd=new FormData(); fd.append('file',input.files[0]);
+  info.style.display='flex'; info.className='note info'; info.textContent='Uploading & checking the file…';
+  try{
+    const r=await fetch('/api/data',{method:'POST',body:fd}); const j=await r.json();
+    if(!r.ok) throw new Error(j.detail||'upload failed');
+    currentDataFileId=j.data_file_id; dataColumns=j.fields;
+    dataFileInfo={filename:j.filename,row_count:j.row_count,sample_rows:j.sample_rows||[]};
+    if((j.warnings||[]).length){ info.className='note warn'; info.textContent=j.warnings.join(' '); }
+    else info.style.display='none';
+    renderPlanForm();                         // columns are now offered in every request
+  }catch(e){ info.className='note err'; info.textContent='Could not use that file: '+e.message; }
+  input.value='';
+}
+function removeDataFile(){
+  currentDataFileId=null; dataColumns=[]; dataFileInfo=null; dataRowMode='random';
+  if(planModel) planModel.data_file=null;
+  document.getElementById('dataInfo').style.display='none';
+  renderPlanForm();
+}
+
+/* ----- 3 · journeys ----- */
+function scenarioCard(sc,si){
+  const el=document.createElement('div'); el.className='scn'; el.dataset.si=si;
+  const tt=sc.think_time||{min_seconds:1,max_seconds:3};
+  el.innerHTML=`
+    <div class="scn-head">
+      <input class="name" value="${esc(sc.name||'')}" oninput="planModel.scenarios[${si}].name=this.value;renderSummary()" placeholder="Journey name" aria-label="Journey name"/>
+      <div class="weightwrap">
+        <span class="muted" style="font-size:11px;white-space:nowrap">Traffic share<i class="infohint" data-tip="What share of virtual users run this journey. With several journeys the sliders split your users (e.g. 70% browse, 30% checkout). With one journey it is always 100%.">i</i></span>
+        ${(planModel.scenarios||[]).length>1
+          ? `<input type="range" min="1" max="10" step="1" value="${Math.max(1,Math.round(sc.weight*10)||1)}" oninput="setWeight(${si},this.value)" aria-label="Traffic share"/>`
+          : ''}
+        <span class="wbadge" id="wb${si}">—</span>
+      </div>
+      <button class="iconbtn" title="Remove this journey" onclick="delScenario(${si})">×</button>
+    </div>
+    <div id="steps${si}"></div>
+    <div class="btnrow" style="margin-top:6px;flex-wrap:wrap">
+      <button class="btn ghost sm" onclick="addStep(${si})">+ Add step</button>
+      <div class="spacer"></div>
+      <span class="muted" style="font-size:12px">Pause between steps<i class="infohint" data-tip="Real users pause between actions. Each virtual user waits a random time in this range after every step.">i</i></span>
+      <input type="number" min="0" step="0.5" value="${tt.min_seconds}" style="width:64px;margin:0;padding:5px 7px;font-size:12.5px" aria-label="Shortest pause (seconds)" onchange="setThink(${si},'min_seconds',this.value)"/>
+      <span class="muted" style="font-size:12px">to</span>
+      <input type="number" min="0" step="0.5" value="${tt.max_seconds}" style="width:64px;margin:0;padding:5px 7px;font-size:12.5px" aria-label="Longest pause (seconds)" onchange="setThink(${si},'max_seconds',this.value)"/>
+      <span class="muted" style="font-size:12px">seconds</span>
+    </div>`;
+  const sh=el.querySelector('#steps'+si);
+  (sc.steps||[]).forEach((st,sti)=>sh.appendChild(stepRow(si,sti,st)));
+  return el;
+}
+function setThink(si,key,v){
+  const sc=planModel.scenarios[si]; sc.think_time=sc.think_time||{min_seconds:1,max_seconds:3};
+  sc.think_time[key]=Math.max(0,parseFloat(v)||0);
+  if(sc.think_time.max_seconds<sc.think_time.min_seconds){
+    if(key==='min_seconds') sc.think_time.max_seconds=sc.think_time.min_seconds;
+    else sc.think_time.min_seconds=sc.think_time.max_seconds;
+  }
+  renderPlanForm();
+}
+function toggleStep(si,sti){ const k=stepKey(si,sti); if(openSteps.has(k)) openSteps.delete(k); else openSteps.add(k); renderPlanForm(); }
+
+/* one line per step; details only when open */
+function stepRow(si,sti,st){
+  const k=stepKey(si,sti), open=openSteps.has(k);
+  const el=document.createElement('div'); el.className='stp'+(open?' open':'');
+  const fields=st.body?flattenBody(st.body):[];
+  const kinds=fields.map(f=>classifyValue(f.value).source);
+  const nDyn=kinds.filter(s=>s==='file'||s==='generated'||s==='mixed').length;
+  const missing=fields.filter(f=>{ const c=classifyValue(f.value); return c.source==='captured' && !capturedVars().has(c.token); }).length;
+  const tags=[];
+  if(st.body) tags.push(nDyn ? `<span class="stp-tag dyn">${nDyn} changing value${nDyn===1?'':'s'}</span>` : '<span class="stp-tag">fixed body</span>');
+  if(missing) tags.push(`<span class="stp-tag warn">${missing} value${missing===1?'':'s'} with no source</span>`);
+  const nChk=(st.assertions||[]).length; if(nChk) tags.push(`<span class="stp-tag">${nChk} check${nChk===1?'':'s'}</span>`);
+  const ex=(st.extract&&st.extract[0])||null; if(ex&&ex.var) tags.push(`<span class="stp-tag">captures ${esc(ex.var)}</span>`);
+  if(st.graphql_query) tags.push('<span class="stp-tag">GraphQL</span>');
+  const head=document.createElement('div'); head.className='stp-head';
+  head.setAttribute('role','button'); head.setAttribute('tabindex','0'); head.setAttribute('aria-expanded',open?'true':'false');
+  head.onclick=()=>toggleStep(si,sti);
+  head.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggleStep(si,sti); } };
+  head.innerHTML=`<span class="stp-chev">▶</span><span class="stp-m ${esc(st.method||'GET')}">${esc(st.method||'GET')}</span>`+
+    `<span class="stp-path">${esc(st.path||'/')}</span><span class="stp-tags">${tags.join('')}</span>`;
+  const del=document.createElement('button'); del.className='iconbtn'; del.title='Remove this step'; del.textContent='×';
+  del.onclick=e=>{ e.stopPropagation(); delStep(si,sti); };
+  head.appendChild(del);
+  el.appendChild(head);
+  if(!open) return el;
+
+  const body=document.createElement('div'); body.className='stp-body';
+  let h=`<div class="stp-req">
+      <select aria-label="Method" onchange="planModel.scenarios[${si}].steps[${sti}].method=this.value;renderPlanForm()">
+        ${METHODS.map(m=>`<option ${m===(st.method||'GET')?'selected':''}>${m}</option>`).join('')}</select>
+      <input aria-label="Path" value="${esc(st.path||'')}" placeholder="/path" oninput="planModel.scenarios[${si}].steps[${sti}].path=this.value" onchange="renderPlanForm()"/>
+    </div>`;
+  h+=requestDataHtml(si,sti,st);
+  // checks
+  h+=`<div class="stp-h">Checks on the response<i class="infohint" data-tip="Beyond a successful status: confirm the response really is right (contains a value, a field equals something, answers fast enough).">i</i></div>`;
+  (st.assertions||[]).forEach((a,ai)=>{ h+=assertRowHtml(si,sti,ai,a); });
+  if(!(st.assertions||[]).length) h+='<div class="rd-empty">None yet — only the status code is checked.</div>';
+  h+=`<button class="btn ghost sm" style="padding:4px 10px" onclick="addAssertion(${si},${sti})">✔ Add check</button> `+
+     `<button class="btn ghost sm" style="padding:4px 10px" onclick="openSuggestChecks(${si},${sti})">✨ Suggest checks from a response</button>`;
+  // advanced: capture + GraphQL
+  const advOpen=advSteps.has(k)||!!ex||!!st.graphql_query;
+  h+=`<details class="rv-more" ${advOpen?'open':''} ontoggle="this.open?advSteps.add('${k}'):advSteps.delete('${k}')">
+        <summary>Advanced — reuse a value from this response, GraphQL</summary><div style="margin-top:10px">`;
+  if(ex){
+    const src=ex.source||'json';
+    const srcOpts=['json','header','cookie','regex'].map(o=>`<option ${o===src?'selected':''}>${o}</option>`).join('');
+    const ph=src==='header'?'header name e.g. X-Auth-Token':src==='cookie'?'cookie name e.g. session':src==='regex'?'pattern e.g. token=([A-Za-z0-9]+)':'json path e.g. token or data[0].id';
+    h+=`<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted)">🔗 Capture
+        <input style="width:110px;margin:0;padding:5px 8px" value="${esc(ex.var)}" placeholder="name" oninput="setExtract(${si},${sti},'var',this.value)" onchange="renderPlanForm()"/> from the
+        <select style="width:auto;margin:0;padding:5px 8px" onchange="setExtract(${si},${sti},'source',this.value);renderPlanForm()">${srcOpts}</select>
+        <input style="width:170px;margin:0;padding:5px 8px" value="${esc(ex.path)}" placeholder="${ph}" oninput="setExtract(${si},${sti},'path',this.value)"/>
+        then use it in later steps as <code class="k">\${${esc(ex.var||'name')}}</code>
+        <button class="iconbtn" onclick="removeExtract(${si},${sti})" style="padding:2px 7px">×</button></div>`;
+  } else {
+    h+=`<button class="btn ghost sm" style="padding:4px 10px" onclick="addExtract(${si},${sti})">🔗 Capture a value from this response to reuse later</button>`;
+  }
+  h+='<div style="margin-top:8px">';
+  if(st.graphql_query){
+    h+=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;font-size:12.5px;color:var(--muted)">⬡ GraphQL query<i class="infohint" data-tip="This step sends a GraphQL request: body = {query, variables}. The request data above becomes the variables.">i</i><button class="iconbtn" style="padding:2px 7px" onclick="removeGql(${si},${sti})">×</button></div>`+
+       `<textarea style="width:100%;min-height:60px;font-family:ui-monospace,monospace;font-size:11.5px" oninput="setGql(${si},${sti},this.value)" placeholder="query { ... }">${esc(st.graphql_query)}</textarea>`;
+  } else {
+    h+=`<button class="btn ghost sm" style="padding:4px 10px" onclick="addGql(${si},${sti})">⬡ Make this a GraphQL query</button>`;
+  }
+  h+='</div></div></details>';
+  body.innerHTML=h;
+  el.appendChild(body);
+  return el;
+}
+
+/* ----- request data: where each value of the body comes from -----
+   A value is one of:  fixed text/number · a column of the data file (${column}) ·
+   generated fresh for every request (${uuid}, ${randomEmail} …) · captured from an
+   earlier response (${token}).  No ${...} has to be typed by hand. */
+const GEN_KINDS=[
+  ['uuid','Unique ID'],['randomEmail','Unique email'],['sequential','Unique number'],
+  ['randomInt','Random number between…'],['randomString','Random text of length…'],
+  ['randomFrom','Random pick from a list…'],['timestamp','Current time (ms)'],
+  ['dateOffset','Date some days from now…'],
+  ['randomFullName','Random full name'],['randomFirstName','Random first name'],['randomLastName','Random last name'],
+  ['randomCompanyName','Random company'],['randomStreetAddress','Random street address'],['randomCity','Random city'],
+  ['randomState','Random state'],['randomZipCode','Random zip code'],['randomPhone','Random phone'],
+  ['randomCatchPhrase','Random phrase'],['randomBic','Random code (BIC-like)'],
+];
+const GEN_NAMES=new Set(GEN_KINDS.map(g=>g[0]).concat(['vu','iter','randomBankAccountBic']));
+const GEN_DEFAULT_ARGS={randomInt:'1,100',randomString:'8',randomFrom:'a,b,c',dateOffset:"3,'days'"};
+
+function flattenBody(v,path){
+  path=path||[]; const out=[];
+  if(Array.isArray(v)){ if(!v.length&&path.length) out.push({path,value:v}); v.forEach((x,i)=>out.push(...flattenBody(x,path.concat(i)))); }
+  else if(v&&typeof v==='object'){ const ks=Object.keys(v); if(!ks.length&&path.length) out.push({path,value:v}); ks.forEach(k=>out.push(...flattenBody(v[k],path.concat(k)))); }
+  else out.push({path,value:v});
+  return out;
+}
+function pathLabel(path){ return path.map((p,i)=>typeof p==='number'?'['+p+']':(i?'.':'')+p).join(''); }
+function getAt(obj,path){ return path.reduce((o,k)=>(o==null?o:o[k]),obj); }
+function setAt(obj,path,val){ let o=obj; for(let i=0;i<path.length-1;i++) o=o[path[i]]; o[path[path.length-1]]=val; }
+function delAt(obj,path){ let o=obj; for(let i=0;i<path.length-1;i++) o=o[path[i]]; const k=path[path.length-1]; if(Array.isArray(o)) o.splice(k,1); else delete o[k]; }
+function capturedVars(){
+  const s=new Set(); (planModel.scenarios||[]).forEach(sc=>(sc.steps||[]).forEach(st=>(st.extract||[]).forEach(e=>{ if(e.var) s.add(e.var); })));
+  return s;
+}
+function classifyValue(v){
+  if(typeof v!=='string') return {source:'fixed',token:''};
+  const m=v.trim().match(/^\$\{([^}]+)\}$/);
+  if(!m) return {source:/\$\{[^}]+\}/.test(v)?'mixed':'fixed',token:''};
+  const token=m[1].trim(), base=token.split('(')[0];
+  if(GEN_NAMES.has(base)) return {source:'generated',token,base,args:(token.match(/\((.*)\)$/)||[,''])[1]};
+  if((dataColumns||[]).includes(token)) return {source:'file',token};
+  return {source:'captured',token};
+}
+let _rdPaths=[];        // field paths of the open tables, addressed by index from the handlers
+function requestDataHtml(si,sti,st){
+  const k=stepKey(si,sti);
+  let h=`<div class="stp-h">Request data<i class="infohint" data-tip="What this step sends. For each value choose: Fixed (always the same), From data file (a column of your uploaded file), or Generated (new for every request, so requests are unique).">i</i></div>`;
+  if(!st.body){
+    return h+`<div class="rd-empty">This request sends no body.</div>`+
+      `<button class="btn ghost sm" style="padding:4px 10px" onclick="planModel.scenarios[${si}].steps[${sti}].body={};renderPlanForm()">+ Add a body</button>`;
+  }
+  if(jsonSteps.has(k)){
+    h+=`<textarea id="bodyJson_${si}_${sti}" style="width:100%;min-height:150px;font-family:ui-monospace,Menlo,monospace;font-size:12px" oninput="setBodyJson(${si},${sti},this.value)">${esc(JSON.stringify(st.body,null,2))}</textarea>`+
+       `<div class="statusline" id="bodyJsonMsg_${si}_${sti}"></div>`+
+       `<button class="btn ghost sm" style="padding:4px 10px" onclick="jsonSteps.delete('${k}');renderPlanForm()">← Back to the field list</button>`;
+    return h;
+  }
+  const fields=flattenBody(st.body);
+  if(!fields.length) h+='<div class="rd-empty">The body is empty — add a field.</div>';
+  else{
+    h+='<table class="rd"><thead><tr><th>Field</th><th>Comes from</th><th>Value</th><th></th></tr></thead><tbody>';
+    fields.forEach(f=>{ const fi=_rdPaths.push({si,sti,path:f.path})-1; h+=fieldRowHtml(fi,f); });
+    h+='</tbody></table>';
+  }
+  h+=`<div class="btnrow" style="margin-top:8px;flex-wrap:wrap">
+        <input id="newField_${si}_${sti}" placeholder="new field name" style="width:170px;margin:0;padding:6px 8px;font-size:12.5px" aria-label="New field name"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();addBodyField(${si},${sti})}"/>
+        <button class="btn ghost sm" style="padding:4px 10px" onclick="addBodyField(${si},${sti})">+ Add field</button>
+        <div class="spacer"></div>
+        <button class="btn ghost sm" style="padding:4px 10px" id="dynBtn_${si}_${sti}" onclick="suggestSources(${si},${sti})">✨ Suggest with AI</button>
+        <button class="btn ghost sm" style="padding:4px 10px" onclick="jsonSteps.add('${k}');renderPlanForm()">Edit as JSON</button>
+      </div>
+      <div class="note" id="dynNote_${si}_${sti}" style="display:none;margin-top:8px"></div>`;
+  if(dynUndo[k]){
+    h+=`<div class="note ok" style="margin-top:8px"><span>✨ The AI filled in the sources above. Check them — nothing is final until you approve.</span>
+        <button class="btn ghost sm" style="padding:3px 9px;margin-left:auto" onclick="undoSuggest(${si},${sti})">Undo</button></div>`;
+  }
+  return h;
+}
+function fieldRowHtml(fi,f){
+  const c=classifyValue(f.value);
+  const opts=[['fixed','Fixed value'],['file','From data file'],['generated','Generated']];
+  if(c.source==='captured') opts.push(['captured','From an earlier step']);
+  if(c.source==='mixed') opts.push(['mixed','Text with values in it']);
+  const srcSel=`<select aria-label="Where ${esc(pathLabel(f.path))} comes from" onchange="setFieldSource(${fi},this.value)">`+
+    opts.map(o=>`<option value="${o[0]}" ${o[0]===c.source?'selected':''}>${o[1]}</option>`).join('')+'</select>';
+  let val='';
+  if(c.source==='fixed'){
+    const t = f.value===null?'null':typeof f.value==='boolean'?'bool':typeof f.value==='number'?'number':typeof f.value==='object'?'json':'text';
+    const shown = t==='text'?f.value:(t==='null'?'':JSON.stringify(f.value));
+    val=`<div class="rd-val"><input value="${esc(shown)}" ${t==='null'?'disabled placeholder="(empty)"':''} aria-label="Value" oninput="setFieldFixed(${fi},this.value)"/>`+
+        `<select class="sm" aria-label="Kind of value" onchange="setFieldType(${fi},this.value)">`+
+        [['text','text'],['number','number'],['bool','true / false'],['null','empty (null)']].concat(t==='json'?[['json','list / object']]:[])
+          .map(o=>`<option value="${o[0]}" ${o[0]===t?'selected':''}>${o[1]}</option>`).join('')+'</select></div>';
+  } else if(c.source==='file'){
+    const cols=(dataColumns||[]);
+    val=`<div class="rd-val"><select aria-label="Column" onchange="setFieldToken(${fi},this.value)">`+
+        cols.map(col=>`<option value="${esc(col)}" ${col===c.token?'selected':''}>column: ${esc(col)}</option>`).join('')+'</select></div>';
+  } else if(c.source==='generated'){
+    const known=GEN_KINDS.some(g=>g[0]===c.base);
+    val=`<div class="rd-val"><select aria-label="What to generate" onchange="setFieldGen(${fi},this.value)">`+
+        GEN_KINDS.map(g=>`<option value="${g[0]}" ${g[0]===c.base?'selected':''}>${g[1]}</option>`).join('')+
+        (known?'':`<option selected value="${esc(c.base)}">${esc(c.token)}</option>`)+'</select>'+genArgsHtml(fi,c)+'</div>';
+  } else if(c.source==='captured'){
+    const have=capturedVars().has(c.token);
+    val=`<div class="rd-val"><code class="k">${esc(c.token)}</code>`+(have
+        ? '<span class="muted" style="font-size:12px">captured from an earlier response</span>'
+        : (dataFileInfo
+            ? '<span style="font-size:12px;color:var(--amber)">⚠ not a column of the data file and not captured — it would be sent empty</span>'
+            : '<span style="font-size:12px;color:var(--amber)">⚠ no source yet — upload a data file with this column, or choose another source</span>'))+'</div>';
+  } else {
+    val=`<div class="rd-val"><input value="${esc(f.value)}" aria-label="Text" oninput="setFieldRaw(${fi},this.value)"/></div>`;
+  }
+  return `<tr class="${c.source}"><td class="f" title="${esc(pathLabel(f.path))}">${esc(pathLabel(f.path))}</td><td class="src">${srcSel}</td><td>${val}</td>`+
+         `<td class="x"><button class="iconbtn" title="Remove this field" style="padding:2px 7px" onclick="delBodyField(${fi})">×</button></td></tr>`;
+}
+function genArgsHtml(fi,c){
+  const a=(c.args||'').split(',').map(s=>s.trim());
+  if(c.base==='randomInt') return `<input class="sm" type="number" value="${esc(a[0]||'1')}" aria-label="From" onchange="setFieldGenArgs(${fi},this.value+','+this.nextElementSibling.nextElementSibling.value)"/><span class="muted">to</span><input class="sm" type="number" value="${esc(a[1]||'100')}" aria-label="To" onchange="setFieldGenArgs(${fi},this.previousElementSibling.previousElementSibling.value+','+this.value)"/>`;
+  if(c.base==='randomString') return `<input class="sm" type="number" min="1" value="${esc(a[0]||'8')}" aria-label="Length" onchange="setFieldGenArgs(${fi},this.value)"/><span class="muted">characters</span>`;
+  if(c.base==='randomFrom') return `<input value="${esc(c.args||'')}" placeholder="a, b, c" aria-label="Choices, comma-separated" onchange="setFieldGenArgs(${fi},this.value)"/>`;
+  if(c.base==='dateOffset') return `<input class="sm" type="number" value="${esc(a[0]||'3')}" aria-label="How many" onchange="setFieldGenArgs(${fi},this.value+',\\'days\\'')"/><span class="muted">days from now</span>`;
+  return '';
+}
+function rdTarget(fi){ const t=_rdPaths[fi]; return {t, body:planModel.scenarios[t.si].steps[t.sti].body}; }
+function rdSet(fi,value,rerender){ const {t,body}=rdTarget(fi); setAt(body,t.path,value); if(rerender) renderPlanForm(); }
+function setFieldSource(fi,src){
+  const {t,body}=rdTarget(fi); const cur=getAt(body,t.path);
+  if(src==='fixed') return rdSet(fi, typeof cur==='string'&&/\$\{/.test(cur)?'':cur, true);
+  if(src==='generated') return rdSet(fi,'${uuid}',true);
+  if(src==='file'){
+    if(!(dataColumns||[]).length){
+      const sec=document.getElementById('dz'); renderPlanForm();
+      const n=document.getElementById('dataInfo'); n.style.display='flex'; n.className='note warn';
+      n.textContent='Upload a data file first — then its columns can be chosen for a field.';
+      sec.scrollIntoView({behavior:'smooth',block:'center'}); return;
+    }
+    // prefer a column whose name matches the field
+    const name=String(t.path[t.path.length-1]).toLowerCase();
+    const col=dataColumns.find(c=>c.toLowerCase()===name)||dataColumns[0];
+    return rdSet(fi,'${'+col+'}',true);
+  }
+  renderPlanForm();
+}
+function setFieldFixed(fi,text){
+  const {t,body}=rdTarget(fi); const cur=getAt(body,t.path);
+  let v=text;
+  if(typeof cur==='number'){ const n=Number(text); v=(text.trim()!==''&&!isNaN(n))?n:cur; }
+  else if(typeof cur==='boolean'){ v=/^(true|yes|1)$/i.test(text.trim()); }
+  else if(cur&&typeof cur==='object'){ try{ v=JSON.parse(text); }catch(e){ return; } }
+  setAt(body,t.path,v);
+}
+function setFieldType(fi,type){
+  const {t,body}=rdTarget(fi); const cur=getAt(body,t.path);
+  const text = cur===null?'':(typeof cur==='object'?JSON.stringify(cur):String(cur));
+  let v=text;
+  if(type==='number'){ const n=Number(text); v=isNaN(n)||text.trim()===''?0:n; }
+  else if(type==='bool') v=/^(true|yes|1)$/i.test(text.trim());
+  else if(type==='null') v=null;
+  rdSet(fi,v,true);
+}
+function setFieldToken(fi,token){ rdSet(fi,'${'+token+'}',true); }
+function setFieldGen(fi,base){ rdSet(fi,'${'+base+(GEN_DEFAULT_ARGS[base]?'('+GEN_DEFAULT_ARGS[base]+')':'')+'}',true); }
+function setFieldGenArgs(fi,args){
+  const {t,body}=rdTarget(fi); const c=classifyValue(getAt(body,t.path));
+  rdSet(fi,'${'+c.base+'('+String(args).trim()+')}',false);
+}
+function setFieldRaw(fi,text){ rdSet(fi,text,false); }
+function delBodyField(fi){ const {t,body}=rdTarget(fi); delAt(body,t.path); renderPlanForm(); }
+function addBodyField(si,sti){
+  const inp=document.getElementById('newField_'+si+'_'+sti); const name=(inp.value||'').trim();
+  if(!name){ inp.focus(); return; }
+  const st=planModel.scenarios[si].steps[sti]; if(!st.body||Array.isArray(st.body)) st.body={};
+  // "address.city" adds a field inside address
+  const parts=name.split('.').map(s=>s.trim()).filter(Boolean); let o=st.body;
+  parts.slice(0,-1).forEach(p=>{ if(!o[p]||typeof o[p]!=='object'||Array.isArray(o[p])) o[p]={}; o=o[p]; });
+  o[parts[parts.length-1]]='';
+  renderPlanForm();
+  const again=document.getElementById('newField_'+si+'_'+sti); if(again) again.focus();
+}
+function setBodyJson(si,sti,text){
+  const msg=document.getElementById('bodyJsonMsg_'+si+'_'+sti);
+  try{
+    const v=text.trim()?JSON.parse(text):null;
+    if(v!==null&&(typeof v!=='object'||Array.isArray(v))) throw new Error('the body must be a JSON object { … }');
+    planModel.scenarios[si].steps[sti].body=v; msg.className='statusline ok'; msg.textContent='✓ Valid JSON — saved.';
+  }catch(e){ msg.className='statusline err'; msg.textContent='Not saved yet: '+e.message; }
+}
+/* AI proposes a source for each field; the user reviews (and can undo). */
+async function suggestSources(si,sti){
+  const st=planModel.scenarios[si].steps[sti], k=stepKey(si,sti);
+  const n=document.getElementById('dynNote_'+si+'_'+sti), btn=document.getElementById('dynBtn_'+si+'_'+sti);
+  n.style.display='flex'; n.className='note info'; n.textContent='The AI is choosing a source for each field…'; btn.disabled=true;
+  try{
+    const payload={body:st.body}; if(currentDataFileId) payload.data_file_id=currentDataFileId;
+    const r=await fetch('/api/dynamize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'failed');
+    dynUndo[k]=JSON.parse(JSON.stringify(st.body));
+    st.body=j.body; refreshUsage(); renderPlanForm();
+  }catch(e){ n.className='note err'; n.textContent='Could not get a suggestion: '+e.message; btn.disabled=false; }
+}
+function undoSuggest(si,sti){ const k=stepKey(si,sti); if(dynUndo[k]){ planModel.scenarios[si].steps[sti].body=dynUndo[k]; delete dynUndo[k]; } renderPlanForm(); }
+
+/* ----- preview: the requests that will be sent (nothing is sent now) ----- */
+async function fetchPreview(){
+  const payload={load_model:planModel, samples:3};
+  if(currentDataFileId){ payload.data_file_id=currentDataFileId; payload.data_row_mode=dataRowMode; }
+  else if(planModel.data_file){ payload.data_row_mode=dataRowMode; }
+  const r=await fetch('/api/request-preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const j=await r.json(); if(!r.ok) throw new Error(typeof j.detail==='string'?j.detail:'the plan has a value that is not valid yet');
+  return j;
+}
+async function previewRequests(){
+  const box=document.getElementById('previewBox'), btn=document.getElementById('previewBtn');
+  box.style.display='block'; box.innerHTML='<div class="pv muted">Building the preview…</div>'; btn.disabled=true;
+  try{
+    const j=await fetchPreview();
+    let h='<div class="pv"><div style="display:flex;align-items:center;gap:8px"><b>What will be sent</b>'+
+      '<span class="muted" style="font-size:12px">sample values — nothing was sent to the target</span><div class="spacer"></div>'+
+      '<button class="btn ghost sm" style="padding:3px 9px" onclick="document.getElementById(\'previewBox\').style.display=\'none\'">Close</button></div>';
+    j.steps.forEach(s=>{
+      h+='<div class="pv-step"><div style="font-size:12.5px"><span class="stp-m '+esc(s.method)+'">'+esc(s.method)+'</span> <b>'+esc(s.path)+'</b> <span class="muted">· '+esc(s.scenario)+'</span>'+
+         (s.dynamic?'':' <span class="muted">· the same every time</span>')+'</div>';
+      s.requests.forEach(q=>{
+        h+='<div class="pv-req"><div class="pv-url">'+esc(q.method)+' '+esc(q.url)+(q.row_number?' <span class="muted" style="font-weight:400">· data row '+q.row_number+'</span>':'')+'</div>'+
+           (q.body?'<pre>'+esc(JSON.stringify(q.body,null,2))+'</pre>':'')+'</div>';
+      });
+      if(s.run_time_values.length) h+='<div class="muted" style="font-size:12px">Filled in while the test runs (from an earlier response): '+s.run_time_values.map(v=>'<code class="k">'+esc(v)+'</code>').join(' ')+'</div>';
+      if(s.undefined.length) h+='<div class="note warn" style="margin-top:6px">⚠ No source for '+s.undefined.map(v=>'<code class="k">'+esc(v)+'</code>').join(' ')+' — it would be sent empty. Pick a data-file column or another source for it.</div>';
+      h+='</div>';
+    });
+    box.innerHTML=h+'</div>';
+  }catch(e){ box.innerHTML='<div class="note err">Could not build the preview: '+esc(e.message)+'</div>'; }
+  finally{ btn.disabled=false; }
+}
+
+function setGql(si,sti,v){ planModel.scenarios[si].steps[sti].graphql_query=v; }
+function addGql(si,sti){ const st=planModel.scenarios[si].steps[sti]; st.graphql_query='query {\n  \n}'; if(st.method==='GET'){st.method='POST';} advSteps.add(stepKey(si,sti)); renderPlanForm(); }
+function removeGql(si,sti){ planModel.scenarios[si].steps[sti].graphql_query=''; renderPlanForm(); }
+const CHECK_TYPES=[
+  {k:'body_contains', label:'Response body contains', vph:'text e.g. <Rate>'},
+  {k:'not_contains',  label:'Response body does NOT contain', vph:'text e.g. <Error>'},
+  {k:'status',        label:'Status code is', vph:'e.g. 200'},
+  {k:'json_path',     label:'JSON field compares', vph:'expected value', path:true},
+  {k:'response_time', label:'Response time under (ms)', vph:'e.g. 2000'},
+];
+function assertRowHtml(si,sti,ai,a){
+  const typeOpts=CHECK_TYPES.map(t=>`<option value="${t.k}" ${t.k===a.kind?'selected':''}>${t.label}</option>`).join('');
+  const ct=CHECK_TYPES.find(t=>t.k===a.kind)||CHECK_TYPES[0];
+  const ops=['eq','ne','gt','lt','contains'];
+  const opOpts=ops.map(o=>`<option ${o===a.op?'selected':''}>${o}</option>`).join('');
+  return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;flex-wrap:wrap;background:#f7faf8;padding:6px 8px;border-radius:8px">`+
+    `<span style="color:var(--teal-d)">✔</span>`+
+    `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'kind',this.value);renderPlanForm()">${typeOpts}</select>`+
+    (ct.path?`<input style="width:100px;padding:4px 7px" value="${esc(a.path||'')}" placeholder="field" oninput="setAssert(${si},${sti},${ai},'path',this.value)"/>`+
+      `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'op',this.value)">${opOpts}</select>`:'')+
+    `<input style="width:130px;padding:4px 7px" value="${esc(a.value||'')}" placeholder="${ct.vph}" oninput="setAssert(${si},${sti},${ai},'value',this.value)"/>`+
+    `<button class="iconbtn" style="padding:2px 7px" onclick="removeAssertion(${si},${sti},${ai})">×</button></div>`;
+}
+function setAssert(si,sti,ai,key,val){
+  const st=planModel.scenarios[si].steps[sti];
+  if(!st.assertions) st.assertions=[];
+  if(!st.assertions[ai]) st.assertions[ai]={kind:'status',op:'eq',path:'',value:''};
+  st.assertions[ai][key]=val;
+}
+function addAssertion(si,sti){
+  const st=planModel.scenarios[si].steps[sti];
+  if(!st.assertions) st.assertions=[];
+  st.assertions.push({kind:'status',op:'eq',path:'',value:'200'});
+  renderPlanForm();
+}
+function removeAssertion(si,sti,ai){
+  planModel.scenarios[si].steps[sti].assertions.splice(ai,1);
+  renderPlanForm();
+}
+function setExtract(si,sti,key,val){
+  const st=planModel.scenarios[si].steps[sti];
+  if(!st.extract||!st.extract.length) st.extract=[{var:'',source:'json',path:''}];
+  st.extract[0][key]=val;
+}
+function addExtract(si,sti){
+  planModel.scenarios[si].steps[sti].extract=[{var:'token',source:'json',path:'token'}];
+  renderPlanForm();
+}
+function removeExtract(si,sti){
+  planModel.scenarios[si].steps[sti].extract=[];
+  renderPlanForm();
+}
+const RULES=[
+  ['p95_ms','95% of responses are faster than','ms'],
+  ['p99_ms','99% of responses are faster than','ms'],
+  ['p50_ms','Half of responses are faster than','ms'],
+  ['avg_ms','The average response is faster than','ms'],
+  ['max_ms','The slowest response is faster than','ms'],
+  ['error_rate','The error rate stays under','%'],
+];
+function thresholdRow(t,ti){
+  const el=document.createElement('div');
+  const rule=RULES.find(r=>r[0]===t.metric);
+  if(rule && (t.op==='<'||t.op==='<=')){
+    // a sentence: only the number needs editing
+    el.className='rule';
+    const pct=rule[2]==='%';
+    const shown=pct ? +(t.value*100).toFixed(4) : t.value;
+    el.innerHTML=`<select aria-label="Rule" onchange="setRuleMetric(${ti},this.value)">
+        ${RULES.map(r=>`<option value="${r[0]}" ${r[0]===t.metric?'selected':''}>${r[1]}</option>`).join('')}</select>
+      <input type="number" step="any" min="0" value="${shown}" aria-label="Limit" oninput="setRuleValue(${ti},this.value)"/>
+      <span class="unit">${pct?'%':'ms'}</span>
+      <button class="iconbtn" title="Remove this rule" onclick="delThreshold(${ti})">×</button>`;
+    return el;
+  }
+  // anything unusual (a custom metric, or a "greater than" rule) keeps the full editor
+  el.className='thr';
+  const metrics=RULES.map(r=>r[0]);
+  el.innerHTML=`
+    <select onchange="planModel.thresholds[${ti}].metric=this.value;renderPlanForm()">
+      ${metrics.map(m=>`<option ${m===t.metric?'selected':''}>${m}</option>`).join('')}
+      ${metrics.includes(t.metric)?'':`<option selected>${esc(t.metric)}</option>`}</select>
+    <select onchange="planModel.thresholds[${ti}].op=this.value;renderPlanForm()">
+      ${["<","<=",">",">="].map(o=>`<option ${o===t.op?'selected':''}>${o}</option>`).join('')}</select>
+    <input type="number" step="any" value="${t.value}" oninput="planModel.thresholds[${ti}].value=parseFloat(this.value);renderSummary()"/>
+    <button class="iconbtn" onclick="delThreshold(${ti})">×</button>`;
+  return el;
+}
+function setRuleMetric(ti,metric){
+  const t=planModel.thresholds[ti]; const wasPct=t.metric==='error_rate', isPct=metric==='error_rate';
+  t.metric=metric;
+  if(wasPct!==isPct) t.value = isPct ? 0.05 : 500;      // the old number was in the other unit
+  renderPlanForm();
+}
+function setRuleValue(ti,text){
+  const t=planModel.thresholds[ti]; const n=parseFloat(text); if(isNaN(n)) return;
+  t.value = t.metric==='error_rate' ? n/100 : n;
+  renderSummary();
+}
+function setWeight(si,v){ planModel.scenarios[si].weight=(+v)/10; updateWeightBadges(); renderSummary(); }
+function updateWeightBadges(){
+  const total=(planModel.scenarios||[]).reduce((a,s)=>a+(s.weight||0),0)||1;
+  (planModel.scenarios||[]).forEach((s,i)=>{
+    const b=document.getElementById('wb'+i); if(b) b.textContent=Math.round((s.weight/total)*100)+'%';
+  });
+}
+function addScenario(){ planModel.scenarios.push({name:"New scenario",weight:1,
+  steps:[{name:"step",method:"GET",path:"/",body:null}],think_time:{min_seconds:1,max_seconds:3}});
+  openSteps.add(stepKey(planModel.scenarios.length-1,0)); renderPlanForm(); }
+function forgetOpenSteps(){ openSteps=new Set(); jsonSteps=new Set(); advSteps=new Set(); dynUndo={}; }
+function delScenario(si){
+  if((planModel.scenarios||[]).length<=1){ alert('A plan needs at least one journey.'); return; }
+  planModel.scenarios.splice(si,1); forgetOpenSteps(); renderPlanForm(); }
+function addStep(si){
+  const steps=planModel.scenarios[si].steps; steps.push({name:"step",method:"GET",path:"/",body:null});
+  openSteps.add(stepKey(si,steps.length-1)); renderPlanForm(); }     // open it, ready to fill in
+function delStep(si,sti){
+  if(planModel.scenarios[si].steps.length<=1){ alert('A journey needs at least one step.'); return; }
+  planModel.scenarios[si].steps.splice(sti,1); forgetOpenSteps(); renderPlanForm(); }
+function addThreshold(){ planModel.thresholds=planModel.thresholds||[];
+  planModel.thresholds.push({metric:"p95_ms",op:"<=",value:500}); renderPlanForm(); }
+function delThreshold(ti){ planModel.thresholds.splice(ti,1); renderPlanForm(); }
+
+/* raw <-> form sync */
+function renderRawFromModel(){ document.getElementById('planJson').value=JSON.stringify(planModel,null,2); }
+function toggleRaw(){
+  const raw=document.getElementById('rawToggle').checked;
+  if(raw){ renderRawFromModel(); document.getElementById('planForm').style.display='none';
+           document.getElementById('planJson').style.display='block'; }
+  else{ try{ planModel=JSON.parse(document.getElementById('planJson').value); }catch(e){ alert('Raw JSON is invalid — fix it before switching back.'); document.getElementById('rawToggle').checked=true; return; }
+        document.getElementById('planForm').style.display='block';
+        document.getElementById('planJson').style.display='none'; _loadAsked=null; renderPlanForm(); }
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+/* ---------- generate ---------- */
+async function doGenerate(){
+  const status=document.getElementById('genStatus');
+  // sync model from the active editor
+  document.getElementById('pfTarget') && (planModel.target_base_url=document.getElementById('pfTarget').value.trim());
+  if(document.getElementById('rawToggle').checked){
+    try{ planModel=JSON.parse(document.getElementById('planJson').value); }
+    catch(e){ status.className='statusline err'; status.textContent='Raw JSON invalid: '+e.message; return; }
+  }
+  // Accuracy guard: a ${name} with no source would be sent as an empty value.
+  try{
+    const pv=await fetchPreview();
+    const bad=[...new Set(pv.steps.flatMap(st=>st.undefined.map(u=>u+'  ('+st.method+' '+st.path+')')))];
+    if(bad.length && !confirm('These values have no source and would be sent empty:\n\n  '+bad.join('\n  ')+
+        '\n\nGenerate the script anyway?')){
+      status.className='statusline err'; status.textContent='Not generated — give those values a source first.'; return;
+    }
+  }catch(e){ status.className='statusline err'; status.textContent='The plan is not valid yet: '+e.message; return; }
+  status.className='statusline'; status.textContent='Generating script…';
+  try{
+    const payload={tool:document.getElementById('tool').value, load_model:planModel};
+    if(currentDataFileId) payload.data_file_id=currentDataFileId;
+    if(currentDataFileId || planModel.data_file) payload.data_row_mode=dataRowMode;
+    // The header list on this page is the truth (so removing a header really removes it).
+    const hdrs=readHeaders(); planModel.headers=hdrs; if(Object.keys(hdrs).length) payload.headers=hdrs;
+    const r=await fetch(`/api/plan/${currentPlanId}/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'generate failed');
+    currentScriptId=j.script_id;
+    document.getElementById('scriptOut').textContent=j.content;
+    document.getElementById('dlBtn').disabled=false;
+    document.getElementById('runBtn').disabled=(j.tool!=='k6');
+    document.getElementById('preflightBtn').disabled=false;
+    document.getElementById('validateBtn').disabled=false;
+    setGitExport(j.tool==='k6', '');
+    document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — from plan ${j.plan_id.slice(0,8)}`;
+    const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
+    if(j.tool!=='k6'){ const h=document.getElementById('runHint'); h.style.display='flex'; h.textContent='Live run is implemented for k6; download and run this '+j.tool+' script yourself.'; }
+    status.textContent='';
+    goStep(3); loadPlans();
+  }catch(e){ status.className='statusline err'; status.textContent='Error: '+e.message; }
+}
+
+/* Attach a data file that is already stored (e.g. one imported from Git). */
+async function attachStoredDataFile(id){
+  try{
+    const r=await fetch('/api/data/'+encodeURIComponent(id)); const j=await r.json(); if(!r.ok) return;
+    currentDataFileId=j.data_file_id; dataColumns=j.fields;
+    dataFileInfo={filename:j.filename,row_count:j.row_count,sample_rows:j.sample_rows||[]};
+    renderPlanForm();
+  }catch(e){}
+}
+function download(){ if(currentScriptId) location=`/api/scripts/${currentScriptId}/download`; }
+
+/* ---------- saved (non-secret) Git & Jenkins details ---------- */
+const GIT_FIELDS={repo_url:'gitRepo', branch:'gitBranch', framework:'gitFw', test:'gitTest'};
+const JK_FIELDS={url:'jkUrl', username:'jkUser', job:'jkJob', test:'jkTest', environment:'jkEnv',
+                 repo_url:'jkRepo', branch:'jkBranch', framework:'jkFw', git_credentials_id:'jkGitCred'};
+const FIELD_DEFAULTS={gitBranch:'main', jkBranch:'main', jkEnv:'dev'};
+let integrationsSeq=0;
+function setFields(map, values){
+  Object.entries(map).forEach(([key,id])=>{
+    const el=document.getElementById(id); if(!el) return;
+    el.value = values[key] ?? FIELD_DEFAULTS[id] ?? '';
+  });
+}
+async function applyIntegrations(planId){
+  const seq=++integrationsSeq;
+  try{
+    const j=await (await fetch('/api/integrations'+(planId?`?plan_id=${encodeURIComponent(planId)}`:''))).json();
+    if(seq!==integrationsSeq) return;            // a newer plan was opened meanwhile
+    setFields(GIT_FIELDS, j.git||{});
+    if(j.git && Array.isArray(j.git.ci) && j.git.ci.length)
+      document.querySelectorAll('.gitCi').forEach(c=>{ c.checked=j.git.ci.includes(c.value); });
+    const jv={...(j.jenkins||{})};
+    if(!jv.repo_url && j.git && j.git.repo_url) jv.repo_url=j.git.repo_url;
+    if(!jv.framework && j.git && j.git.framework) jv.framework=j.git.framework;
+    if(!jv.job && j.git && j.git.framework) jv.job=j.git.framework;
+    if(!jv.test && j.git && j.git.test) jv.test=j.git.test;
+    setFields(JK_FIELDS, jv);
+    showSaved('gitSaved', (j.saved||[]).includes('git'), 'git');
+    showSaved('jkSaved', (j.saved||[]).includes('jenkins'), 'jenkins');
+  }catch(e){ /* saved details are a convenience; never block the page */ }
+}
+function showSaved(id, saved, section){
+  const el=document.getElementById(id);
+  if(!saved){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='inline';
+  el.innerHTML=`· saved details loaded — just enter your token · <a href="#" onclick="forgetIntegrations('${section}');return false">Forget saved details</a>`;
+}
+async function forgetIntegrations(section){
+  if(!confirm(`Forget the saved ${section==='git'?'Git':'Jenkins'} details for this plan (and the last-used defaults)? Tokens were never saved.`)) return;
+  try{
+    await fetch(`/api/integrations?section=${section}`+(currentPlanId?`&plan_id=${encodeURIComponent(currentPlanId)}`:''),{method:'DELETE'});
+    applyIntegrations(currentPlanId);
+  }catch(e){}
+}
+applyIntegrations(null);
+
+/* ---------- run in Jenkins ---------- */
+let jk={queueId:null, build:null, logNext:0, timer:null, errors:0};
+function jkVal(id){ return document.getElementById(id).value.trim(); }
+function fillIfEmpty(id, v){ const el=document.getElementById(id); if(!el.value.trim() && v) el.value=v; }
+function syncJenkinsDefaults(){
+  fillIfEmpty('jkJob', jkVal('gitFw')); fillIfEmpty('jkTest', jkVal('gitTest'));
+  fillIfEmpty('jkRepo', jkVal('gitRepo')); fillIfEmpty('jkFw', jkVal('gitFw'));
+  if(jkVal('gitBranch') && jkVal('jkBranch')==='main') document.getElementById('jkBranch').value=jkVal('gitBranch');
+}
+function jkAuth(){
+  return {jenkins_url:jkVal('jkUrl'), username:jkVal('jkUser'), api_token:jkVal('jkToken'), job:jkVal('jkJob'), plan_id:currentPlanId||null};
+}
+function jkCheck(st){
+  const a=jkAuth();
+  if(!a.jenkins_url||!a.username||!a.api_token){ st.className='statusline err'; st.textContent='Enter the Jenkins URL, user name and API token.'; return null; }
+  if(!a.job){ st.className='statusline err'; st.textContent='Enter the Jenkins job name.'; return null; }
+  return a;
+}
+function toggleJenkinsSetup(){
+  syncJenkinsDefaults();
+  const el=document.getElementById('jkSetup'); el.style.display = el.style.display==='none' ? 'block' : 'none';
+}
+function jkSetPill(text, cls){
+  const p=document.getElementById('jkPill'); p.style.display='inline-flex'; p.textContent=text; p.className='pill '+cls;
+}
+async function jenkinsSetup(){
+  const st=document.getElementById('jkStatus'); const a=jkCheck(st); if(!a) return;
+  const body={...a, repo_url:jkVal('jkRepo'), branch:jkVal('jkBranch')||'main', framework:jkVal('jkFw'), git_credentials_id:jkVal('jkGitCred')};
+  if(!body.repo_url||!body.framework){ st.className='statusline err'; st.textContent='Enter the repository URL and framework name for the job.'; return; }
+  st.className='statusline'; st.textContent='Setting up the Jenkins job…';
+  try{
+    const j=await gitPost('/api/jenkins/setup-job', body);
+    st.className='statusline ok';
+    applyIntegrations(currentPlanId);
+    st.textContent=`Job '${j.job}' ${j.action}. It builds ${body.framework}/ci/Jenkinsfile from ${body.branch}.`+(j.warnings.length?' Note: '+j.warnings.join(' '):'');
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+async function jenkinsRun(){
+  syncJenkinsDefaults();
+  const st=document.getElementById('jkStatus'); const a=jkCheck(st); if(!a) return;
+  if(jk.timer){ clearInterval(jk.timer); jk.timer=null; }
+  jk={queueId:null, build:null, logNext:0, timer:null, errors:0};
+  const log=document.getElementById('jkLog'); log.textContent=''; log.style.display='none';
+  document.getElementById('jkResults').style.display='none';
+  document.getElementById('jkLink').style.display='none';
+  st.className='statusline'; st.textContent='Triggering Jenkins…';
+  document.getElementById('jkRunBtn').disabled=true;
+  try{
+    const j=await gitPost('/api/jenkins/trigger', {...a, test:jkVal('jkTest')||'all', environment:jkVal('jkEnv')||'dev'});
+    jk.queueId=j.queue_id; jkSetPill('queued','ghost'); applyIntegrations(currentPlanId);
+    st.textContent=`Triggered job '${j.job}'. Waiting for Jenkins…`+(j.warnings.length?' Note: '+j.warnings.join(' '):'');
+    jk.timer=setInterval(jenkinsPoll, 3000); jenkinsPoll();
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; document.getElementById('jkRunBtn').disabled=false; }
+}
+async function jenkinsPoll(){
+  if(jk.polling) return; jk.polling=true;
+  const st=document.getElementById('jkStatus'), log=document.getElementById('jkLog');
+  try{
+    const body={...jkAuth(), log_start:jk.logNext};
+    if(jk.build) body.build_number=jk.build; else body.queue_id=jk.queueId;
+    const j=await gitPost('/api/jenkins/status', body); jk.errors=0;
+    if(j.build_number && !jk.build){ jk.build=j.build_number; document.getElementById('jkStopBtn').disabled=false; }
+    if(j.build_url){ const l=document.getElementById('jkLink'); l.href=j.build_url; l.style.display='inline'; }
+    if(j.log){ log.style.display='block'; const atEnd=log.scrollTop+log.clientHeight>=log.scrollHeight-20;
+      log.textContent+=j.log; if(atEnd) log.scrollTop=log.scrollHeight; }
+    jk.logNext=j.log_next;
+    if(j.state==='queued'){ jkSetPill('queued','ghost'); st.className='statusline'; st.textContent='Queued in Jenkins: '+(j.why||'waiting'); }
+    else if(j.state==='running'){ jkSetPill('running','pass'); st.className='statusline'; st.textContent=`Build #${j.build_number} is running…`; }
+    else if(j.state==='cancelled'){ jenkinsDone(); jkSetPill('cancelled','na'); st.className='statusline err'; st.textContent=j.why||'Cancelled.'; }
+    else if(j.state==='finished' && !j.log_more){
+      jenkinsDone();
+      const v=j.verdict, res=j.result||'';
+      jkSetPill(v?v.toUpperCase():res, v==='pass'?'pass':v==='fail'?'fail':(res==='SUCCESS'?'pass':res==='ABORTED'?'na':'fail'));
+      st.className='statusline '+((v==='pass'||(!v&&res==='SUCCESS'))?'ok':'err');
+      st.textContent=`Build #${j.build_number} finished: ${res}`+(j.duration_ms?` in ${Math.round(j.duration_ms/1000)}s`:'')
+        +(v?` · verdict ${v.toUpperCase()}`:(res==='SUCCESS'?'':' · no k6 results were archived (see the console log)'));
+      renderJenkinsResults(j.results||[]);
+    }
+  }catch(e){
+    jk.errors++;
+    if(jk.errors>=3){ jenkinsDone(); st.className='statusline err'; st.textContent='Stopped following the build: '+e.message; }
+  }finally{ jk.polling=false; }
+}
+function jenkinsDone(){
+  if(jk.timer){ clearInterval(jk.timer); jk.timer=null; }
+  document.getElementById('jkRunBtn').disabled=false; document.getElementById('jkStopBtn').disabled=true;
+}
+function renderJenkinsResults(results){
+  const el=document.getElementById('jkResults'); if(!results.length){ el.style.display='none'; return; }
+  const fmt=(v,suf)=> v===null||v===undefined ? '—' : v+suf;
+  el.innerHTML=results.map(r=>`
+    <div style="display:flex;align-items:center;gap:8px;margin:6px 0"><b>${esc(r.test)}</b>
+      <span class="pill ${r.verdict==='pass'?'pass':r.verdict==='fail'?'fail':'na'}">${esc(r.verdict.toUpperCase())}</span></div>
+    <div class="tiles">
+      <div class="tile"><div class="v">${r.requests}</div><div class="l">Requests</div></div>
+      <div class="tile"><div class="v">${r.rps}</div><div class="l">Req/sec</div></div>
+      <div class="tile"><div class="v">${(r.error_rate*100).toFixed(2)}%</div><div class="l">Error rate</div></div>
+      <div class="tile"><div class="v">${fmt(r.avg_ms,' ms')}</div><div class="l">Avg</div></div>
+      <div class="tile"><div class="v">${fmt(r.p95_ms,' ms')}</div><div class="l">p95</div></div>
+      <div class="tile"><div class="v">${fmt(r.max_ms,' ms')}</div><div class="l">Max</div></div>
+    </div>
+    ${r.thresholds.length?'<table><thead><tr><th>Metric</th><th>Threshold</th><th>Result</th></tr></thead><tbody>'+
+      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed?'pass':'fail'}">${t.passed?'passed':'failed'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
+  el.style.display='block';
+}
+async function jenkinsStop(){
+  if(!jk.build) return;
+  const st=document.getElementById('jkStatus');
+  try{ await gitPost('/api/jenkins/stop', {...jkAuth(), build_number:jk.build}); st.className='statusline'; st.textContent=`Stopping build #${jk.build}…`; }
+  catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+(async()=>{ try{ const j=await (await fetch('/api/jenkins/settings')).json();
+  if(j.allowed_hosts&&j.allowed_hosts.length) document.getElementById('jkHint').textContent+=' Allowed Jenkins hosts: '+j.allowed_hosts.join(', ')+'.'; }catch(e){} })();
+
+/* ---------- save to Git ---------- */
+function setGitExport(enabled, reason){
+  document.getElementById('gitBtn').disabled=!enabled;
+  document.getElementById('gitZipBtn').disabled=!enabled;
+  const st=document.getElementById('gitStatus');
+  st.className='statusline'; st.textContent=reason||'';
+}
+async function loadExportSettings(){
+  try{ const j=await (await fetch('/api/export/settings')).json();
+    if(j.allowed_hosts&&j.allowed_hosts.length)
+      document.getElementById('gitHint').textContent+=' Allowed Git hosts: '+j.allowed_hosts.join(', ')+'.';
+  }catch(e){}
+}
+function exportBody(){
+  return {
+    framework_name:document.getElementById('gitFw').value.trim(),
+    test_name:document.getElementById('gitTest').value.trim(),
+    repo_url:document.getElementById('gitRepo').value.trim(),
+    branch:document.getElementById('gitBranch').value.trim()||'main',
+    ci:[...document.querySelectorAll('.gitCi:checked')].map(c=>c.value),
+    include_data:document.getElementById('gitData').checked,
+    data_file_id:currentDataFileId||null,
+  };
+}
+function exportReady(st){
+  const b=exportBody();
+  if(!currentScriptId){ st.className='statusline err'; st.textContent='Generate a k6 script first.'; return null; }
+  if(!b.framework_name||!b.test_name){ st.className='statusline err'; st.textContent='Enter a framework name and a test name.'; return null; }
+  return b;
+}
+function secretsNote(list){ return list&&list.length ? ' Add these as CI secrets: '+list.join(', ')+'.' : ''; }
+async function exportGit(){
+  const st=document.getElementById('gitStatus'); const b=exportReady(st); if(!b) return;
+  if(!b.repo_url){ st.className='statusline err'; st.textContent='Enter the Git repository URL.'; return; }
+  const token=document.getElementById('gitToken').value.trim();
+  if(b.repo_url.startsWith('https://')&&!token){ st.className='statusline err'; st.textContent='Enter an access token that can push to this repository.'; return; }
+  b.git_token=token||null;
+  st.className='statusline'; st.textContent='Pushing to Git…';
+  const btn=document.getElementById('gitBtn'); btn.disabled=true;
+  try{
+    const r=await fetch(`/api/scripts/${currentScriptId}/export/git`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'export failed');
+    applyIntegrations(currentPlanId);
+    st.className='statusline ok';
+    st.textContent=(j.changed ? `Committed ${j.commit.slice(0,8)} to ${j.branch}: ${j.framework}/tests/${j.test}.` : `No changes — ${j.framework}/tests/${j.test} is already up to date on ${j.branch}.`)
+      + secretsNote(j.required_secrets) + (j.warnings.length ? ' Note: '+j.warnings.join(' ') : '');
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+  finally{ btn.disabled=false; }
+}
+async function exportZip(){
+  const st=document.getElementById('gitStatus'); const b=exportReady(st); if(!b) return;
+  st.className='statusline'; st.textContent='Building framework…';
+  try{
+    const r=await fetch(`/api/scripts/${currentScriptId}/export/zip`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    if(!r.ok){ const j=await r.json(); throw new Error(j.detail||'export failed'); }
+    const blob=await r.blob(); const a=document.createElement('a');
+    const name=(r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
+    a.href=URL.createObjectURL(blob); a.download=name?name[1]:'framework.zip'; a.click(); URL.revokeObjectURL(a.href);
+    const sec=(r.headers.get('X-Required-Secrets')||'').split(',').filter(Boolean);
+    st.className='statusline ok'; st.textContent='Framework downloaded.'+secretsNote(sec);
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+loadExportSettings();
+
+/* ---------- import from Git ---------- */
+let gitScan=null, gitViewed=null;
+function gitSource(){
+  const s={repo_url:document.getElementById('impRepo').value.trim(),
+           branch:document.getElementById('impBranch').value.trim()||'main'};
+  const t=document.getElementById('impToken').value.trim(); if(t) s.git_token=t;
+  return s;
+}
+async function gitPost(url, body){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json(); if(!r.ok) throw new Error(j.detail||'request failed'); return j;
+}
+async function gitBrowse(){
+  const st=document.getElementById('impStatus'), out=document.getElementById('impResults');
+  const src=gitSource();
+  if(!src.repo_url){ st.className='statusline err'; st.textContent='Enter the Git repository URL.'; return; }
+  st.className='statusline'; st.textContent='Reading repository…'; out.innerHTML='';
+  document.getElementById('impScriptView').style.display='none';
+  const btn=document.getElementById('impBrowseBtn'); btn.disabled=true;
+  try{
+    gitScan=await gitPost('/api/git/scan', src);
+    const nTests=gitScan.frameworks.reduce((a,f)=>a+f.tests.length,0);
+    st.className='statusline ok';
+    st.textContent=`Commit ${gitScan.commit.slice(0,8)} on ${gitScan.branch}: ${gitScan.frameworks.length} PerfAgent framework(s), ${nTests} test(s), ${gitScan.other_scripts.length} other script(s).`
+      +(gitScan.truncated?' Large repository: only part of it was scanned.':'');
+    renderGitScan();
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+  finally{ btn.disabled=false; }
+}
+function renderGitScan(){
+  const out=document.getElementById('impResults'); let h='';
+  gitScan.frameworks.forEach((f,fi)=>{
+    h+=`<h3 style="margin:16px 0 4px;font-size:14px">${esc(f.name)} <span class="pill ghost">${esc(f.tool)}</span> ${f.path!==f.name?`<span class="muted" style="font-weight:400">${esc(f.path)}</span>`:''}</h3>
+      <table><thead><tr><th>Test</th><th>Target</th><th>Load</th><th>Needs</th><th>Status</th><th></th></tr></thead><tbody>`;
+    f.tests.forEach((t,ti)=>{
+      const load=t.error?'':`${esc(t.profile)} · ${t.peak_users} users · ${t.duration_seconds}s`;
+      const needs=[...(t.required_secrets||[]).map(x=>'🔑 '+esc(x)), t.data_file?('📁 '+esc(t.data_file)+(t.data_committed?'':' (not in Git)')):''].filter(Boolean).join('<br>')||'—';
+      const status=t.error?`<span class="pill fail">invalid</span>`:(t.edited_in_git?`<span class="pill na" title="loadtest.js was changed by hand in Git">edited in Git</span>`:`<span class="pill pass">ok</span>`);
+      const action=t.error?`<span class="muted">${esc(t.error)}</span>`:`<button class="btn ghost sm" onclick="gitImportStart(${fi},${ti})">Import</button>`;
+      h+=`<tr class="histrow"><td><b>${esc(t.test)}</b></td><td>${esc(t.target_base_url||'')}</td><td>${load}</td><td>${needs}</td><td>${status}</td><td>${action}</td></tr>
+          <tr id="impRow_${fi}_${ti}" style="display:none"><td colspan="6"></td></tr>`;
+    });
+    h+='</tbody></table>';
+  });
+  if(gitScan.other_scripts.length){
+    h+=`<h3 style="margin:16px 0 4px;font-size:14px">Other load-test scripts</h3>
+      <table><thead><tr><th>Path</th><th>Tool</th><th>Size</th><th></th></tr></thead><tbody>`+
+      gitScan.other_scripts.map((o,i)=>`<tr class="histrow"><td><code class="k">${esc(o.path)}</code></td><td>${esc(o.tool)}</td><td>${(o.size/1024).toFixed(1)} KB</td>
+        <td><button class="btn ghost sm" onclick="gitViewScript(${i})">View</button></td></tr>`).join('')+'</tbody></table>';
+  }
+  if(!gitScan.frameworks.length && !gitScan.other_scripts.length)
+    h='<div class="note info">No PerfAgent frameworks or load-test scripts were found on this branch.</div>';
+  out.innerHTML=h;
+}
+function gitImportStart(fi,ti){
+  const t=gitScan.frameworks[fi].tests[ti];
+  const row=document.getElementById(`impRow_${fi}_${ti}`); const cell=row.firstElementChild;
+  const secrets=(t.required_secrets||[]).map(x=>`<div class="field"><label>${esc(x)}</label>
+      <input type="password" class="impSecret" data-name="${esc(x)}" placeholder="Value for this secret (optional now)" autocomplete="new-password"/></div>`).join('');
+  cell.innerHTML=`<div style="padding:8px 0">${secrets?'<p class="hint">This test needs secrets that were never stored in Git. Enter them now, or add them later under Custom headers.</p>'+secrets:''}
+     ${t.edited_in_git?'<div class="note warn">loadtest.js was edited directly in Git. PerfAgent rebuilds the script from the plan, so those hand edits will not be imported.</div>':''}
+     ${t.data_file&&!t.data_committed?`<div class="note warn">Test data '${esc(t.data_file)}' is not in Git; upload it in Step 1 before generating.</div>`:''}
+     <div class="btnrow"><button class="btn sm" onclick="gitImport(${fi},${ti})">Import as plan →</button>
+     <button class="btn ghost sm" onclick="this.closest('tr').style.display='none'">Cancel</button></div></div>`;
+  row.style.display='';
+}
+async function gitImport(fi,ti){
+  const f=gitScan.frameworks[fi], t=f.tests[ti];
+  const row=document.getElementById(`impRow_${fi}_${ti}`), st=document.getElementById('impStatus');
+  const secrets={}; row.querySelectorAll('.impSecret').forEach(i=>{ if(i.value.trim()) secrets[i.dataset.name]=i.value.trim(); });
+  st.className='statusline'; st.textContent=`Importing ${f.name}/${t.test}…`;
+  try{
+    const j=await gitPost('/api/git/import',{...gitSource(), framework_path:f.path, test:t.test, secrets, expected_commit:gitScan.commit});
+    currentPlanId=j.plan_id; planModel=j.load_model; planRationale=''; currentScriptId=null;
+    const toolSel=document.getElementById('tool'); if([...toolSel.options].some(o=>o.value==='k6')) toolSel.value='k6';
+    applyIntegrations(j.plan_id);
+    renderPlanForm(); renderRawFromModel();      // headers + data file are read from the plan
+    if(j.data_file_id) attachStoredDataFile(j.data_file_id);   // the file committed with the test
+    document.getElementById('guardrailBadge').style.display='none';
+    document.getElementById('planEval').style.display='none';
+    const meta=document.getElementById('planMeta'); meta.style.display='inline-flex';
+    meta.textContent=`imported from Git · ${j.framework}/${j.test} @ ${j.commit.slice(0,8)}`;
+    const note=document.getElementById('importNote');
+    if(j.warnings.length){ note.className='note warn'; note.innerHTML=j.warnings.map(esc).join('<br>'); }
+    else{ note.className='note ok'; note.textContent='Imported from Git. Review the plan, then approve and generate.'; }
+    note.style.display='flex';
+    st.className='statusline ok'; st.textContent=`Imported ${j.framework}/${j.test}.`;
+    loadPlans();
+    goStep(2);
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+async function gitViewScript(i){
+  const o=gitScan.other_scripts[i], st=document.getElementById('impStatus');
+  st.className='statusline'; st.textContent=`Loading ${o.path}…`;
+  try{
+    const j=await gitPost('/api/git/script',{...gitSource(), path:o.path});
+    gitViewed=j;
+    document.getElementById('impScriptTitle').textContent=j.path;
+    document.getElementById('impScriptTool').textContent=j.tool;
+    document.getElementById('impScriptBody').textContent=j.content;
+    document.getElementById('impUseRow').style.display = j.tool==='k6' ? 'block' : 'none';
+    document.getElementById('impViewOnly').style.display = j.tool==='k6' ? 'none' : 'block';
+    document.getElementById('impScriptView').style.display='block';
+    st.className='statusline'; st.textContent='';
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+async function gitUseScript(){
+  if(!gitViewed||gitViewed.tool!=='k6') return;
+  const st=document.getElementById('impStatus');
+  st.className='statusline'; st.textContent='Loading script…';
+  try{
+    const body={filename:gitViewed.path.split('/').pop()||'loadtest.js', content:gitViewed.content,
+                target_base_url:document.getElementById('impUseTarget').value.trim(), tool:'k6'};
+    const j=await gitPost('/api/scripts/upload', body);
+    currentScriptId=j.script_id; currentPlanId=j.plan_id; currentDataFileId=null;
+    applyIntegrations(j.plan_id);
+    document.getElementById('scriptOut').textContent=j.content;
+    document.getElementById('dlBtn').disabled=false;
+    document.getElementById('runBtn').disabled=(j.tool!=='k6');
+    document.getElementById('preflightBtn').disabled=true;
+    document.getElementById('validateBtn').disabled=false;
+    document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — from Git: ${gitViewed.path} @ ${gitScan.commit.slice(0,8)}`;
+    const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
+    setGitExport(false, 'Scripts loaded as-is from Git are run directly and can\'t be pushed back from here.');
+    st.className='statusline ok'; st.textContent=`Loaded ${gitViewed.path}.`;
+    goStep(3);
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+
+/* ---------- run ---------- */
+
+/* ---------- editable script ---------- */
+let _scriptEdited=false;
+function toggleEditScript(){
+  const pre=document.getElementById('scriptOut'); const ta=document.getElementById('scriptEdit');
+  const editing = ta.style.display==='none';
+  if(editing){
+    ta.value=pre.textContent; ta.style.display='block'; pre.style.display='none';
+    document.getElementById('editNote').style.display='block';
+    document.getElementById('editBtn').textContent='✓ Done editing';
+    document.getElementById('regenBtn').style.display='inline-flex';
+  } else {
+    pre.textContent=ta.value; ta.style.display='none'; pre.style.display='block';
+    document.getElementById('editNote').style.display='none';
+    document.getElementById('editBtn').textContent='✏️ Edit script';
+    _scriptEdited=true;
+  }
+}
+async function regenScript(){
+  // re-generate from the plan, discarding edits
+  document.getElementById('scriptEdit').style.display='none';
+  document.getElementById('scriptOut').style.display='block';
+  document.getElementById('editNote').style.display='none';
+  document.getElementById('editBtn').textContent='✏️ Edit script';
+  document.getElementById('regenBtn').style.display='none';
+  _scriptEdited=false;
+  await doGenerate();   // existing generate flow
+}
+function currentScriptText(){
+  const ta=document.getElementById('scriptEdit');
+  return (ta.style.display!=='none') ? ta.value : document.getElementById('scriptOut').textContent;
+}
+// If the script was edited, upload it as an existing script and return the new id.
+async function ensureScriptId(){
+  if(!_scriptEdited) return currentScriptId;
+  const content=currentScriptText();
+  const target=(planModel&&planModel.target_base_url)||document.getElementById('target').value||'';
+  const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({content, target_base_url:target, tool:'k6'})});
+  const j=await r.json(); if(!r.ok) throw new Error(j.detail||'could not save edited script');
+  currentScriptId=j.script_id; _scriptEdited=false;
+  return currentScriptId;
+}
+
+async function runScript(){
+  if(!currentScriptId) return;
+  try{ await ensureScriptId(); }catch(e){ alert(e.message); return; }
+  goStep(4);
+  const rs=document.getElementById('runStatus'); rs.className='statusline'; rs.textContent='Starting run…';
+  try{ const av=await (await fetch('/api/run/available')).json();
+    if(!av.k6){ rs.className='statusline err'; rs.textContent='The load engine is not available on this platform. Ask your administrator to set PERFAGENT_K6_PATH.'; return; } }catch(e){}
+  try{
+    const r=await fetch(`/api/scripts/${currentScriptId}/run`,{method:'POST'}); const j=await r.json();
+    if(!r.ok) throw new Error(j.detail||'run failed');
+    currentRunId=j.run_id; resetChart(); document.getElementById('runBtn').disabled=true;
+    document.getElementById('stopBtn').disabled=false; pollTimer=setInterval(pollRun,500);
+  }catch(e){ rs.className='statusline err'; rs.textContent='Error: '+e.message; }
+}
+async function pollRun(){
+  if(!currentRunId) return;
+  try{
+    const j=await (await fetch(`/api/runs/${currentRunId}`)).json();
+    const rs=document.getElementById('runStatus'); const pill=document.getElementById('runPill');
+    pill.textContent=j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':j.status==='error'?'fail':'ghost');
+    const s=j.snapshot||{}; const lat=s.latency||{}; window._lastSnap=s; window._lastElapsed=j.elapsed_s;
+    document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
+    document.getElementById('mReqs').textContent=s.requests??0;
+    document.getElementById('mRps').textContent=s.rps??0;
+    document.getElementById('mErr').textContent=((s.error_rate??0)*100).toFixed(2)+'%';
+    document.getElementById('mP95').textContent=(lat.p95_ms??0)+' ms';
+    document.getElementById('mP99').textContent=(lat.p99_ms??0)+' ms';
+    pushChart(j.elapsed_s??0, s.rps??0, lat.p95_ms??0, s.error_rate??0);
+    document.querySelector('#epTable tbody').innerHTML=(s.per_endpoint||[]).map(e=>
+      `<tr><td>${esc(e.name)}</td><td>${e.requests}</td><td>${e.failed}</td><td>${e.avg_ms}</td><td>${e.p95_ms}</td></tr>`).join('');
+    // live logs
+    const logs=j.logs||[];
+    if(logs.length){
+      const pre=document.getElementById('runLogs');
+      const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+      pre.textContent=logs.join('\n');
+      document.getElementById('logCount').textContent='('+logs.length+' lines)';
+      if(atBottom) pre.scrollTop=pre.scrollHeight;   // autoscroll unless user scrolled up
+    }
+    if(j.status==='starting'||j.status==='preparing'){ rs.className='statusline'; rs.textContent=j.message||'Starting…'; }
+    else if(j.status==='running'){ rs.className='statusline'; rs.textContent='Running against '+j.target+' …'; }
+    else{
+      clearInterval(pollTimer); pollTimer=null;
+      document.getElementById('runBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
+      if(j.status==='finished'){ rs.className='statusline ok'; rs.textContent='Run finished.'; loadReport(); }
+      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent='Run stopped.'; loadReport(); }
+      else{ rs.className='statusline err'; rs.textContent='Run error: '+(j.message||'unknown'); }
+    }
+  }catch(e){}
+}
+async function stopRun(){ if(currentRunId){ try{await fetch(`/api/runs/${currentRunId}/stop`,{method:'POST'})}catch(e){} } }
+
+/* ---------- report ---------- */
+async function loadReport(){
+  if(!currentRunId) return;
+  try{
+    const r=await fetch(`/api/runs/${currentRunId}/report`); const j=await r.json(); if(!r.ok) return;
+    renderReport(j);
+  }catch(e){}
+}
+
+
+/* ---------- report charts: time-series + trend ---------- */
+function _lineChart(canvas, series, opts){
+  // series: [{data:[{x,y}], color, label}], opts:{yLabel}
+  const c=canvas; if(!c) return;
+  const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=150;
+  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const pad=30;
+  const allY=series.flatMap(s=>s.data.map(p=>p.y));
+  const allX=series.flatMap(s=>s.data.map(p=>p.x));
+  if(allY.length<1){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('no data yet',10,20); return; }
+  const maxY=Math.max(1,...allY), minX=Math.min(...allX), maxX=Math.max(...allX);
+  const sx=v=>pad+((v-minX)/((maxX-minX)||1))*(W-pad*1.4);
+  const sy=v=>H-pad-(v/maxY)*(H-pad*1.5);
+  // axes
+  x.strokeStyle='#e7e9e5'; x.lineWidth=1; x.beginPath(); x.moveTo(pad,8); x.lineTo(pad,H-pad); x.lineTo(W-6,H-pad); x.stroke();
+  x.fillStyle='#9aa'; x.font='10px system-ui'; x.fillText(maxY.toFixed(maxY<10?1:0),4,14);
+  series.forEach(s=>{
+    if(s.data.length<1) return;
+    x.beginPath(); x.strokeStyle=s.color; x.lineWidth=2;
+    s.data.forEach((p,i)=>{ const px=sx(p.x),py=sy(p.y); i?x.lineTo(px,py):x.moveTo(px,py); });
+    x.stroke();
+    // dots for trend (few points)
+    if(s.data.length<=12){ x.fillStyle=s.color; s.data.forEach(p=>{ x.beginPath(); x.arc(sx(p.x),sy(p.y),2.5,0,7); x.fill(); }); }
+  });
+}
+function drawTsChart(){
+  const c=document.getElementById('tsChart'); if(!c||!chartData||!chartData.length) return;
+  _lineChart(c,[
+    {data:chartData.map(d=>({x:d.t,y:d.rps})),  color:'#0f7a5f'},
+    {data:chartData.map(d=>({x:d.t,y:d.p95})),  color:'#9a6412'},
+    {data:chartData.map(d=>({x:d.t,y:d.err||0})),color:'#b4342b'},
+  ]);
+}
+async function loadTrend(){
+  const c=document.getElementById('trendChart'); if(!c) return;
+  try{
+    const pid=currentPlanId||'';
+    const j=await (await fetch('/api/runs/trend?limit=10'+(pid?('&plan_id='+encodeURIComponent(pid)):''))).json();
+    const pts=j.points||[];
+    if(pts.length<2){ document.getElementById('trendNote').textContent='Run this plan again to see a trend across runs.'; }
+    else { document.getElementById('trendNote').textContent='p95 latency (amber) · error % (red) across the last '+pts.length+' runs'; }
+    _lineChart(c,[
+      {data:pts.map((p,i)=>({x:i,y:p.p95_ms})),         color:'#9a6412'},
+      {data:pts.map((p,i)=>({x:i,y:(p.error_rate||0)*100})), color:'#b4342b'},
+    ]);
+  }catch(e){}
+}
+
+function renderReport(j){
+  try{
+    const v=j.verdict.overall_passed;
+    const hero=document.getElementById('verdictHero');
+    hero.className='rpt-hero '+(v===true?'pass':v===false?'fail':'na');
+    document.getElementById('verdictEmoji').textContent=v===true?'✅':v===false?'❌':'⚠️';
+    // KPI tiles — from the report's snapshot (saved) or the last live snapshot
+    const s=j.snapshot||window._lastSnap||{}; const lat=s.latency||{};
+    const setK=(id,val)=>{const el=document.getElementById(id); if(el) el.textContent=val;};
+    setK('kRequests', (s.requests??0).toLocaleString());
+    const er=((s.error_rate??0)*100); const erEl=document.getElementById('kErr');
+    if(erEl){ erEl.textContent=er.toFixed(2)+'%'; erEl.classList.toggle('bad', er>0); }
+    setK('kRps', (s.rps??0).toFixed(2)+'/s');
+    setK('kP95', (lat.p95_ms??0)+' ms');
+    setK('kP99', (lat.p99_ms??0)+' ms');
+    setK('kAvg', (lat.avg_ms??0)+' ms');
+    drawTsChart(); loadTrend();
+
+    // run logs panel (persisted with the report)
+    window._reportLogs = j.logs || (j.snapshot&&j.snapshot.logs) || [];
+    const lc=document.getElementById('reportLogsCard'); const lp=document.getElementById('reportLogs');
+    if(lc&&lp&&window._reportLogs.length){
+      lc.style.display='block';
+      lp.textContent=window._reportLogs.join('\n');
+    } else if(lc){ lc.style.display='none'; }
+
+
+    // response checks / assertions panel
+    const chk=(j.snapshot||window._lastSnap||{}).checks||[];
+    const cc=document.getElementById('checksCard'); const cb=document.getElementById('checksBody');
+    if(cc&&cb&&chk.length){
+      cc.style.display='block';
+      const failing=chk.filter(c=>c.failed>0).length;
+      const head=failing
+        ? `<div class="note err" style="margin:0 0 8px">${failing} check${failing>1?'s':''} failing — these count as errors and fail the run.</div>`
+        : `<div class="note ok" style="margin:0 0 8px">All response checks passed.</div>`;
+      cb.innerHTML=head+'<table><thead><tr><th>Check</th><th>Passed</th><th>Result</th></tr></thead><tbody>'+
+        chk.map(c=>{
+          const ok=c.failed===0;
+          return `<tr><td>${esc(c.name)}</td><td>${c.passed}/${c.total}</td>`+
+            `<td style="color:${ok?'#0f7a5f':'#b4342b'};font-weight:600">${ok?'✓ pass':'✗ fail'}</td></tr>`;
+        }).join('')+'</tbody></table>';
+    } else if(cc){ cc.style.display='none'; }
+
+    document.getElementById('verdictHeadline').textContent=v===true?'PASS — all thresholds met':v===false?'FAIL — a threshold was breached':'INCONCLUSIVE — a threshold could not be evaluated';
+    const n=j.narrative;
+    document.getElementById('verdictSub').textContent=n.headline||'';
+    document.getElementById('reportSummary').textContent=n.summary||'';
+    document.getElementById('reportObs').innerHTML=(n.observations&&n.observations.length)?'<div class="mini">Observations</div><ul>'+n.observations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
+    document.getElementById('reportRecs').innerHTML=(n.recommendations&&n.recommendations.length)?'<div class="mini">Recommendations</div><ul>'+n.recommendations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
+    // baseline / regression
+    const bl=j.baseline; const blEl=document.getElementById('baseline');
+    if(bl){
+      blEl.style.display='block';
+      if(!bl.has_previous){
+        blEl.innerHTML='<div class="note info" style="margin:0">'+esc(bl.headline)+'</div>';
+      } else {
+        const rows=bl.deltas.map(d=>{
+          const up = d.pct_change>0;
+          const word={better:'better',worse:'worse',same:'same','n/a':''}[d.direction]||'';
+          const glyph = d.direction==='same'||d.direction==='n/a' ? '=' : (up?'↑':'↓');
+          const arrow = word ? (glyph+' '+word) : '';
+          const col={better:'#085041',worse:'#b4342b',same:'#6b7280','n/a':'#6b7280'}[d.direction];
+          const pct=(d.pct_change>0?'+':'')+(d.pct_change*100).toFixed(0)+'%';
+          return `<tr><td>${esc(d.label)}</td><td>${esc(d.previous_fmt)}</td><td>${esc(d.current_fmt)}</td>`+
+                 `<td style="color:${col};font-weight:600">${d.direction==='n/a'?'':pct+' '+arrow}</td></tr>`;
+        }).join('');
+        const banner = bl.regressed
+          ? '<div class="note warn" style="margin:0 0 8px">⚠ '+esc(bl.headline)+'</div>'
+          : '<div class="note ok" style="margin:0 0 8px">✅ '+esc(bl.headline)+'</div>';
+        blEl.innerHTML=banner+
+          '<table><thead><tr><th>Metric</th><th>Previous</th><th>Current</th><th>Change</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      }
+    } else { blEl.style.display='none'; }
+    // diagnostics
+    const dg=j.diagnostics; const dgEl=document.getElementById('diagnostics');
+    if(dg && dg.findings && dg.findings.length){
+      dgEl.style.display='block';
+      dgEl.innerHTML=
+        dg.findings.map(f=>{
+          const emoji={high:'🔴',medium:'🟠',low:'🔵',info:'🟢'}[f.severity]||'•';
+          return `<div class="finding ${f.severity}"><div class="ttl">${emoji} ${esc(f.title)} <span class="sevdot ${f.severity}">${f.severity}</span></div>`+
+                 `<div>${esc(f.detail)}</div>`+
+                 (f.recommendation?`<div class="rec"><b>→</b> ${esc(f.recommendation)}</div>`:'')+`</div>`;
+        }).join('');
+    } else { dgEl.style.display='none'; }
+    const ev=j.evaluation; const el=document.getElementById('reportEval');
+    if(ev){ el.style.display='flex';
+      if(ev.grounded){ el.className='note ok'; el.innerHTML=`✅ Report verified — all ${ev.numbers_in_text??0} figures trace to real metrics`; }
+      else{ el.className='note warn'; el.innerHTML=`⚠ ${ev.hallucinated} figure(s) could not be verified: ${(ev.unsupported||[]).join(', ')}`; } }
+    else el.style.display='none';
+    goStep(5);
+  }catch(e){}
+}
+
+function downloadRunLogs(){
+  const logs=window._reportLogs||[];
+  if(!logs.length){ alert('No logs for this run.'); return; }
+  const blob=new Blob([logs.join('\n')],{type:'text/plain'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='run_logs.txt'; a.click(); URL.revokeObjectURL(a.href);
+}
+
+function downloadReport(){ if(currentRunId) location=`/api/runs/${currentRunId}/report/download`; }
+
+
+
+/* ---------- AI call traces ---------- */
+async function loadTraces(){
+  try{
+    const j=await (await fetch('/api/traces?limit=100')).json();
+    const sc={plan:'#534ab7',chat:'#2563a8',dynamize:'#9a6412',narrate:'#0f7a5f'};
+    const realTraces=(j.traces||[]).filter(t=>(t.total_tokens>0)||(t.model&&t.model.trim())||t.status==='error');
+    document.querySelector('#tracesTable tbody').innerHTML=realTraces.map(t=>{
+      const stCol=t.status==='error'?'#b4342b':'#0f7a5f';
+      const stepCol=sc[t.step]||'#6b7280';
+      return `<tr><td>${new Date(t.created_at).toLocaleString()}</td>`+
+        `<td><b style="color:${stepCol}">${esc(t.step)}</b></td>`+
+        `<td>${esc(t.model||'')}</td>`+
+        `<td>${(t.total_tokens||0).toLocaleString()} <span class="muted">(${t.prompt_tokens||0}+${t.completion_tokens||0})</span></td>`+
+        `<td>${t.latency_ms||0} ms</td>`+
+        `<td>${t.redactions||0}</td>`+
+        `<td style="color:${stCol};font-weight:600">${esc(t.status)}${t.error?' — '+esc(t.error):''}</td></tr>`;
+    }).join('')||'<tr><td colspan="7" class="muted">No AI calls yet.</td></tr>';
+  }catch(e){}
+}
+
+/* ---------- activity log ---------- */
+async function loadAudit(){
+  refreshUsage();
+  try{
+    const j=await (await fetch('/api/audit?limit=100')).json();
+    const colors={'plan.created':'#2563a8','plan.approved':'#9a6412','script.generated':'#0f6e56',
+      'script.downloaded':'#6b7280','run.started':'#9a6412','run.finished':'#0f6e56'};
+    document.querySelector('#auditTable tbody').innerHTML=(j.events||[]).map(e=>{
+      const c=colors[e.action]||'#6b7280';
+      const tok = e.tokens ? (e.tokens.toLocaleString()+' tok'+(e.cost_usd?(' · $'+e.cost_usd.toFixed(4)):'')) : '';
+      return `<tr><td>${new Date(e.created_at).toLocaleString()}</td>`+
+             `<td><b style="color:${c}">${esc(e.action)}</b></td>`+
+             `<td>${esc(e.target||'')}</td><td>${esc(e.summary||'')}</td>`+
+             `<td style="color:var(--muted);white-space:nowrap">${tok}</td></tr>`;
+    }).join('')||'<tr><td colspan="5" class="muted">No activity yet.</td></tr>';
+  }catch(e){}
+}
+
+/* ---------- history ---------- */
+
+/* ---------- runs & reports history ---------- */
+async function loadRuns(){
+  try{
+    const j=await (await fetch('/api/runs?limit=50')).json();
+    const badge=(v)=>{const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
+      return '<span class="pill '+m[0]+'">'+m[1]+'</span>';};
+    document.querySelector('#runsTable tbody').innerHTML=(j.runs||[]).map(r=>
+      `<tr><td>${new Date(r.created_at).toLocaleString()}</td>`+
+      `<td>${badge(r.verdict)}</td>`+
+      `<td>${esc(r.target||'')}</td><td>${esc(r.goal||'')}</td>`+
+      `<td>${(r.requests||0).toLocaleString()}</td>`+
+      `<td>${((r.error_rate||0)*100).toFixed(2)}%</td>`+
+      `<td>${(r.p95_ms||0)} ms</td>`+
+      `<td>${r.has_report?`<button class="btn sec sm" onclick="openSavedReport('${r.run_id}')">Open report</button>`:''}</td></tr>`
+    ).join('') || '<tr><td colspan="8" class="muted">No runs yet — run a test to see it here.</td></tr>';
+  }catch(e){}
+}
+async function openSavedReport(id){
+  try{
+    const r=await fetch(`/api/runs/${id}/saved-report`); const j=await r.json();
+    if(!r.ok){ alert('Could not open report: '+(j.detail||'not found')); return; }
+    renderReport(j);
+    goStep(5);
+  }catch(e){ alert('Error opening report: '+e.message); }
+}
+
+async function loadPlans(){
+  const j=await (await fetch('/api/plans')).json();
+  document.querySelector('#plansTable tbody').innerHTML=j.plans.map(p=>
+    `<tr class="histrow"><td>${new Date(p.created_at).toLocaleString()}</td><td>${esc(p.target)}</td>
+     <td>${esc(p.goal||'')}</td><td>${p.script_count}</td>
+     <td><button class="btn ghost sm" onclick="openPlan('${p.plan_id}')">Open</button></td></tr>`).join('');
+}
+async function openPlan(id){
+  document.getElementById('importNote').style.display='none';
+  applyIntegrations(id);
+  const j=await (await fetch(`/api/plans/${id}`)).json();
+  currentPlanId=id; planModel=j.load_model; planRationale=''; renderPlanForm(); renderRawFromModel();
+  document.getElementById('guardrailBadge').style.display='none';
+  document.getElementById('planEval').style.display='none';
+  document.getElementById('planMeta').style.display='inline-flex';
+  document.getElementById('planMeta').textContent='loaded · '+j.scripts.length+' script(s)';
+
+  // If this plan already has a generated script, load the latest one so the user can
+  // go straight to the Script / Run steps without regenerating.
+  currentScriptId=null;
+  const scripts=j.scripts||[];
+  if(scripts.length){
+    const latest=scripts[scripts.length-1];   // most recent
+    try{
+      const content=await (await fetch(`/api/scripts/${latest.script_id}/download`)).text();
+      currentScriptId=latest.script_id; currentDataFileId=null;
+      document.getElementById('scriptOut').textContent=content;
+      document.getElementById('dlBtn').disabled=false;
+      document.getElementById('runBtn').disabled=(latest.tool!=='k6');
+      document.getElementById('validateBtn').disabled=false;
+      document.getElementById('preflightBtn').disabled=false;
+      setGitExport(latest.tool==='k6' && !String(j.goal||'').startsWith('Uploaded script'), String(j.goal||'').startsWith('Uploaded script')?'Uploaded scripts can\'t be saved to Git yet — only scripts generated from a plan.':'');
+      document.getElementById('scriptMeta').textContent=`${latest.filename} (${latest.tool}) — from saved plan ${id.slice(0,8)}`;
+      const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=latest.tool;
+    }catch(e){ /* fall back to review step */ }
+  }
+  // land on the Script step if a script is ready, else the Review step
+  goStep(currentScriptId ? 3 : 2);
+}
+
+
+
+/* ---------- import endpoints ---------- */
+async function importEndpoints(){
+  const input=document.getElementById('importFile'); const info=document.getElementById('importInfo');
+  if(!input.files||!input.files.length) return;
+  const fd=new FormData(); fd.append('file',input.files[0]);
+  info.style.display='flex'; info.className='note info'; info.textContent='Importing…';
+  try{
+    const r=await fetch('/api/import-endpoints',{method:'POST',body:fd});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'import failed');
+    // set target if we found one
+    if(j.base_url){ document.getElementById('target').value=j.base_url; }
+    // clear existing endpoints and add imported
+    document.getElementById('endpoints').innerHTML='';
+    (j.endpoints||[]).forEach(e=>addEndpoint(e.method, e.path, e.example_body?JSON.stringify(e.example_body):''));
+    info.className='note ok';
+    let msg=`📥 Imported <b>${j.endpoints.length}</b> endpoints from ${j.source}`;
+    if(j.base_url) msg+=` · target set to <code class="k">${esc(j.base_url)}</code>`;
+    if(j.warnings&&j.warnings.length) msg+=`<br><span class="muted">${j.warnings.join('; ')}</span>`;
+    info.innerHTML=msg;
+    document.getElementById('impdz').innerHTML='📥 '+input.files[0].name+' — click to re-import';
+  }catch(e){ info.className='note err'; info.textContent='Import error: '+e.message; }
+}
+
+/* ---------- custom headers ---------- */
+function addHeader(k="",v=""){
+  const d=document.createElement('div'); d.className='endpoint'; d.style.gridTemplateColumns='1fr 1.3fr 34px';
+  d.innerHTML=`<input placeholder="Header name e.g. Authorization" value="${esc(k)}"/>
+    <input placeholder="Value e.g. Bearer xxx" value="${esc(v)}"/>
+    <button class="iconbtn" onclick="this.parentElement.remove();renderConnCount()">×</button>`;
+  document.getElementById('headersList').appendChild(d);
+  if(planModel) renderConnCount();
+}
+function readHeaders(){
+  const out={};
+  document.querySelectorAll('#headersList .endpoint').forEach(d=>{
+    const ins=d.querySelectorAll('input'); const k=ins[0].value.trim(); const v=ins[1].value.trim();
+    if(k) out[k]=v;
+  });
+  return out;
+}
+
+
+
+
+
+/* ---------- run an existing script ---------- */
+function loadExistingFile(){
+  const f=document.getElementById('exFile').files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ document.getElementById('exContent').value=r.result; };
+  r.readAsText(f);
+  const el=document.getElementById('exFileName');
+  if(el) el.innerHTML='Loaded <b>'+f.name+'</b> — or edit below';
+}
+async function uploadExisting(){
+  const st=document.getElementById('exStatus');
+  const content=document.getElementById('exContent').value.trim();
+  if(!content){ st.className='statusline err'; st.textContent='Paste or choose a script first.'; return; }
+  st.className='statusline'; st.textContent='Uploading…';
+  try{
+    const body={filename:(document.getElementById('exFile').files[0]||{}).name||'loadtest.js',
+                content, target_base_url:document.getElementById('exTarget').value.trim(), tool:'k6'};
+    const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'upload failed');
+    currentScriptId=j.script_id; currentPlanId=j.plan_id; currentDataFileId=null;
+    applyIntegrations(j.plan_id);
+    document.getElementById('scriptOut').textContent=j.content;
+    document.getElementById('dlBtn').disabled=false;
+    document.getElementById('runBtn').disabled=(j.tool!=='k6');
+    document.getElementById('preflightBtn').disabled=true;   // no plan endpoints to pre-flight
+    setGitExport(false, 'Uploaded scripts can\'t be saved to Git yet — only scripts generated from a plan.');
+    document.getElementById('validateBtn').disabled=false;
+    document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — uploaded`;
+    const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
+    st.className='statusline ok'; st.textContent='Uploaded. Go to the Script step to validate & run.';
+    goStep(3);
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+}
+
+/* ---------- validate script (1 VU / 1 iteration) ---------- */
+async function doValidate(){
+  const el=document.getElementById('validateResult'); el.style.display='flex'; el.className='note info';
+  el.textContent='Validating the script… (the very first time, this also sets up the load engine and can take a little longer)';
+  try{
+    await ensureScriptId();
+    const r=await fetch(`/api/scripts/${currentScriptId}/validate`,{method:'POST'});
+    const j=await r.json();
+    if(j.ok){
+      el.className='note ok';
+      el.innerHTML='✅ <b>Script is valid</b> — it compiled and ran one request successfully. Safe to run.';
+    } else if(j.status==='k6_missing'){
+      el.className='note warn'; el.textContent='⚠ '+j.message;
+    } else {
+      el.className='note err';
+      el.innerHTML='🔴 <b>Script failed validation</b> — fix this before a full run:<br><pre style="margin:6px 0 0;max-height:160px;font-size:11px">'+esc(j.detail||j.message)+'</pre>';
+    }
+  }catch(e){ el.className='note err'; el.textContent='Validation error: '+e.message; }
+}
+
+/* ---------- pre-flight check ---------- */
+async function doPreflight(){
+  const el=document.getElementById('preflightResult'); el.style.display='flex'; el.className='note info';
+  el.textContent='Pre-flight: sending one request per endpoint…';
+  try{
+    const payload={ load_model: planModel, headers: readHeaders() };
+    if(currentDataFileId) payload.data_file_id=currentDataFileId;
+    const r=await fetch('/api/preflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||'preflight failed');
+    const rows=j.results.map(x=>{
+      const dot = x.ok ? '🟢' : '🔴';
+      const st = x.status!==null ? x.status : (x.error||'no response');
+      return `${dot} <b>${x.method}</b> ${esc(x.path)} → ${st}`;
+    }).join('<br>');
+    el.className = j.all_ok ? 'note ok' : 'note warn';
+    el.innerHTML = `<div><b>Pre-flight: ${j.ok}/${j.total} endpoints responded OK</b>` +
+      (j.all_ok ? ' — all good, safe to run.' : ' — check the failures below before a full run.') +
+      `<div style="margin-top:6px">${rows}</div></div>`;
+  }catch(e){ el.className='note err'; el.textContent='Pre-flight error: '+e.message; }
+}
+
+/* ---------- live chart ---------- */
+let chartData=[];  // [{t, rps, p95}]
+function resetChart(){ chartData=[]; drawChart(); }
+function pushChart(elapsed, rps, p95, err){ chartData.push({t:elapsed,rps:rps||0,p95:p95||0,err:(err||0)*100}); if(chartData.length>300) chartData.shift(); drawChart(); }
+function drawChart(){
+  const c=document.getElementById('liveChart'); if(!c) return;
+  const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=120;
+  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  if(chartData.length<2){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('waiting for data…',10,20); return; }
+  const pad=24; const n=chartData.length;
+  const maxRps=Math.max(1,...chartData.map(d=>d.rps));
+  const maxP95=Math.max(1,...chartData.map(d=>d.p95));
+  function line(key,max,color){
+    x.beginPath(); x.strokeStyle=color; x.lineWidth=2;
+    chartData.forEach((d,i)=>{
+      const px=pad + (i/(n-1))*(W-pad*2);
+      const py=H-pad - (d[key]/max)*(H-pad*1.4);
+      i?x.lineTo(px,py):x.moveTo(px,py);
+    }); x.stroke();
+  }
+  line('rps',maxRps,'#0f6e56');   // teal = RPS
+  line('p95',maxP95,'#9a6412');   // amber = p95
+  x.fillStyle='#6b7280'; x.font='10px system-ui';
+  x.fillText('RPS (teal) · p95 ms (amber)',pad,12);
+}
+
+/* ---------- init ---------- */
+loadTools();
+addEndpoint("GET","/products");
+addEndpoint("POST","/login",'{"user":"demo","password":"x"}');
+addEndpoint("POST","/cart",'{"product_id":1}');
+addEndpoint("POST","/checkout",'{"pay":"card"}');
+loadPlans();
+loadRuns();
+loadAudit();
+refreshUsage();
+setMode('manual');
+initConversation();
+loadSlaProfiles();
+loadTraces();
+goStep(1);
+</script>
+
+<!-- BODY EDITOR MODAL -->
+<div id="bodyModal" style="display:none;position:fixed;inset:0;background:rgba(20,30,26,.45);z-index:2000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;width:min(680px,92vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.25)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+      <b style="font-size:15px;color:var(--teal-d)">Request body</b>
+      <span class="muted" id="bodyModalPath"></span>
+      <div style="flex:1"></div>
+      <button class="iconbtn" onclick="closeBodyEditor()" style="font-size:18px">×</button>
+    </div>
+    <div style="padding:16px 20px;overflow:auto">
+      <textarea id="bodyModalText" style="min-height:280px;width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12.5px" placeholder='{"field":"value"}'></textarea>
+      <div class="note" id="bodyModalNote" style="display:none"></div>
+      <div class="btnrow" style="margin-top:12px">
+        <button class="btn" onclick="dynamizeBody()" id="dynBtn">✨ Add dynamic data (AI)</button>
+        <span class="muted" style="margin:0">AI assigns unique/random generators to the fields that should vary</span><i class="infohint" data-tip="Dynamic data = values that change per request. Unique email/id so signups don't collide; random numbers; real values from your uploaded CSV. The AI picks the right source per field.">i</i>
+      </div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn ghost" onclick="closeBodyEditor()">Cancel</button>
+      <button class="btn" onclick="saveBodyEditor()">Save body</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- SUGGEST CHECKS MODAL -->
+<div id="suggestModal" style="display:none;position:fixed;inset:0;background:rgba(20,30,26,.45);z-index:2000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;width:min(640px,92vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,.25)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+      <b style="font-size:15px;color:var(--teal-d)">✨ Suggest checks from a response</b>
+      <div style="flex:1"></div>
+      <button class="iconbtn" onclick="closeSuggestChecks()" style="font-size:18px">×</button>
+    </div>
+    <div style="padding:16px 20px;overflow:auto">
+      <div class="muted" style="margin-bottom:8px">Paste a <b>real response</b> you got from this endpoint (run it in Postman/curl first). The AI will suggest validation checks — which elements should be present, which errors to guard against, which numbers should be positive. You review and keep the ones you want.</div>
+      <div class="note info" style="margin:0 0 8px">🛡 The response is redacted (secrets/PII removed) before the AI sees it — only the structure is sent.</div>
+      <textarea id="suggestSample" style="min-height:160px;width:100%;font-family:ui-monospace,Menlo,monospace;font-size:11.5px" placeholder="Paste the API response here (XML or JSON)..."></textarea>
+      <div class="note" id="suggestNote" style="display:none"></div>
+      <div id="suggestResults" style="display:none;margin-top:10px"></div>
+      <div class="btnrow" style="margin-top:12px">
+        <button class="btn" onclick="runSuggestChecks()" id="suggestBtn">✨ Suggest checks</button>
+      </div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn ghost" onclick="closeSuggestChecks()">Cancel</button>
+      <button class="btn" onclick="applySuggestedChecks()" id="applySuggestBtn" style="display:none">Add selected checks</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

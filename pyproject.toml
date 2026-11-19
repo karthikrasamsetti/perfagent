@@ -22,6 +22,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.2",
     "alembic>=1.13",
     "langgraph-checkpoint-postgres>=2.0,<4",
+    "prometheus-client>=0.26.0",
 ]
 
 [dependency-groups]

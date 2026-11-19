@@ -1,0 +1,84 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "title": "PerfAgent - Live Run",
+  "uid": "perfagent-live",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(perfagent_rps, environment)",
+        "refresh": 2,
+        "includeAll": true,
+        "current": { "text": "prod", "value": "prod" }
+      },
+      {
+        "name": "scenario",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(perfagent_rps{environment=\"$environment\"}, scenario)",
+        "refresh": 2,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Requests/sec (RPS)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "perfagent_rps{environment=~\"$environment\", scenario=~\"$scenario\"}",
+          "legendFormat": "{{scenario}} / {{environment}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error rate",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1 } },
+      "targets": [
+        {
+          "expr": "perfagent_error_rate{environment=~\"$environment\", scenario=~\"$scenario\"}",
+          "legendFormat": "{{scenario}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 latency",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, scenario) (rate(perfagent_request_duration_seconds_bucket{environment=~\"$environment\", scenario=~\"$scenario\"}[1m])))",
+          "legendFormat": "p95 {{scenario}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Active VUs",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "perfagent_vus_active{environment=~\"$environment\", scenario=~\"$scenario\"}",
+          "legendFormat": "{{scenario}}"
+        }
+      ]
+    }
+  ]
+}
