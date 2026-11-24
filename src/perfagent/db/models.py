@@ -115,6 +115,20 @@ class ScriptSnapshotRow(Base):
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
+class ScriptVerificationRow(Base):
+    """Outcome of a bounded check against a frozen k6 script version."""
+
+    __tablename__ = "script_verifications"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    script_id: Mapped[str] = mapped_column(
+        ForeignKey("script_snapshots.script_id", ondelete="CASCADE"), index=True
+    )
+    started_at: Mapped[float] = mapped_column(Float)
+    completed_at: Mapped[float] = mapped_column(Float)
+    all_ok: Mapped[bool]
+    journeys_checked: Mapped[int]
+
+
 class RunResultRow(Base):
     """A finished run's key metrics — stored so later runs can compare against it
     (baseline / regression). One row per completed run of a plan."""

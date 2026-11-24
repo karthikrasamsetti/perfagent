@@ -128,3 +128,37 @@ def test_draft_retries_with_exact_missing_and_unexpected_endpoints():
     ]
     assert "Missing: GET /api/config, GET /api/quotes" in prompts[1]
     assert "Unexpected: GET /api/quotes/cart" in prompts[1]
+
+
+def test_explicit_checks_and_thresholds_survive_conversation_and_k6_generation():
+    from perfagent.chat.draft import merge_intent
+    from perfagent.chat.planning import plan_request_from_intent
+    from perfagent.chat_intent import ChatEndpoint, ChatIntent
+    from perfagent.contracts.load_model import Assertion
+    from perfagent.evaluation import evaluate_plan
+    from perfagent.generator.k6_renderer import render_k6
+
+    assertion = Assertion(kind="json_path", op="exists", path="order.id")
+    previous = ChatIntent(
+        target_base_url="https://orders.test",
+        endpoints=[ChatEndpoint(method="POST", path="/orders", assertions=[assertion])],
+        thresholds=[
+            Threshold(metric="p95_ms", op="<=", value=500),
+            Threshold(metric="error_rate", op="<", value=0.01),
+        ],
+    )
+    update = ChatIntent(endpoints=[ChatEndpoint(method="POST", path="/orders")], max_users=15)
+    request = plan_request_from_intent(merge_intent(previous, update))
+    suggested = LoadModel(
+        target_base_url=request.target_base_url,
+        scenarios=[Scenario(name="orders", steps=[Step(name="order", method="POST", path="/orders")])],
+        load_profile=_profile(),
+        thresholds=[Threshold(metric="error_rate", op="<", value=0.05)],
+    )
+    model = draft_plan(request, _Fake(suggested)).load_model
+    assert model.thresholds == previous.thresholds
+    assert model.scenarios[0].steps[0].assertions == [assertion]
+    assert evaluate_plan(model, request).grounded is True
+    script = render_k6(model)
+    assert "p(95)<=500" in script and "rate<0.01" in script
+    assert 'r.json("order.id")' in script

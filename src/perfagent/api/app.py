@@ -45,6 +45,8 @@ from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_basel
 from perfagent.analyzer.diagnostics import Finding, diagnose
 from perfagent.observability.correlation import correlate
 from perfagent.analyzer.verdict import evaluate_k6_summary
+from perfagent.api.access import WorkspaceAccess
+from perfagent.api.browser_security import BrowserWriteProtection
 from perfagent.api.chat_routes import router as chat_router
 from perfagent.api.docs import API_DESCRIPTION, API_TITLE, TAGS, doc
 from perfagent.api.export_routes import router as export_router
@@ -64,7 +66,8 @@ from perfagent.contracts.load_model import (
     LoadModel,
     LoadProfileType,
 )
-from perfagent.data import DataValidationError, load_data
+from perfagent.data import load_data
+from perfagent.data.filenames import safe_filename, safe_runner_data_filename
 from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, SlaProfileRow, get_session
 from perfagent.dynamize import DYNAMIZE_SYSTEM_PROMPT, DynamizedBody, build_dynamize_user_prompt
 from perfagent.evaluation import evaluate_plan, evaluate_report
@@ -90,8 +93,9 @@ from perfagent.request_data import preview_requests
 from perfagent.api.run_inputs import freeze_script, script_workload_version
 from perfagent.api.test_identity import saved_identity
 from perfagent.api.projects import router as projects_router, require_project
-from perfagent.db.models import ScriptSnapshotRow
+from perfagent.db.models import ScriptSnapshotRow, ScriptVerificationRow
 from perfagent.runner import get_run, k6_available, start_run, stop_run
+from perfagent.runner.k6_runner import RunCapacityExceeded
 from perfagent.runner.validator import preflight_script, validate_script
 
 app = FastAPI(
@@ -100,6 +104,8 @@ app = FastAPI(
     version=__version__,
     openapi_tags=TAGS,
 )
+app.add_middleware(WorkspaceAccess)
+app.add_middleware(BrowserWriteProtection)
 app.include_router(export_router)
 app.include_router(git_import_router)
 app.include_router(jenkins_router)
@@ -339,6 +345,28 @@ def get_saved_report(result_id: str) -> dict:
 
 
 
+_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+async def _read_text_upload(file: UploadFile, default: str, extensions: set[str]) -> tuple[str, str]:
+    try:
+        filename = safe_filename(file.filename or default)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if Path(filename).suffix.lower() not in extensions:
+        raise HTTPException(415, "Unsupported file extension.")
+    raw = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Files must be 5 MiB or smaller.")
+    try:
+        content = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(400, "File must be UTF-8 text.") from None
+    if "\x00" in content:
+        raise HTTPException(400, "File must be UTF-8 text.")
+    return filename, content
+
+
 @app.post("/api/data", **doc("POST", "/api/data"))
 async def upload_data(file: UploadFile) -> dict:
     """Upload a test-data file (CSV/TSV/TXT/JSON/JSONL). Parse + validate + store.
@@ -347,17 +375,14 @@ async def upload_data(file: UploadFile) -> dict:
     runner but never sent to the LLM — only the column names (schema) are used in
     planning.
     """
-    raw = await file.read()
+    filename, content = await _read_text_upload(
+        file, "data.csv", {".csv", ".tsv", ".txt", ".json", ".jsonl", ".ndjson"}
+    )
     try:
-        content = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="file must be UTF-8 text") from None
-
-    filename = file.filename or "data.csv"
-    try:
+        safe_runner_data_filename(filename)
         dataset = load_data(filename, content)
-    except DataValidationError as e:
-        raise HTTPException(status_code=400, detail=f"invalid data file: {e}") from e
+    except (ValueError, RecursionError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid data file: {str(e)[:200]}") from e
 
     with get_session() as s:
         row = DataFileRow(
@@ -414,13 +439,11 @@ def get_data_file(data_file_id: str) -> dict:
 @app.post("/api/import-endpoints", **doc("POST", "/api/import-endpoints"))
 async def import_endpoints_api(file: UploadFile) -> dict:
     """Import endpoints from an OpenAPI/Swagger JSON, Postman collection, or HAR file."""
-    raw = await file.read()
+    filename, content = await _read_text_upload(
+        file, "import.json", {".json", ".har", ".yaml", ".yml"}
+    )
     try:
-        content = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="file must be UTF-8 text") from None
-    try:
-        result = import_endpoints(file.filename or "import.json", content)
+        result = import_endpoints(filename, content)
     except ImportError_ as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return result.to_dict()
@@ -761,7 +784,7 @@ class PreflightBody(BaseModel):
 
 @app.post("/api/preflight", **doc("POST", "/api/preflight"))
 def api_preflight(body: PreflightBody) -> dict:
-    """Check plan endpoints or run one iteration of an edited script."""
+    """Verify every k6 journey or check a plan’s endpoint reachability."""
     model = body.load_model
     if body.script_id:
         with get_session() as s:
@@ -773,10 +796,21 @@ def api_preflight(body: PreflightBody) -> dict:
             model = LoadModel.model_validate_json(saved.load_model_json)
             if not metadata.get("generated") and model.scenarios[0].name == "uploaded":
                 raise HTTPException(400, "Pre-flight requires a generated script. Validate the imported script instead.")
-            if metadata.get("script_edited") and script.tool == "k6":
-                return preflight_script(script.content, saved.data_filename, saved.data_content)
-            rows = load_data(saved.data_filename, saved.data_content).rows if saved.data_filename else []
-            return preflight(model, sample_row=rows[0] if rows else None)
+            data_filename, data_content = saved.data_filename, saved.data_content
+            script_content = script.content if script is not None and script.tool == "k6" else None
+        if script_content is not None:
+            started_at = time.time()
+            result = preflight_script(script_content, data_filename, data_content)
+            completed_at = time.time()
+            with get_session() as s:
+                s.add(ScriptVerificationRow(
+                    script_id=body.script_id, started_at=started_at, completed_at=completed_at,
+                    all_ok=result["all_ok"], journeys_checked=len(result["journeys"]),
+                ))
+                s.commit()
+            return {**result, "script_id": body.script_id, "verified_at": completed_at}
+        rows = load_data(data_filename, data_content).rows if data_filename else []
+        return preflight(model, sample_row=rows[0] if rows else None)
     if model is None:
         raise HTTPException(400, "A plan or script version is required.")
     if body.headers:
@@ -949,6 +983,21 @@ def _data_for_plan(session, plan_row) -> tuple[str, str]:
     return dr.filename, dr.content
 
 
+def _latest_verification(session, script_id: str) -> dict | None:
+    verification = (
+        session.query(ScriptVerificationRow).filter_by(script_id=script_id)
+        .order_by(ScriptVerificationRow.started_at.desc(), ScriptVerificationRow.id.desc()).first()
+    )
+    if verification is None:
+        return None
+    return {
+        "script_id": script_id,
+        "verified_at": verification.completed_at,
+        "all_ok": verification.all_ok,
+        "journeys_checked": verification.journeys_checked,
+    }
+
+
 @app.get("/api/scripts/{script_id}/readiness", **doc("GET", "/api/scripts/{script_id}/readiness"))
 def execution_readiness(script_id: str) -> dict:
     with get_session() as s:
@@ -973,6 +1022,7 @@ def execution_readiness(script_id: str) -> dict:
              "detail": "Frozen plan and data" if saved else "Legacy script: inputs freeze on its next run"},
         ]
         return {"checks": checks, "target": model.target_base_url,
+                "verification": _latest_verification(s, script_id) if saved is not None else None,
                 "execution": {**metadata, "duration_seconds": model.load_profile.total_seconds,
                               "peak_users": model.load_profile.peak_users,
                               "arrival_rate": model.load_profile.arrival_rate},
@@ -1039,12 +1089,16 @@ def run_script(script_id: str, body: RunOptions | None = None) -> dict:
         s.commit()
         model = LoadModel.model_validate_json(saved.load_model_json)
         execution = {**metadata, "baseline_id": body.baseline_id,
-                     "release_label": body.release_label, "plan_id": row.plan_id}
-        run = start_run(run_id=uuid.uuid4().hex, script_id=row.id, tool=row.tool,
-                        target=model.target_base_url, content=row.content,
-                        load_model_json=saved.load_model_json,
-                        data_filename=saved.data_filename, data_content=saved.data_content,
-                        metadata=execution)
+                     "release_label": body.release_label, "plan_id": row.plan_id,
+                     "verification": _latest_verification(s, row.id)}
+        try:
+            run = start_run(run_id=uuid.uuid4().hex, script_id=row.id, tool=row.tool,
+                            target=model.target_base_url, content=row.content,
+                            load_model_json=saved.load_model_json,
+                            data_filename=saved.data_filename, data_content=saved.data_content,
+                            metadata=execution)
+        except RunCapacityExceeded as exc:
+            raise HTTPException(429, str(exc)) from exc
     audit.record("run.started", entity="run", entity_id=run.run_id, target=run.target,
                  summary="Load run started (" + execution.get("mode", "full") + ")")
     return {"run_id": run.run_id, "status": run.status, "message": run.message}
@@ -1064,6 +1118,12 @@ def run_status(run_id: str) -> dict:
         "status": run.status,
         "message": run.message,
         "elapsed_s": round((run.ended_at or time.time()) - run.started_at, 1),
+        "planned_load": {
+            "peak_users": run.metadata.get("peak_users") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") and not run.metadata.get("arrival_rate") else None,
+            "iterations_per_second": run.metadata.get("arrival_rate") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") else None,
+        },
         "snapshot": run.snapshot,
         "logs": list(getattr(run, "logs", []) or [])[-200:],   # recent k6 output lines
     }

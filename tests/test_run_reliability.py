@@ -292,6 +292,10 @@ options.thresholds = { http_req_duration: ['p(95)<=500'], errors: ['rate<0.01'] 
         assert report["execution"]["environment"] == "staging"
         assert report["execution"]["release_label"] == "demo-release"
         assert report["execution"]["script_edited"] is True
+        assert report["execution"]["verification"]["script_id"] == script_id
+        assert report["execution"]["verification"]["all_ok"] is False
+        assert report["snapshot"]["per_endpoint"][0]["status_codes"] == {"200": 1}
+        assert report["snapshot"]["per_journey"][0]["requests"] == 1
         assert report["execution"]["run_start_ts"] <= report["execution"]["run_end_ts"]
         assert report["verdict"]["overall_passed"] is True, report
         assert {(c["metric"], c["op"], c["target"]) for c in report["verdict"]["checks"]} == {
@@ -304,3 +308,43 @@ options.thresholds = { http_req_duration: ['p(95)<=500'], errors: ['rate<0.01'] 
         server.shutdown()
         server.server_close()
         worker.join(timeout=2)
+
+
+def test_run_capacity_returns_rate_limit_status(setup, monkeypatch):
+    client, _, api, script_id, _ = setup
+    from perfagent.runner.k6_runner import RunCapacityExceeded
+
+    def reject_run(**kwargs):
+        raise RunCapacityExceeded("All k6 run slots are busy.")
+
+    monkeypatch.setattr(api, "start_run", reject_run)
+    response = client.post(f"/api/scripts/{script_id}/run")
+    assert response.status_code == 429
+    assert "slots are busy" in response.json()["detail"]
+
+
+def test_verification_is_saved_only_for_the_exact_script_version(setup, monkeypatch):
+    client, _, api, script_id, _ = setup
+    result = {"mode": "script", "all_ok": True, "journeys": [{"name": "browse"}], "message": "Passed"}
+    monkeypatch.setattr(api, "preflight_script", lambda *args: result)
+
+    original = client.post("/api/preflight", json={"script_id": script_id})
+    assert original.status_code == 200, original.text
+    original = original.json()
+    readiness = client.get(f"/api/scripts/{script_id}/readiness").json()
+    assert readiness["verification"] == {
+        "script_id": script_id, "verified_at": original["verified_at"],
+        "all_ok": True, "journeys_checked": 1,
+    }
+
+    script = client.get(f"/api/scripts/{script_id}/download").text
+    edited = client.post(f"/api/scripts/{script_id}/edit", json={"content": script + "\n// edited\n"})
+    assert edited.status_code == 200, edited.text
+    edited_id = edited.json()["script_id"]
+    assert edited_id != script_id
+    assert client.get(f"/api/scripts/{edited_id}/readiness").json()["verification"] is None
+
+    result.update(all_ok=False, message="Failed")
+    failed = client.post("/api/preflight", json={"script_id": script_id})
+    assert failed.status_code == 200, failed.text
+    assert client.get(f"/api/scripts/{script_id}/readiness").json()["verification"]["all_ok"] is False

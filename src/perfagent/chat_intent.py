@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from perfagent.contracts.load_model import HttpMethod, LoadProfileType
+from perfagent.contracts.load_model import Assertion, HttpMethod, LoadProfileType, Threshold
 
 
 class ChatEndpoint(BaseModel):
@@ -33,6 +33,8 @@ class ChatEndpoint(BaseModel):
                     "${randomFrom(a,b,c)}. Keep other values as given.",
     )
 
+    assertions: list[Assertion] | None = Field(default=None, description="Explicit response checks for this endpoint.")
+
 
 class ChatIntent(BaseModel):
     """Structured intent extracted from the user's chat message."""
@@ -40,6 +42,7 @@ class ChatIntent(BaseModel):
     target_base_url: str = Field(default="", description="Base URL if the user gave one.")
     goal: str = Field(default="", description="One-line restatement of what to test.")
     endpoints: list[ChatEndpoint] = Field(default_factory=list)
+    thresholds: list[Threshold] | None = Field(default=None, description="Explicit pass rules, or null if unspecified.")
     max_users: int = Field(default=0, description="Peak users if stated, else 0.")
     duration_seconds: int = Field(default=0, description="Duration if stated, else 0.")
     profile_type: LoadProfileType = Field(default=LoadProfileType.RAMP)
@@ -57,7 +60,10 @@ into a structured intent. Extract:
 - the target base URL (if given),
 - the endpoints to test, each with method, path, and an example body where relevant,
 - peak users and duration if the user stated them (otherwise leave 0),
-- the test type: ramp (default), spike, soak, or stress.
+- the test type: ramp (default), spike, soak, or stress,
+- explicitly requested response checks and pass rules. For error rates convert percentages
+  to fractions, and preserve the user's operator. For JSON field presence use json_path
+  with op=exists and the dotted field path. Leave unspecified thresholds as null.
 
 DYNAMIC DATA — this is important:
 When the user says a field should be unique, random, or generated (e.g. "unique \

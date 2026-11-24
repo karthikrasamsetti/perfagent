@@ -62,14 +62,14 @@ def k6_data_loader(model) -> str:
         return ""
     df = model.data_file
     fmt = df.source_format
-    fname = df.filename
+    file_path = json.dumps("./" + df.filename)
     if fmt in ("csv", "tsv"):
         delim = "\\t" if fmt == "tsv" else ","
         return (
             "import { SharedArray } from 'k6/data';\n"
             "import papaparse from 'https://jslib.k6.io/papaparse/5.1.1/index.js';\n\n"
             f"const DATA = new SharedArray('data', function () {{\n"
-            f"  return papaparse.parse(open('./{fname}'), "
+            f"  return papaparse.parse(open({file_path}), "
             f"{{ header: true, delimiter: '{delim}', skipEmptyLines: true }}).data;\n"
             "});\n"
         )
@@ -78,7 +78,7 @@ def k6_data_loader(model) -> str:
         return (
             "import { SharedArray } from 'k6/data';\n\n"
             f"const DATA = new SharedArray('data', function () {{\n"
-            f"  return open('./{fname}').split('\\n').map(function (l) {{ return l.trim(); }})\n"
+            f"  return open({file_path}).split('\\n').map(function (l) {{ return l.trim(); }})\n"
             "    .filter(function (l) { return l.length > 0; })\n"
             "    .map(function (v) { return { value: v }; });\n"
             "});\n"
@@ -88,14 +88,14 @@ def k6_data_loader(model) -> str:
         return (
             "import { SharedArray } from 'k6/data';\n\n"
             f"const DATA = new SharedArray('data', function () {{\n"
-            f"  return open('./{fname}').split('\\n').filter(function (l) {{ return l.trim(); }})\n"
+            f"  return open({file_path}).split('\\n').filter(function (l) {{ return l.trim(); }})\n"
             "    .map(function (l) { return JSON.parse(l); });\n"
             "});\n"
         )
     return (
         "import { SharedArray } from 'k6/data';\n\n"
         f"const DATA = new SharedArray('data', function () {{\n"
-        f"  return JSON.parse(open('./{fname}'));\n"
+        f"  return JSON.parse(open({file_path}));\n"
         "});\n"
     )
 

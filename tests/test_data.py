@@ -135,7 +135,7 @@ def test_loader_csv_uses_sharedarray_and_papaparse():
     ld = k6_data_loader(_model_with_data())
     assert "SharedArray" in ld
     assert "papaparse" in ld
-    assert "open('./users.csv')" in ld
+    assert 'open("./users.csv")' in ld
 
 
 def test_uses_data_false_without_datafile():

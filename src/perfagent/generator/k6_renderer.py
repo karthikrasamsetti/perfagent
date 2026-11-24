@@ -48,6 +48,8 @@ _env = Environment(
 _METRIC_MAP = {
     "p95_ms": ("http_req_duration", "p(95)"),
     "p99_ms": ("http_req_duration", "p(99)"),
+    "p90_ms": ("http_req_duration", "p(90)"),
+    "max_ms": ("http_req_duration", "max"),
     "p50_ms": ("http_req_duration", "p(50)"),
     "median_ms": ("http_req_duration", "med"),
     "avg_ms": ("http_req_duration", "avg"),
@@ -156,16 +158,21 @@ def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEAD
     all_checks = base_check + (", " + extra if extra else "")
     lines.append(f"      const ok = check(res, {{ {all_checks} }});")
     lines.append("      errorRate.add(res.status >= 400 || !ok);")
-    # Console logging on failure — so live logs explain WHY a request failed
-    # (which step, status, and a short body preview). Mirrors how engineers log.
+    # Response bodies may contain credentials or user data.
     sname = json.dumps(step.name)
     lines.append(
         "      if (res.status >= 400 || !ok) {\n"
-        f"        console.error(`[FAIL][VU ${{__VU}}] {step.name} — status ${{res.status}}` + "
-        "(res.body ? ` — body: ${String(res.body).replace(/\\s+/g,' ').slice(0,180)}` : ''));\n"
+        f"        console.error(`[FAIL][VU ${{__VU}}] ${{{sname}}} — status ${{res.status}}`);\n"
         "      }")
     if capture:
         lines.append(capture)
+        for extract in step.extract:
+            label = json.dumps(f"{step.name} captured {extract.var}")
+            value = f"vars.{extract.var}"
+            lines.append(
+                f"      if (__ENV.PERFAGENT_VERIFY === '1') check({value}, "
+                f"{{ {label}: (v) => v !== undefined && v !== null && v !== '' }});"
+            )
     lines.append("    }")
     return "\n".join(lines)
 
@@ -244,8 +251,9 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
 
     template = _env.get_template("k6.js.j2")
     return template.render(
-        target_base_url=model.target_base_url,
-        filename=filename,
+        target_base_url=" ".join(model.target_base_url.splitlines()),
+        target_js=json.dumps(model.target_base_url),
+        filename=" ".join(filename.splitlines()),
         profile_type=model.load_profile.type.value,
         peak_users=model.load_profile.peak_users,
         total_seconds=model.load_profile.total_seconds,

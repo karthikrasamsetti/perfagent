@@ -8,7 +8,7 @@ return <>
 <div className={"project-context"} id={"testProjectContext"}>
 
 </div>
-<div className={"stepper"} id={"stepper"}>
+<div className="stepper" id="stepper" aria-label="Test workflow">
 <div className={"step"} data-step={"1"}>
 <div className={"num"}>
 {"1"}
@@ -41,10 +41,10 @@ return <>
 </div>
 <div>
 <div className={"lbl"}>
-{"Script"}
+{"Verify"}
 </div>
 <div className={"sub"}>
-{"generated code"}
+{"checks & script"}
 </div>
 </div>
 </div>
@@ -83,16 +83,16 @@ return <>
 </h2>
 <div className={"modeswitch"} role={"tablist"} aria-label={"How to start"}>
 <button className={"modebtn"} role={"tab"} id={"modeConvBtn"} onClick={handlers.h13} style={{"display": "none"} as CSSProperties}>
-{"💬 Conversation"}
+{"Conversation"}
 </button>
 <button className={"modebtn active"} role={"tab"} id={"modeManualBtn"} onClick={handlers.h14}>
-{"📝 Manual form"}
+{"Manual form"}
 </button>
 <button className={"modebtn"} role={"tab"} id={"modeScriptBtn"} onClick={handlers.h15}>
-{"⚡ My k6 script"}
+{"Import script"}
 </button>
 <button className={"modebtn"} role={"tab"} id={"modeGitBtn"} onClick={handlers.h16}>
-{"📂 Import from Git"}
+{"Import from Git"}
 </button>
 </div>
 <p className={"hint"} id={"modeHint"} style={{"margin": "-4px 0 14px"} as CSSProperties}>
@@ -177,17 +177,17 @@ return <>
 </div>
 <div id={"modeManual"}>
 <p className={"hint"}>
-{"Fill in the target and its endpoints. The AI drafts a plan from them; you add test data, checks and limits on the next step."}
+{"Enter a URL for a page test, or add endpoints for an API or journey. Review the suggested workload before sending traffic."}
 </p>
 <div className={"grid2"}>
 <div className={"field"}>
-<label>
+<label htmlFor="target">
 {"Target base URL"}
 </label>
 <input id={"target"} defaultValue={"http://127.0.0.1:8000"} />
 </div>
 <div className={"field"}>
-<label>
+<label htmlFor="goal">
 {"Goal (plain language)"}
 </label>
 <input id={"goal"} defaultValue={"Realistic load test of browsing and checkout"} />
@@ -195,13 +195,13 @@ return <>
 </div>
 <div className={"grid2"}>
 <div className={"field"}>
-<label>
+<label htmlFor="maxUsers">
 {"Max users"}
 </label>
 <input id={"maxUsers"} type={"number"} defaultValue={"50"} />
 </div>
 <div className={"field"}>
-<label>
+<label htmlFor="duration">
 {"Duration (seconds)"}
 </label>
 <input id={"duration"} type={"number"} defaultValue={"60"} />
@@ -209,7 +209,7 @@ return <>
 </div>
 <div className={"field"}>
 <div className={"lblrow"}>
-<label>
+<label htmlFor="profileType">
 {"Test type"}
 </label>
 <i className={"infohint"} data-tip={"Ramp = gradual up/steady/down. Spike = sudden burst. Soak = long steady load (find leaks). Stress = step past the limit to find the breaking point."}>
@@ -231,6 +231,20 @@ return <>
 </option>
 </select>
 </div>
+<details className="field">
+  <summary>Pass rules (optional)</summary>
+  <div className="grid2">
+    <div className="field">
+      <label htmlFor="draftP95">Maximum p95 latency (ms)</label>
+      <input id="draftP95" type="number" min="0" step="any" placeholder="500" />
+    </div>
+    <div className="field">
+      <label htmlFor="draftErrorRate">Error rate must be below (%)</label>
+      <input id="draftErrorRate" type="number" min="0" max="100" step="any" placeholder="1" />
+    </div>
+  </div>
+  <p className="hint">Leave both blank to get suggested rules.</p>
+</details>
 <div className={"field"} style={{"marginTop": "4px"} as CSSProperties}>
 <div className={"lblrow"}>
 <label>
@@ -695,90 +709,54 @@ return <>
 
 </div>
 <button className={"btn amber"} id={"genBtn"} onClick={handlers.h57}>
-{"✓ Approve & generate script"}
+{"Approve and continue"}
 </button>
 </div>
 </div>
 </div>
 </div>
-<div className={"panel"} id={"panel3"}>
-<div className={"card"}>
-<div style={{"display": "flex", "alignItems": "center", "gap": "10px"} as CSSProperties}>
-<h2 style={{"margin": "0"} as CSSProperties}>
-{"Generated script"}
-</h2>
-<span className={"pill ghost"} id={"scriptPill"} style={{"display": "none"} as CSSProperties}>
-
-</span>
-</div>
-<p className={"hint"} id={"scriptMeta"}>
-{"Deterministic — same plan always produces the same script. You can edit it below to add custom logging or debugging."}
-</p>
-<pre id={"scriptOut"}>
-{"The generated script appears here."}
-</pre>
-<textarea id={"scriptEdit"} style={{"display": "none", "minHeight": "360px", "width": "100%", "fontFamily": "ui-monospace,Menlo,Consolas,monospace", "fontSize": "11.5px", "lineHeight": "1.5"} as CSSProperties}>
-
-</textarea>
-<div className={"note info"} id={"editNote"} style={{"display": "none", "marginTop": "8px"} as CSSProperties}>
-{"✏️ Editing mode — your changes (e.g. extra console.log for debugging) will be used when you validate or run. Click \"Regenerate\" to discard edits and restore the generated script."}
-</div>
-<div className={"field"} style={{"marginTop": "16px"} as CSSProperties}>
-<label htmlFor={"releaseLabel"}>
-{"Release or commit label (optional)"}
-</label>
-<input id={"releaseLabel"} maxLength={100} placeholder={"e.g. release-2.4 or commit SHA"} />
-</div>
-<div className={"btnrow"}>
-<button className={"btn ghost"} onClick={handlers.h58}>
-{"Check readiness"}
-</button>
-<button className={"btn ghost"} onClick={handlers.h59}>
-{"Run 10-second smoke test"}
-</button>
-<span className={"muted"}>
-{"Generated k6 scripts: one user per journey."}
-</span>
-</div>
-<div id={"readinessResult"} className={"note info"} style={{"display": "none"} as CSSProperties} role={"status"}>
-
-</div>
-<div className={"btnrow"}>
-<button className={"btn ghost sm"} onClick={handlers.h60}>
-{"← Back to plan"}
-</button>
-<button className={"btn ghost sm"} id={"editBtn"} onClick={handlers.h61}>
-{"✏️ Edit script"}
-</button>
-<button className={"btn ghost sm"} id={"regenBtn"} onClick={handlers.h62} style={{"display": "none"} as CSSProperties}>
-{"↻ Regenerate"}
-</button>
-<button className={"btn ghost sm"} id={"dlBtn"} onClick={handlers.h63} ref={initializeDisabled}>
-{"⬇ Download"}
-</button>
-<div className={"spacer"}>
-
-</div>
-<button className={"btn ghost"} id={"validateBtn"} onClick={handlers.h64} ref={initializeDisabled}>
-{"✓ Validate script"}
-</button>
-<button className={"btn ghost"} id={"preflightBtn"} onClick={handlers.h65} ref={initializeDisabled}>
-{"✈ Pre-flight check"}
-</button>
-<button className={"btn"} id={"runBtn"} onClick={handlers.h66} ref={initializeDisabled}>
-{"▶ Run & monitor live"}
-</button>
-</div>
-<div className={"note warn"} id={"runHint"} style={{"marginTop": "10px", "display": "none"} as CSSProperties}>
-
-</div>
-<div className={"note"} id={"validateResult"} style={{"display": "none"} as CSSProperties}>
-
-</div>
-<div className={"note"} id={"preflightResult"} style={{"display": "none"} as CSSProperties}>
-
-</div>
-</div>
+<div className="panel" id="panel3">
+  <section className="card verify-card" aria-labelledby="verifyHeading">
+    <header className="section-header">
+      <div>
+        <h2 id="verifyHeading">Verify and run</h2>
+        <p className="hint" id="scriptMeta">Generate a script from the approved test to continue.</p>
+      </div>
+      <span className="pill ghost" id="scriptPill" style={{display: 'none'}} />
+    </header>
+    <p className="verify-description">Verify sends requests with one virtual user to check each journey. Start load only when you’re ready to run the configured workload.</p>
+    <div className="verify-controls">
+      <div className="field">
+        <label htmlFor="releaseLabel">Release or commit label <span className="muted">(optional)</span></label>
+        <input id="releaseLabel" maxLength={100} placeholder="e.g. release-2.4" />
+      </div>
+      <div className="btnrow">
+        <button className="btn" id="preflightBtn" onClick={handlers.h65} ref={initializeDisabled}>Verify test</button>
+        <button className="btn ghost" id="runBtn" onClick={handlers.h66} ref={initializeDisabled}>Start load test</button>
+      </div>
+    </div>
+    <div className="note" id="preflightResult" role="status" style={{display: 'none'}} />
+    <div className="verify-secondary btnrow">
+      <button className="btn ghost sm" onClick={handlers.h60}>Back to plan</button>
+      <button className="btn ghost sm" onClick={handlers.h58}>Check readiness</button>
+      <button className="btn ghost sm" onClick={handlers.h59}>Run 10-second smoke test</button>
+    </div>
+    <div id="readinessResult" className="note info" style={{display: 'none'}} role="status" />
+    <div className="note warn" id="runHint" style={{display: 'none'}} />
+  </section>
+  <details className="card script-details">
+    <summary>Generated script</summary>
+    <div className="btnrow">
+      <button className="btn ghost sm" id="editBtn" onClick={handlers.h61}>Edit script</button>
+      <button className="btn ghost sm" id="regenBtn" onClick={handlers.h62} style={{display: 'none'}}>Regenerate</button>
+      <button className="btn ghost sm" id="dlBtn" onClick={handlers.h63} ref={initializeDisabled}>Download</button>
+      <button className="btn ghost sm" id="validateBtn" onClick={handlers.h64} ref={initializeDisabled}>Validate syntax</button>
+    </div>
+    <div className="note" id="validateResult" role="status" style={{display: 'none'}} />
+    <pre id="scriptOut">The generated script appears here.</pre>
+    <textarea id="scriptEdit" aria-label="Edit generated script" style={{display: 'none'}} />
+    <div className="note info" id="editNote" style={{display: 'none'}}>Edits create a new script version when you verify, validate, or run.</div>
+  </details>
 <div className={"card"} id={"gitCard"}>
 <div style={{"display": "flex", "alignItems": "center", "gap": "10px", "flexWrap": "wrap"} as CSSProperties}>
 <h2 style={{"margin": "0"} as CSSProperties}>
@@ -1071,6 +1049,18 @@ return <>
 <div className={"l"}>
 {"p99 latency"}
 </div>
+</div>
+<div className="tile">
+  <div className="v" id="mActiveVus">—</div>
+  <div className="l">Active VUs / planned peak</div>
+</div>
+<div className="tile">
+  <div className="v" id="mIterationRate">—</div>
+  <div className="l">Iterations/s / target</div>
+</div>
+<div className="tile">
+  <div className="v" id="mDroppedIterations">—</div>
+  <div className="l">Dropped iterations</div>
 </div>
 </div>
 <table id={"epTable"}>

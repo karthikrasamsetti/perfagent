@@ -26,10 +26,10 @@ def test_logs_on_failure():
     assert "get rates" in s          # the step name is in the log
 
 
-def test_logs_include_status_and_body():
+def test_logs_include_status_without_response_body():
     s = render_k6(_model())
     assert "status ${res.status}" in s
-    assert "body:" in s              # a short body preview is logged
+    assert "res.body" not in s
 
 
 def test_no_log_without_failure_path():

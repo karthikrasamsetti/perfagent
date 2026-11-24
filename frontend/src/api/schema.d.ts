@@ -1091,8 +1091,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Check plan endpoints or run an edited script
-         * @description Sends one request per plan endpoint using the saved headers and a sample data row. For an edited generated k6 script, runs one iteration of the first scenario.
+         * Verify k6 journeys or check plan endpoints
+         * @description Exercises each journey of a saved k6 script once with a single virtual user. Using a plan directly checks endpoint reachability.
          *
          *     **Access level:** `run` — sends real requests or load to the system under test.
          */
@@ -1200,7 +1200,7 @@ export interface paths {
         };
         /**
          * Execution readiness checklist
-         * @description Check frozen inputs, engine availability and planned load without sending traffic.
+         * @description Check frozen inputs, engine availability, planned load and the latest verification of this version without sending traffic.
          *
          *     **Access level:** `read` — only reads stored data.
          */
@@ -1502,6 +1502,8 @@ export interface components {
             example_body?: {
                 [key: string]: unknown;
             } | null;
+            /** Assertions */
+            assertions?: components["schemas"]["Assertion"][] | null;
         };
         /** ExportBody */
         ExportBody: {
@@ -1763,6 +1765,8 @@ export interface components {
              * @default false
              */
             insecure_tls?: boolean;
+            /** Thresholds */
+            thresholds?: components["schemas"]["Threshold"][] | null;
         };
         /** PreflightBody */
         PreflightBody: {
@@ -3903,7 +3907,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Endpoint results or the outcome of the edited script iteration. */
+            /** @description Journey requests and checks, or endpoint reachability results. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4063,7 +4067,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description `checks`, `execution`, `target`, `smoke_supported`. */
+            /** @description `checks`, `execution`, `target`, `smoke_supported`, `verification`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4133,7 +4137,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description `run_id`, `status`, `message`, `elapsed_s`, `snapshot`, `logs`. */
+            /** @description `run_id`, `status`, `message`, `elapsed_s`, `planned_load`, `snapshot`, `logs`. */
             200: {
                 headers: {
                     [name: string]: unknown;

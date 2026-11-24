@@ -19,7 +19,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from perfagent.data.filenames import safe_runner_data_filename
 from perfagent.runner.k6_binary import K6Unavailable, ensure_k6, k6_ready_or_provisionable
+from perfagent.runner.process_environment import k6_process_environment
 
 
 def k6_available() -> bool:
@@ -60,13 +62,14 @@ def validate_script(content: str, data_filename: str = "", data_content: str = "
         script_path = Path(tmpdir) / "loadtest.js"
         script_path.write_text(content, encoding="utf-8")
         if data_filename and data_content:
-            (Path(tmpdir) / data_filename).write_text(data_content, encoding="utf-8")
+            (Path(tmpdir) / safe_runner_data_filename(data_filename)).write_text(data_content, encoding="utf-8")
 
         # `k6 inspect` parses the script + options and exits non-zero on problems.
         cmd = [k6_path, "inspect", str(script_path)]
         try:
             proc = subprocess.run(
-                cmd, cwd=tmpdir, capture_output=True, text=True, timeout=timeout,
+                cmd, cwd=tmpdir, env=k6_process_environment(tmpdir),
+                capture_output=True, text=True, timeout=timeout,
             )
         except subprocess.TimeoutExpired:
             return {
@@ -116,41 +119,110 @@ def _tail(text: str, max_chars: int = 600) -> str:
         return text
     return "…" + text[-max_chars:]
 
-def preflight_script(content: str, data_filename: str = "", data_content: str = "",
-                     timeout: float = 30.0) -> dict:
-    """Run one iteration of the first configured scenario of an edited script."""
-    wrapper = """
+_VERIFICATION_WRAPPER = """
+import { check, group } from 'k6';
 import * as source from './loadtest.js';
+
 const { scenarios, stages, duration, iterations, vus, thresholds, ...settings } = source.options || {};
-const scenario = Object.values(scenarios || {})[0];
-const execute = source[scenario?.exec || 'default'];
-export const options = { ...settings, thresholds: {
-  http_req_failed: ['rate==0'], checks: ['rate==1'], iterations: ['count==1'],
-} };
+const journeys = Object.entries(scenarios || { default: { exec: 'default' } });
+if (journeys.length < 1 || journeys.length > 20) {
+  throw new Error('Verification supports 1 to 20 journeys.');
+}
+if (journeys.some(([, scenario]) => Object.keys(scenario.env || {}).length)) {
+  throw new Error('Verification cannot replay scenario-specific environment overrides.');
+}
+export const options = {
+  ...settings, scenarios: {}, maxRedirects: 0,
+  systemTags: ['group', 'status', 'method', 'name', 'check'],
+};
 export function setup() { return source.setup?.(); }
 export function teardown(data) { source.teardown?.(data); }
-export default function (data) { return execute(data); }
+export default function (data) {
+  for (const [name, scenario] of journeys) {
+    group('verify__' + name, () => {
+      let completed = false;
+      try {
+        source[scenario.exec || 'default'](data);
+        completed = true;
+      } catch (_) {
+        // Report this journey as incomplete and continue with the remaining ones.
+      }
+      check(completed, { 'Journey completed': result => result });
+    });
+  }
+}
 """
-    result = {"mode": "script", "all_ok": False}
+
+
+def _verification_results(metrics_path: Path) -> list[dict]:
+    """Read status and check results without retaining response bodies or request URLs."""
+    journeys: dict[str, dict] = {}
+    if not metrics_path.exists():
+        return []
+    with metrics_path.open(encoding="utf-8") as metrics:
+        for line in metrics:
+            sample = json.loads(line)
+            metric = sample.get("metric")
+            if sample.get("type") != "Point" or metric not in {"http_reqs", "checks"}:
+                continue
+            data = sample["data"]
+            tags = data.get("tags", {})
+            group_name = tags.get("group", "").split("::")[1:2]
+            if not group_name or not group_name[0].startswith("verify__"):
+                continue
+            name = group_name[0].removeprefix("verify__")
+            journey = journeys.setdefault(name, {
+                "name": name, "requests": [], "checks": [], "completed": False,
+            })
+            if metric == "http_reqs":
+                status = int(tags.get("status", "0"))
+                journey["requests"].append({
+                    "method": tags.get("method"), "status": status, "ok": 200 <= status < 400,
+                })
+            else:
+                check = tags.get("check", "Response check")
+                if check == "Journey completed" and tags["group"] == "::" + group_name[0]:
+                    journey["completed"] = bool(data["value"])
+                else:
+                    journey["checks"].append({"name": check, "ok": bool(data["value"])})
+    for journey in journeys.values():
+        journey["ok"] = (journey["completed"] and bool(journey["requests"])
+                         and all(item["ok"] for item in journey["requests"] + journey["checks"]))
+    return list(journeys.values())
+
+
+def preflight_script(content: str, data_filename: str = "", data_content: str = "",
+                     timeout: float = 30.0) -> dict:
+    """Exercise each configured journey once using one VU and a bounded runtime."""
+    result = {"mode": "script", "all_ok": False, "journeys": []}
     try:
         k6 = _k6_path()
         with tempfile.TemporaryDirectory(prefix="perfagent_preflight_") as tmpdir:
             directory = Path(tmpdir)
-            source = directory / "loadtest.js"
-            source.write_text(content, encoding="utf-8")
+            (directory / "loadtest.js").write_text(content, encoding="utf-8")
             if data_filename and data_content:
-                (directory / data_filename).write_text(data_content, encoding="utf-8")
+                (directory / safe_runner_data_filename(data_filename)).write_text(data_content, encoding="utf-8")
             entry = directory / "perfagent-preflight.js"
-            entry.write_text(wrapper, encoding="utf-8")
+            entry.write_text(_VERIFICATION_WRAPPER, encoding="utf-8")
+            metrics = directory / "perfagent-verification.jsonl"
             proc = subprocess.run(
-                [k6, "run", "--address=", "--quiet", "--vus", "1", "--iterations", "1", str(entry)],
-                cwd=tmpdir, capture_output=True, text=True, timeout=timeout,
+                [k6, "run", "--address=", "--quiet", "--vus", "1", "--iterations", "1",
+                 "--rps", "10", "-e", "PERFAGENT_VERIFY=1", "--out", f"json={metrics}", str(entry)],
+                cwd=tmpdir, env=k6_process_environment(tmpdir),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout,
             )
+            journeys = _verification_results(metrics)
     except subprocess.TimeoutExpired:
-        return {**result, "message": f"Script pre-flight timed out after {int(timeout)} seconds."}
-    except (K6Unavailable, OSError) as exc:
-        return {**result, "message": f"Could not run script pre-flight: {exc}"}
-    if proc.returncode or 'level=error' in proc.stderr:
-        return {**result, "message": "Script pre-flight failed. " + _tail(proc.stderr or proc.stdout)}
-    return {**result, "all_ok": True,
-            "message": "Script pre-flight passed. One iteration of the first configured scenario completed."}
+        return {**result, "message": f"Verification timed out after {int(timeout)} seconds."}
+    except (K6Unavailable, OSError, ValueError):
+        return {**result, "message": "Verification could not run. Check that k6 and the test inputs are available."}
+
+    all_ok = bool(journeys) and not proc.returncode and all(journey["ok"] for journey in journeys)
+    if all_ok:
+        message = f"Verification passed for {len(journeys)} {'journey' if len(journeys) == 1 else 'journeys'}."
+    elif journeys:
+        message = "Verification failed. Review the request and response check results."
+    else:
+        message = ("Verification did not complete a journey. Validate the script and check "
+                   "that it uses supported HTTP journeys without scenario-specific environment overrides.")
+    return {**result, "all_ok": all_ok, "journeys": journeys, "message": message}

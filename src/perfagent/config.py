@@ -7,6 +7,7 @@ reads os.environ directly; everything goes through this Settings object.
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,6 +41,15 @@ class Settings(BaseSettings):
     # Logs only the redacted text, never raw secrets. Keep false for normal use.
     guardrail_debug: bool = Field(default=False)
 
+    # Managed access trusts only identity assertions from an authenticated gateway.
+    perfagent_access_mode: Literal["local", "managed"] = "local"
+    perfagent_gateway_secret: SecretStr = Field(default=SecretStr(""))
+    perfagent_workspace_members: set[str] = Field(default_factory=set)
+
+    # Additional exact browser origins for deployments behind a reverse proxy.
+    # Same-origin requests work without configuration. This does not enable CORS.
+    perfagent_trusted_browser_origins: list[str] = Field(default_factory=list)
+
     # ---- k6 load engine -------------------------------------------------------
     # k6 is found or downloaded automatically (see runner/k6_binary.py). Set this to
     # use a specific k6 binary instead, e.g. on machines without internet access.
@@ -47,6 +57,10 @@ class Settings(BaseSettings):
     # Base folder for PerfAgent's own files, including the downloaded k6.
     # Empty = ~/.perfagent
     perfagent_home: str = Field(default="")
+
+    # Per API process. The duration includes k6 script startup and teardown.
+    perfagent_max_concurrent_runs: int = Field(default=2, ge=1)
+    perfagent_max_run_seconds: int = Field(default=3600, ge=1)
 
     # Target-scoped Prometheus or Grafana Prometheus datasource proxy.
     perfagent_prometheus_url: str = Field(default="")

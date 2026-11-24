@@ -14,9 +14,15 @@ let dataColumns=[];        // uploaded data file columns
 
 /* ---------- stepper ---------- */
 function goStep(n){
+  const verification=document.getElementById('preflightResult');
+  if(n===3 && verification && verification.dataset.scriptId!==currentScriptId){
+    verification.style.display='none';
+    if(currentScriptId) loadSavedVerification(currentScriptId, verification);
+  }
   // the 5 panels live inside the Create view; make sure it is the visible view
   document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-create'));
-  document.querySelectorAll('.sb-item').forEach(b=>b.classList.toggle('active', b.dataset.view==='create'));
+  markNavigation('create');
+  closeMobNav();
   const mt=(typeof VIEW_META!=='undefined')?VIEW_META.create:null;
   if(mt){ document.getElementById('viewTitle').textContent=mt[0]; document.getElementById('viewSub').textContent=mt[1]; }
   if(n===5){document.getElementById('viewTitle').textContent=reportContext?.testName?reportContext.testName+' - report':'Performance report';document.getElementById('viewSub').textContent='Measured results, thresholds and workload comparisons';}
@@ -27,6 +33,8 @@ function goStep(n){
     const si=+s.dataset.step;
     s.classList.toggle('active', si===n);
     s.classList.toggle('done', si<n);
+    if(si===n) s.setAttribute('aria-current','step');
+    else s.removeAttribute('aria-current');
   });
   window.scrollTo({top:0,behavior:'smooth'});
 
@@ -186,8 +194,15 @@ function convRenderDraft(v){
   h+='<div class="dsec">Endpoints</div>';
   if(d.endpoints.length){
     h+=d.endpoints.map(e=>'<div class="dep"><span class="m">'+esc(e.method)+'</span><span>'+esc(e.path)+
-        (e.example_body?' <span class="dtag">body</span>':'')+'</span></div>').join('');
+        (e.example_body?' <span class="dtag">body</span>':'')+'</span></div>'+
+        (e.assertions||[]).map(check=>'<div class="muted">'+esc(checkLabel(check))+'</div>').join('')).join('');
   } else { h+='<div class="drow" style="border:0"><span class="dv todo">needed</span></div>'; }
+  if(d.thresholds?.length){
+    h+='<div class="dsec">Pass rules</div>'+d.thresholds.map(rule=>{
+      const value=rule.metric==='error_rate'?Number((rule.value*100).toPrecision(15))+'%':rule.value+' ms';
+      return '<div class="drow">'+esc(rule.metric+' '+rule.op+' '+value)+'</div>';
+    }).join('');
+  }
   const open=(v.questions||[]);
   if(open.length){
     h+='<div class="dsec">'+(miss.length?'Still needed':'Open questions')+'</div><ul class="dlist">'+
@@ -272,10 +287,18 @@ function convOpenPlan(p){
 function addEndpoint(method="GET",path="",body=""){
   const d=document.createElement('div');d.className='endpoint';
   d.innerHTML=`<select>${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${m===method?'selected':''}>${m}</option>`).join('')}</select>
-    <input placeholder="/path" value="${path}" />
-    <input class="bodyInput" placeholder='body JSON e.g. {"user":"demo"}' value='${body}' />
+    <input placeholder="/path" aria-label="Endpoint path" />
+    <input class="bodyInput" aria-label="JSON request body" placeholder='body JSON e.g. {"user":"demo"}' />
     <button class="iconbtn gbtn" title="Edit body + add dynamic data" onclick="openBodyEditor(this)">✏️</button>
-    <button class="iconbtn" onclick="this.parentElement.remove()">×</button>`;
+    <button class="iconbtn" type="button" aria-label="Remove endpoint" onclick="this.parentElement.remove()">×</button>
+    <details style="grid-column:1 / -1">
+      <summary>Response check (optional)</summary>
+      <input class="draftJsonPath" aria-label="JSON field that must exist" placeholder="e.g. order.id" />
+    </details>`;
+  const [pathInput, bodyInput]=d.querySelectorAll('input');
+  pathInput.value=path;
+  bodyInput.value=body;
+  d.querySelector('select').setAttribute('aria-label', 'HTTP method');
   document.getElementById('endpoints').appendChild(d);
 }
 
@@ -393,8 +416,13 @@ function readEndpoints(){
     const method=d.querySelector('select').value;
     const ins=d.querySelectorAll('input');
     const path=ins[0].value.trim(); const bodyRaw=ins[1].value.trim();
-    if(!path) return null;
+    const jsonPath=d.querySelector('.draftJsonPath').value.trim();
+    if(!path){
+      if(bodyRaw||jsonPath) throw new Error('Enter a path for the endpoint with a body or response check.');
+      return null;
+    }
     const ep={method,path};
+    if(jsonPath) ep.assertions=[{kind:'json_path',op:'exists',path:jsonPath}];
     if(bodyRaw){ try{ep.example_body=JSON.parse(bodyRaw)}catch(e){throw new Error(`Body for ${method} ${path} isn't valid JSON: ${e.message}`)} }
     return ep;
   }).filter(Boolean);
@@ -410,16 +438,32 @@ async function doPlan(){
   if(!currentProject||!newTestName){showNewTestForm();return;}
   const status=document.getElementById('planStatus');
   let eps; try{eps=readEndpoints()}catch(e){status.className='statusline err';status.textContent=e.message;return;}
-  if(!eps.length){status.className='statusline err';status.textContent='Add at least one endpoint.';return;}
   status.className='statusline';status.textContent='Asking the AI to draft a plan…';
   document.getElementById('planBtn').disabled=true;
   try{
-    const body={project_id:currentProject.project_id,test_name:newTestName,environment:currentProject.environment||'',target_base_url:document.getElementById('target').value.trim(),
+    let target=document.getElementById('target').value.trim();
+    if(!eps.length){
+      const url=new URL(target);
+      if(!['http:','https:'].includes(url.protocol)||url.username||url.password){
+        throw new Error('Enter an HTTP or HTTPS URL without credentials.');
+      }
+      eps=[{method:'GET',path:url.pathname+url.search}];
+      target=url.origin;
+    }
+    const rules=[];
+    for(const [id,metric,op,divisor] of [
+      ['draftP95','p95_ms','<=',1], ['draftErrorRate','error_rate','<',100],
+    ]){
+      const input=document.getElementById(id);
+      if(!input.checkValidity()) throw new Error('Enter valid latency and error rate limits.');
+      if(input.value!=='') rules.push({metric,op,value:input.valueAsNumber/divisor});
+    }
+    const body={project_id:currentProject.project_id,test_name:newTestName,environment:currentProject.environment||'',target_base_url:target,
       goal:document.getElementById('goal').value.trim(),
       max_users:parseInt(document.getElementById('maxUsers').value),
       duration_seconds:parseInt(document.getElementById('duration').value),
       profile_type:document.getElementById('profileType').value,
-      endpoints:eps};
+      endpoints:eps, ...(rules.length?{thresholds:rules}:{})};
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
@@ -442,8 +486,8 @@ function showGuardrail(g){
 }
 function showPlanEval(e){
   const el=document.getElementById('planEval'); if(!e){el.style.display='none';return;} el.style.display='inline-flex';
-  if(e.grounded){ el.className='rv-chip ok'; el.textContent='✅ Plan matches what you asked for ('+e.passed+'/'+e.total+' checks)';
-    el.title='Grounding checks: the plan only uses the target and endpoints you gave.'; }
+  if(e.grounded){ el.className='rv-chip ok'; el.textContent='Plan validation passed ('+e.passed+'/'+e.total+' checks)';
+    el.title='Checks the draft against its configured inputs. Verification sends requests to the target.'; }
   else { const f=(e.checks||[]).filter(c=>!c.passed).map(c=>c.name).join(', ');
          el.className='rv-chip warn'; el.textContent='⚠ Review needed — '+e.passed+'/'+e.total+' checks passed';
          el.title='Issues: '+(f||'see the plan'); }
@@ -575,7 +619,7 @@ function renderSummary(){
   const thr=(planModel.thresholds||[]).map(t=>{
     const m={p95_ms:'95% of responses',p99_ms:'99% of responses',p50_ms:'half of responses',
              avg_ms:'average response',error_rate:'error rate'}[t.metric]||t.metric;
-    if(t.metric==='error_rate'){ const pct=(t.value*100).toFixed(t.value<0.01?1:0);
+    if(t.metric==='error_rate'){ const pct=Number((t.value*100).toPrecision(15));
       return `the ${m} stays ${t.op.includes('<')?'under':'over'} ${pct}%`; }
     return `${m} ${t.op.includes('<')?'stay under':'exceed'} ${t.value} ms`;
   });
@@ -1252,6 +1296,7 @@ async function doGenerate(){
     const r=await fetch(`/api/plan/${currentPlanId}/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'generate failed');
     currentScriptId=j.script_id; _scriptEdited=false;
+    document.getElementById('preflightResult').style.display='none';
     document.getElementById('scriptOut').textContent=j.content;
     document.getElementById('dlBtn').disabled=false;
     document.getElementById('runBtn').disabled=(j.tool!=='k6');
@@ -1650,6 +1695,7 @@ function toggleEditScript(){
   const editing = ta.style.display==='none';
   if(editing){
     scriptEditorSourceId=currentScriptId;
+    document.getElementById('preflightResult').style.display='none';
     ta.value=pre.textContent; ta.style.display='block'; pre.style.display='none';
     document.getElementById('editNote').style.display='block';
     document.getElementById('editBtn').textContent='✓ Done editing';
@@ -1721,6 +1767,10 @@ async function pollRun(){
     document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
     document.getElementById('mReqs').textContent=s.requests??0;
     document.getElementById('mRps').textContent=s.rps??0;
+    const planned=j.planned_load||{};
+    document.getElementById('mActiveVus').textContent=(s.active_vus??'—')+' / '+(planned.peak_users??'—');
+    document.getElementById('mIterationRate').textContent=(s.iterations_per_second??'—')+' / '+(planned.iterations_per_second??'—');
+    document.getElementById('mDroppedIterations').textContent=s.dropped_iterations??'—';
     document.getElementById('mErr').textContent=((s.error_rate??0)*100).toFixed(2)+'%';
     document.getElementById('mP95').textContent=(lat.p95_ms??0)+' ms';
     document.getElementById('mP99').textContent=(lat.p99_ms??0)+' ms';
@@ -1742,7 +1792,7 @@ async function pollRun(){
       clearInterval(pollTimer); pollTimer=null;
       document.getElementById('runBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
       if(j.status==='finished'){ rs.className='statusline ok'; rs.textContent='Run finished.'; loadReport(); }
-      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent='Run stopped.'; loadReport(); }
+      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent=j.message||'Run stopped.'; loadReport(); }
       else{ rs.className='statusline err'; rs.textContent='Run error: '+(j.message||'unknown'); }
     }
   }catch(e){const status=document.getElementById('runStatus');status.className='statusline err';status.textContent='Status update failed: '+e.message+' Retrying...';}
@@ -2288,7 +2338,7 @@ async function doValidate(){
     if(!r.ok) throw new Error(j.detail||j.message||'Script validation failed');
     if(j.ok){
       el.className='note ok';
-      el.innerHTML='✅ <b>Script validation passed</b> — syntax and configuration checked without sending traffic. Use pre-flight to check endpoints.';
+      el.innerHTML='✅ <b>Script validation passed</b> — syntax and configuration checked without sending traffic. Use Verify test to exercise the configured journeys.';
     } else if(j.status==='k6_missing'){
       el.className='note warn'; el.textContent='⚠ '+j.message;
     } else {
@@ -2298,31 +2348,71 @@ async function doValidate(){
   }catch(e){ el.className='note err'; el.textContent='Validation error: '+e.message; }
 }
 
+async function loadSavedVerification(scriptId, el){
+  try{
+    const response=await fetch('/api/scripts/'+encodeURIComponent(scriptId)+'/readiness');
+    if(!response.ok) return;
+    const {verification}=await response.json();
+    if(!verification || currentScriptId!==scriptId || _scriptEdited ||
+      el.dataset.scriptId===scriptId || document.getElementById('preflightBtn').disabled ||
+      currentScriptText()!==document.getElementById('scriptOut').textContent) return;
+    el.dataset.scriptId=scriptId;
+    el.style.display='flex';
+    el.className=verification.all_ok?'note ok':'note warn';
+    const date=new Date(verification.verified_at*1000).toLocaleString();
+    const count=verification.journeys_checked;
+    el.textContent=(verification.all_ok?'Verification passed':'Verification needs review')+
+      ' · '+count+(count===1?' journey':' journeys')+' · '+date;
+  }catch(e){
+    // A saved result is optional. The Verify test action remains available.
+  }
+}
+
 /* ---------- pre-flight check ---------- */
 async function doPreflight(){
+  const button=document.getElementById('preflightBtn');
+  if(button.disabled) return;
+  button.disabled=true;
+  let scriptId=currentScriptId;
   const el=document.getElementById('preflightResult'); el.style.display='flex'; el.className='note info';
-  el.textContent='Running pre-flight check…';
+  el.textContent='Verifying test…';
   try{
     await ensureScriptId();
     if(!currentScriptId) throw new Error('Generate or import a script first.');
-    const payload={script_id:currentScriptId};
+    scriptId=currentScriptId;
+    const payload={script_id:scriptId};
     const r=await fetch('/api/preflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'preflight failed');
+    if(scriptId!==currentScriptId || _scriptEdited || currentScriptText()!==document.getElementById('scriptOut').textContent){
+      el.textContent='The script changed. Verify the current version.';
+      return;
+    }
+    el.dataset.scriptId=scriptId;
     if(j.mode==='script'){
+      const verifiedAt=j.verified_at?new Date(j.verified_at*1000).toLocaleString():'';
       el.className=j.all_ok?'note ok':'note warn';
-      el.textContent=j.message;
+      el.innerHTML='<div><strong>'+esc(j.message)+'</strong>'+(verifiedAt?'<p>'+esc(verifiedAt)+'</p>':'')+j.journeys.map(journey=>{
+        const requests=journey.requests.map((request,index)=>
+          '<li>'+esc((request.method||'Request')+' '+(index+1)+' · '+(request.status||'No HTTP response'))+'</li>');
+        const checks=journey.checks.map(check=>'<li>'+esc(check.name)+' · '+(check.ok?'Passed':'Failed')+'</li>');
+        return '<details'+(journey.ok?'':' open')+'><summary>'+esc(journey.name.replaceAll('_',' '))+' · '+
+          (journey.ok?'Passed':'Needs review')+'</summary>'+
+          (journey.completed?'':'<p>Journey did not complete.</p>')+
+          '<ul>'+requests.concat(checks).join('')+'</ul></details>';
+      }).join('')+'</div>';
       return;
     }
     const rows=j.results.map(x=>{
       const dot = x.ok ? '🟢' : '🔴';
-      const st = x.status!==null ? x.status : (x.error||'no response');
-      return `${dot} <b>${x.method}</b> ${esc(x.path)} → ${st}`;
+      const status = [x.status, x.error].filter(Boolean).join(' · ') || 'no response';
+      return `${dot} <b>${esc(x.method)}</b> ${esc(x.path)} → ${esc(status)}`;
     }).join('<br>');
     el.className = j.all_ok ? 'note ok' : 'note warn';
     el.innerHTML = `<div><b>Pre-flight: ${j.ok}/${j.total} endpoints responded OK</b>` +
       (j.all_ok ? ' — endpoint requests succeeded; review authentication and response checks before running.' : ' — check the failures below before a full run.') +
       `<div style="margin-top:6px">${rows}</div></div>`;
-  }catch(e){ el.className='note err'; el.textContent='Pre-flight error: '+e.message; }
+  }catch(e){ el.className='note err'; el.textContent='Verification error: '+e.message; }
+  finally{ if(currentScriptId===scriptId) button.disabled=false; }
 }
 
 /* ---------- live chart ---------- */
@@ -2355,16 +2445,24 @@ function drawChart(){
 const VIEW_META={
   projects:['Projects','Create a project, open its test library, or import an existing Git framework'],
   admin:['Administrator overview','Run and workload summaries across every project'],
-  create:['Create a performance test','AI drafts the plan · you approve · code generates, runs & reports'],
-  dashboard:['Stakeholder dashboard','Run history, trends and coverage — scoped to a role'],
-  history:['History','Saved plans and every finished run'],
+  create:['Test workspace','Describe, review, verify, and run your workload.'],
+  dashboard:['Performance dashboard','Review workload trends, verdicts, and run comparisons.'],
+  history:['Test library','Open saved tests and finished runs.'],
   monitoring:['Monitoring','Your Grafana, Datadog and other dashboards in one place'],
   activity:['Activity','Audit log and AI call traces'],
 };
+function markNavigation(view){
+  document.querySelectorAll('.sb-item').forEach(button=>{
+    const active=button.dataset.view===view;
+    button.classList.toggle('active',active);
+    if(active) button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  });
+}
 function showView(v){
   if(['dashboard','history'].includes(v)&&!currentProject){showError('Open a project first.');v='projects';}
   document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-'+v));
-  document.querySelectorAll('.sb-item').forEach(b=>b.classList.toggle('active', b.dataset.view===v));
+  markNavigation(v);
   const m=VIEW_META[v]||VIEW_META.create;
   document.getElementById('viewTitle').textContent=m[0];
   document.getElementById('viewSub').textContent=m[1];
@@ -2391,8 +2489,20 @@ function toggleSidebar(){
     else item.removeAttribute('title');
   });
 }
-function openMobNav(){ document.getElementById('sidebar').classList.add('mobopen'); document.getElementById('sbBackdrop').classList.add('show'); }
-function closeMobNav(){ document.getElementById('sidebar').classList.remove('mobopen'); document.getElementById('sbBackdrop').classList.remove('show'); }
+function openMobNav(){
+  document.getElementById('sidebar').classList.add('mobopen');
+  document.getElementById('sbBackdrop').classList.add('show');
+  document.getElementById('mobileNavButton').setAttribute('aria-expanded','true');
+  document.querySelector('.sb-mobile-close').focus();
+}
+function closeMobNav(){
+  const wasOpen=document.getElementById('sidebar').classList.contains('mobopen');
+  document.getElementById('sidebar').classList.remove('mobopen');
+  document.getElementById('sbBackdrop').classList.remove('show');
+  const toggle=document.getElementById('mobileNavButton');
+  toggle.setAttribute('aria-expanded','false');
+  if(wasOpen) toggle.focus();
+}
 
 /* ---------- monitoring tools (Grafana / Datadog / etc) ---------- */
 const MON_KEY='perfagent.monitors';
@@ -2468,7 +2578,14 @@ async function loadProjects(){
     if(currentProject)currentProject=projects.find(p=>p.project_id===currentProject.project_id)||null;
     document.getElementById('projectPicker').innerHTML='<option value="">Select project</option>'+projects.map(p=>'<option value="'+esc(p.project_id)+'">'+esc(p.name)+'</option>').join('');
     document.getElementById('projectPicker').value=currentProject?.project_id||'';
-    document.getElementById('projectCards').innerHTML=projects.map(p=>'<div class="card project-card"><h3>'+esc(p.name)+'</h3><p>'+esc(p.description||'Performance test project')+'</p><p>'+esc(p.tests??0)+' tests · '+esc(p.environment||'No default environment')+'</p><button class="btn ghost" data-project-id="'+esc(p.project_id)+'">Open project</button></div>').join('')||'<div class="card"><p>No projects yet. Create a project or import a framework to get started.</p></div>';
+    document.getElementById('projectCards').innerHTML=projects.map(p=>{
+      const initials=p.name.trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('').toUpperCase();
+      return '<article class="card project-card"><div class="project-card-mark" aria-hidden="true">'+esc(initials)+'</div>'+
+        '<h3>'+esc(p.name)+'</h3>'+(p.description?'<p>'+esc(p.description)+'</p>':'')+
+        '<dl class="project-card-meta"><div><dt>Tests</dt><dd>'+esc(p.tests??0)+'</dd></div>'+
+        '<div><dt>Environment</dt><dd>'+esc(p.environment||'Unset')+'</dd></div></dl>'+
+        '<button class="btn ghost" data-project-id="'+esc(p.project_id)+'">Open project <span aria-hidden="true">→</span></button></article>';
+    }).join('')||'<div class="card"><p>No projects yet. Create a project or import a framework to get started.</p></div>';
     document.querySelectorAll('#projectCards [data-project-id]').forEach(button=>button.onclick=()=>selectProject(button.dataset.projectId));
     renderProjectContext();
   }catch(e){showError(e.message);}
@@ -2526,6 +2643,8 @@ function startNamedTest(){
   if(pollTimer){showError('Wait for the current run to finish before creating another test.');return;}
   convNew();newTestName=name;currentPlanId=null;currentScriptId=null;planModel=null;currentDataFileId=null;_scriptEdited=false;
   document.getElementById('target').value=currentProject.target_url||'';
+  document.getElementById('draftP95').value='';
+  document.getElementById('draftErrorRate').value='';
   document.getElementById('endpoints').replaceChildren();
   addEndpoint();
   document.getElementById('goal').value=document.getElementById('newTestPurpose').value.trim();
@@ -2636,7 +2755,7 @@ async function checkReadiness(){
   try{
     await ensureScriptId();if(!currentScriptId)throw Error('Generate or import a script first.');
     const r=await fetch('/api/scripts/'+encodeURIComponent(currentScriptId)+'/readiness'),j=await r.json();if(!r.ok)throw Error(j.detail||'Readiness check failed.');
-    el.innerHTML='<b>Before you run</b><ul>'+j.checks.map(c=>'<li>'+esc(c.name)+': '+(c.ok?'Ready':'Review')+' — '+esc(c.detail)+'</li>').join('')+'</ul><p>'+esc(j.execution.duration_seconds)+' seconds · '+esc(j.execution.peak_users)+' peak users'+(j.execution.arrival_rate?' · '+esc(j.execution.arrival_rate)+' target iterations/s':'')+'</p><p>Reachability and authentication: use Pre-flight check to send one request per endpoint. Validate parses the script without traffic. Use a smoke run to exercise response assertions before full load.</p>';
+    el.innerHTML='<b>Before you run</b><ul>'+j.checks.map(c=>'<li>'+esc(c.name)+': '+(c.ok?'Ready':'Review')+' — '+esc(c.detail)+'</li>').join('')+'</ul><p>'+esc(j.execution.duration_seconds)+' seconds · '+esc(j.execution.peak_users)+' peak users'+(j.execution.arrival_rate?' · '+esc(j.execution.arrival_rate)+' target iterations/s':'')+'</p><p>Verify test exercises the configured k6 journeys and checks with one virtual user. Validate checks script syntax without sending traffic.</p>';
   }catch(e){el.className='note err';el.textContent=e.message;}
 }
 function renderReportDetails(j){
@@ -2651,7 +2770,34 @@ function renderReportDetails(j){
     return value;
   };
   const rules=(j.verdict?.checks||[]).map(c=>'<tr><td>'+esc(c.metric)+'</td><td>'+esc(c.target==null?'':c.op+' '+formatThreshold(c.metric,c.target))+'</td><td>'+esc(formatThreshold(c.metric,c.actual))+'</td><td>'+(c.passed===true?'Pass':c.passed===false?'Fail':'Inconclusive')+'</td></tr>').join('');
-  document.getElementById('reportDetails').innerHTML='<h2>Measured workload</h2><p>'+esc(lat.samples??'Unavailable')+' latency samples · '+esc(snap.iterations??'Unavailable')+' completed iterations · '+esc(snap.iterations_per_second??'Unavailable')+' achieved iterations/s · '+esc(snap.dropped_iterations??'Unavailable')+' dropped iterations'+(x.arrival_rate?' · '+esc(x.arrival_rate)+' requested iterations/s':'')+'</p>'+(j.status&&j.status!=='finished'?'<p class="note warn">The run did not complete. These are partial measurements, not a passing full test.</p>':'')+'<h3>Threshold results</h3><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Rule</th><th>Measured</th><th>Result</th></tr></thead><tbody>'+rules+'</tbody></table></div><h3>Slowest endpoints</h3><div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Requests</th><th>Transport failures</th><th>p95</th></tr></thead><tbody>'+endpoints.slice(0,10).map(e=>'<tr><td>'+esc(e.name)+'</td><td>'+esc(e.requests)+'</td><td>'+esc(e.failed)+'</td><td>'+esc(e.p95_ms)+' ms</td></tr>').join('')+'</tbody></table></div>';
+  const measurements=[
+    [lat.samples,'latency samples'], [snap.iterations,'completed iterations'],
+    [snap.iterations_per_second,'achieved iterations/s'], [snap.dropped_iterations,'dropped iterations'],
+    [x.arrival_rate,'requested iterations/s'], [snap.observed_peak_vus,'observed peak VUs'],
+  ].filter(([value])=>value!=null).map(([value,label])=>esc(value)+' '+label).join(' · ');
+  const journeyRows=(snap.per_journey||[]).map(journey=>'<tr>'+
+    [journey.name,journey.requests,journey.failed,journey.iterations,journey.dropped_iterations,journey.checks_failed]
+      .map(value=>'<td>'+esc(value)+'</td>').join('')+'</tr>').join('');
+  const journeyTable=journeyRows?'<h3>Journey results</h3><div class="table-scroll"><table><thead><tr><th scope="col">Journey</th><th scope="col">Requests</th><th scope="col">HTTP failures</th><th scope="col">Iterations</th><th scope="col">Dropped iterations</th><th scope="col">Failed checks</th></tr></thead><tbody>'+journeyRows+'</tbody></table></div>':'';
+  const endpointRows=endpoints.slice(0,10).map(endpoint=>{
+    const statuses=Object.entries(endpoint.status_codes||{}).map(([status,count])=>status+' × '+count).join(', ');
+    return '<tr>'+[endpoint.name,endpoint.requests,endpoint.failed,statuses||'Unavailable',endpoint.p95_ms+' ms']
+      .map(value=>'<td>'+esc(value)+'</td>').join('')+'</tr>';
+  }).join('');
+  const partial=j.status&&j.status!=='finished'?'<p class="note warn">The run ended early. This report shows partial measurements.</p>':'';
+  document.getElementById('reportDetails').innerHTML=`
+    <h2>Measured workload</h2>
+    <p>${measurements||'No workload measurements are available for this run.'}</p>${partial}
+    <h3>Threshold results</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">Metric</th><th scope="col">Rule</th><th scope="col">Measured</th><th scope="col">Result</th></tr></thead>
+      <tbody>${rules||'<tr><td colspan="4">No evaluated thresholds were recorded for this run.</td></tr>'}</tbody>
+    </table></div>
+    <h3>Slowest endpoints</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">Endpoint</th><th scope="col">Requests</th><th scope="col">HTTP failures</th><th scope="col">HTTP status counts</th><th scope="col">p95</th></tr></thead>
+      <tbody>${endpointRows||'<tr><td colspan="5">No endpoint measurements were recorded.</td></tr>'}</tbody>
+    </table></div>${journeyTable}`;
 }
 
 /* ---------- init ---------- */

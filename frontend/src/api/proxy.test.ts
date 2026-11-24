@@ -5,11 +5,11 @@ import { expect, it, vi } from 'vitest'
 import config from '../../vite.config.ts'
 
 it('forwards a project POST through the real Vite proxy with its body intact', async () => {
-  let received: { method?: string; url?: string; body: string } | undefined
+  let received: { method?: string; url?: string; host?: string; origin?: string; body: string } | undefined
   const backend = createHttpServer(async (request, response) => {
     let body = ''
     for await (const chunk of request) body += chunk
-    received = { method: request.method, url: request.url, body }
+    received = { method: request.method, url: request.url, host: request.headers.host, origin: request.headers.origin, body }
     response.writeHead(201, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify({ project_id: 'proxy-check' }))
   })
@@ -23,12 +23,14 @@ it('forwards a project POST through the real Vite proxy with its body intact', a
     } })
     await frontend.listen()
     const address = frontend.httpServer!.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${address.port}/api/projects`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Proxy check' }),
+    const host = `127.0.0.1:${address.port}`
+    const origin = `http://${host}`
+    const response = await fetch(`${origin}/api/projects`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ name: 'Proxy check' }),
     })
     expect(response.status).toBe(201)
     expect(await response.json()).toEqual({ project_id: 'proxy-check' })
-    expect(received).toEqual({ method: 'POST', url: '/api/projects', body: '{"name":"Proxy check"}' })
+    expect(received).toEqual({ method: 'POST', url: '/api/projects', host, origin, body: '{"name":"Proxy check"}' })
   } finally {
     if (frontend?.httpServer && 'closeAllConnections' in frontend.httpServer) frontend.httpServer.closeAllConnections()
     await frontend?.close()

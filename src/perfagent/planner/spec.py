@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
 from pydantic import BaseModel, Field, field_validator
 
-from perfagent.contracts.load_model import HttpMethod, LoadProfileType
+from perfagent.contracts.load_model import Assertion, HttpMethod, LoadProfileType, Threshold
 
 
 class EndpointSpec(BaseModel):
@@ -14,6 +16,7 @@ class EndpointSpec(BaseModel):
     path: str
     description: str | None = None
     example_body: dict | None = None
+    assertions: list[Assertion] | None = None
 
     @field_validator("path")
     @classmethod
@@ -36,6 +39,19 @@ class PlanRequest(BaseModel):
     profile_type: LoadProfileType = LoadProfileType.RAMP
     environment: str = ""
     insecure_tls: bool = False
+    thresholds: list[Threshold] | None = None
+
+    @field_validator("thresholds")
+    @classmethod
+    def known_thresholds(cls, values: list[Threshold] | None) -> list[Threshold] | None:
+        for threshold in values or []:
+            metric, value = threshold.metric, threshold.value
+            if metric not in {"error_rate", "p50_ms", "p90_ms", "p95_ms", "p99_ms",
+                              "avg_ms", "median_ms", "max_ms"} or not isfinite(value):
+                raise ValueError("Choose a supported threshold metric and a finite limit.")
+            if value < 0 or (metric == "error_rate" and value > 1):
+                raise ValueError("Latency limits must be nonnegative and error rate must be between 0 and 1.")
+        return values
 
     @field_validator("target_base_url")
     @classmethod

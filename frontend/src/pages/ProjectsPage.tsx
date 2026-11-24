@@ -5,22 +5,16 @@ export function ProjectsPage() {
 return <>
 <section className={"view show"} id={"view-projects"}>
 <div className={"viewwrap"}>
-<div className={"card"}>
-<h2>
-{"Your performance projects"}
-</h2>
-<p className={"hint"}>
-{"Keep each application's tests, environments, repository and run history together."}
-</p>
-<div className={"btnrow"}>
-<button className={"btn"} onClick={handlers.h0}>
-{"Create project"}
-</button>
-<button className={"btn ghost"} onClick={handlers.h1}>
-{"Import framework from Git"}
-</button>
-</div>
-</div>
+<section className="projects-intro" aria-label="Project actions">
+  <div>
+    <h2>Performance workspace</h2>
+    <p>Group tests, environments, and run history by application.</p>
+  </div>
+  <div className="btnrow">
+    <button className="btn" onClick={handlers.h0}>Create project</button>
+    <button className="btn ghost" onClick={handlers.h1}>Import from Git</button>
+  </div>
+</section>
 <div id={"projectForm"} className={"card"} style={{"display": "none"} as CSSProperties}>
 <h2 id={"projectFormTitle"}>
 {"Create project"}
@@ -159,6 +153,7 @@ return <>
 </button>
 </div>
 </div>
+<h2 className="section-heading">Project library</h2>
 <div id={"projectCards"} className={"project-grid"}>
 
 </div>

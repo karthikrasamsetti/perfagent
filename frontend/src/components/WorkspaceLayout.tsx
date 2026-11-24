@@ -24,10 +24,19 @@ return <>
 <div className={"sb-backdrop"} id={"sbBackdrop"} onClick={handlers.h117}>
 
 </div>
-<div className={"app"}>
+<a className="skip-link" href="#workspace-content" onClick={event => {
+  event.preventDefault()
+  document.getElementById('workspace-content')?.focus()
+}}>Skip to content</a>
+<div className={"app"} onKeyDown={event => {
+  if (event.key === 'Escape' && document.getElementById('sidebar')?.classList.contains('mobopen')) {
+    document.getElementById('sbBackdrop')?.click()
+  }
+}}>
 <Sidebar />
 <div className={"main"}>
 <Topbar />
+<main id="workspace-content" tabIndex={-1}>
 <ProjectsPage />
 <AdminPage />
 <TestWorkspacePage />
@@ -35,6 +44,7 @@ return <>
 <TestLibraryPage />
 <MonitoringPage />
 <ActivityPage />
+</main>
 </div>
 </div>
 <WorkspaceDialogs />

@@ -14,6 +14,7 @@ failed assertion always counts toward the verdict.
 from __future__ import annotations
 
 import time
+from collections import Counter, defaultdict
 
 import numpy as np
 
@@ -27,6 +28,10 @@ class Aggregator:
         self._durations: list[float] = []   # http_req_duration values (ms)
         self._req_count = 0
         self._iterations = 0
+        self._active_vus: int | None = None
+        self._peak_vus: int | None = None
+        self._status_codes: dict[str, Counter] = defaultdict(Counter)
+        self._journeys: dict[str, Counter] = defaultdict(Counter)
         self._dropped_iterations = 0
         self._http_failed = 0               # http_req_failed (transport/status)
         self._errors = 0                    # custom `errors` metric (status>=400 || !ok)
@@ -45,35 +50,51 @@ class Aggregator:
         value = data.get("value")
         tags = data.get("tags", {}) or {}
         name = tags.get("name", "(unnamed)")
+        if value is None:
+            return
 
-        if metric == "http_req_duration" and value is not None:
+        journey = tags.get("scenario")
+        if journey:
+            count = self._journeys[journey]
+            if metric in ("iterations", "dropped_iterations", "http_reqs", "http_req_failed"):
+                count[metric] += int(value)
+            elif metric == "checks":
+                count["checks_passed" if value else "checks_failed"] += 1
+
+        if metric == "http_req_duration":
             self._durations.append(float(value))
             b = self._by_name.setdefault(name, {"durations": [], "count": 0, "failed": 0})
             b["durations"].append(float(value))
             b["count"] += 1
 
-        elif metric in _HTTP_PHASES and value is not None:
+        elif metric in _HTTP_PHASES:
             self._phases.setdefault(name, {}).setdefault(metric, []).append(float(value))
 
-        elif metric == "iterations" and value is not None:
+        elif metric == "vus":
+            self._active_vus = int(value)
+            self._peak_vus = max(self._peak_vus or 0, self._active_vus)
+        elif metric == "iterations":
             self._iterations += int(value)
-        elif metric == "dropped_iterations" and value is not None:
+        elif metric == "dropped_iterations":
             self._dropped_iterations += int(value)
-        elif metric == "http_reqs" and value is not None:
+        elif metric == "http_reqs":
             self._req_count += int(value)
+            status = str(tags.get("status", ""))
+            if status.isascii() and status.isdigit() and len(status) <= 3:
+                self._status_codes[name][status] += int(value)
 
-        elif metric == "http_req_failed" and value is not None:
+        elif metric == "http_req_failed":
             if value:
                 self._http_failed += int(value)
                 b = self._by_name.setdefault(name, {"durations": [], "count": 0, "failed": 0})
                 b["failed"] += int(value)
 
-        elif metric == "errors" and value is not None:
+        elif metric == "errors":
             # our custom Rate('errors'): 1 when status>=400 OR a check failed
             if value:
                 self._errors += int(value)
 
-        elif metric == "checks" and value is not None:
+        elif metric == "checks":
             # k6 emits one `checks` point per check evaluation; the check's name is in
             # tags.check, value is 1 (pass) or 0 (fail).
             self._checks_total += 1
@@ -124,6 +145,7 @@ class Aggregator:
                         } for phase, values in sorted(phases.items())
                     },
                     "requests": b["count"],
+                    "status_codes": dict(self._status_codes.get(name, {})),
                     "failed": b["failed"],
                     "p95_ms": self._pctl(d, 95),
                     "avg_ms": round(sum(d) / len(d), 2) if d else 0.0,
@@ -142,6 +164,15 @@ class Aggregator:
             "elapsed_s": round(elapsed, 1),
             "requests": self._req_count,
             "iterations": self._iterations,
+            "active_vus": self._active_vus,
+            "observed_peak_vus": self._peak_vus,
+            "per_journey": [
+                {"name": name, "requests": counts["http_reqs"],
+                 "failed": counts["http_req_failed"], "iterations": counts["iterations"],
+                 "dropped_iterations": counts["dropped_iterations"],
+                 "checks_failed": counts["checks_failed"], "checks_passed": counts["checks_passed"]}
+                for name, counts in sorted(self._journeys.items())
+            ],
             "iterations_per_second": round(self._iterations / elapsed, 2),
             "dropped_iterations": self._dropped_iterations,
             "failed": failed,

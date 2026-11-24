@@ -69,14 +69,10 @@ def evaluate_plan(model: LoadModel, request: PlanRequest) -> PlanEvaluation:
 
     # 1. Every step's endpoint must exist in the supplied endpoints (no invention).
     allowed = {_norm(e.method.value, e.path) for e in request.endpoints}
-    allowed_paths = {e.path for e in request.endpoints}
-    invented = []
-    for sc in model.scenarios:
-        for st in sc.steps:
-            key = _norm(st.method.value, st.path)
-            # accept exact method+path, or same path (method may differ sensibly)
-            if key not in allowed and st.path not in allowed_paths:
-                invented.append(key)
+    steps = [(_norm(step.method.value, step.path), step)
+             for scenario in model.scenarios for step in scenario.steps]
+    present = {key for key, _ in steps}
+    invented = present - allowed
     checks.append(
         Check(
             "no_invented_endpoints",
@@ -128,5 +124,20 @@ def evaluate_plan(model: LoadModel, request: PlanRequest) -> PlanEvaluation:
               detail=f"peak {model.load_profile.peak_users}<= {request.max_users}, "
                      f"dur {model.load_profile.total_seconds}<= {request.duration_seconds}")
     )
+
+    missing = allowed - present
+    checks.append(Check("all_requested_endpoints", not missing,
+                        f"missing: {', '.join(sorted(missing))}" if missing else "all covered"))
+    if request.thresholds is not None:
+        checks.append(Check("requested_thresholds", model.thresholds == request.thresholds))
+    requested_checks = {
+        _norm(ep.method.value, ep.path): ep.assertions
+        for ep in request.endpoints if ep.assertions is not None
+    }
+    if requested_checks:
+        checks.append(Check("requested_assertions", all(
+            step.assertions == requested_checks[key]
+            for key, step in steps if key in requested_checks
+        ) and requested_checks.keys() <= present))
 
     return PlanEvaluation(checks=checks)

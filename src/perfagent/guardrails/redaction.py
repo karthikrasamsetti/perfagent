@@ -51,6 +51,12 @@ _QUERY_SECRET = re.compile(
     re.IGNORECASE,
 )
 
+# Authorization schemes often prefix the credential with a separate word.
+_AUTH_HEADER = re.compile(
+    r"(?i)(\b(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?"
+    r"(?:basic|bearer|token|digest)\s+)([^\s\"',;]+)"
+)
+
 # Inline "secret_key = value" or "secret_key: value" in free text (one-way).
 _INLINE_SECRET = re.compile(
     r'["\']?\b(password|passwd|pwd|secret|token|access_token|refresh_token|api[_-]?key|'
@@ -134,6 +140,8 @@ def redact_text(text: str, counts: dict[str, int] | None = None,
         mapping[placeholder] = host
         id_index[host] = placeholder
         return placeholder
+
+    text = _AUTH_HEADER.sub(r"\1<AUTH_REDACTED>", text)
 
     # 0. Strip secrets inside URL query strings first (one-way).
     def _query_repl(m: re.Match) -> str:

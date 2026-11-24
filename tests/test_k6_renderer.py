@@ -105,3 +105,13 @@ def test_weighted_stage_targets_sum_to_requested_peak():
 
     assert _allocate_users(15, [0.7, 0.3]) == [11, 4]
     assert _allocate_users(0, [0.7, 0.3]) == [0, 0]
+
+
+def test_literal_template_characters_are_escaped_while_placeholders_still_work():
+    from perfagent.generator.k6_corr import body_expr, headers_expr, path_expr
+
+    literal = '/example/`${literal part}/${id}'
+    escaped = r'/example/\`\${literal part}/${vars.id}'
+    assert path_expr(literal, {"id"}) == escaped
+    assert escaped in body_expr({"nested": [literal]}, {"id"})
+    assert escaped in headers_expr({"Example": literal}, {"id"})

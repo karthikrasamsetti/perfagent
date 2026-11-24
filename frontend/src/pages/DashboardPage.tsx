@@ -9,16 +9,11 @@ return <>
 
 </div>
 <div className={"card"}>
-<div style={{"display": "flex", "alignItems": "center", "gap": "10px", "flexWrap": "wrap"} as CSSProperties}>
-<h2 style={{"margin": "0", "fontSize": "15px"} as CSSProperties}>
-{"📊 Stakeholder dashboard"}
-</h2>
+<div className="section-header dashboard-heading">
+<h2>Run overview</h2>
 <button className={"btn ghost sm"} onClick={handlers.h79}>
 {"↻ Refresh"}
 </button>
-<span className={"muted"}>
-{"what each role sees across all runs"}
-</span>
 <div className={"spacer"}>
 
 </div>
@@ -40,7 +35,9 @@ return <>
 </option>
 </select>
 </div>
-<div className={"grid3"} style={{"marginTop": "20px"} as CSSProperties}>
+<details className="dashboard-filters" open>
+<summary>Filters</summary>
+<div className="grid3">
 <div className={"field"}>
 <label htmlFor={"sdTest"}>
 {"Test / workload"}
@@ -97,6 +94,7 @@ return <>
 {"Filters search saved runs. Summaries and charts show the current page."}
 </span>
 </div>
+</details>
 <div className={"tiles"} id={"sdTiles"} style={{"gridTemplateColumns": "repeat(4,1fr)", "margin": "14px 0 4px"} as CSSProperties}>
 
 </div>
@@ -106,9 +104,9 @@ return <>
 {"p95 latency across runs"}
 </h4>
 <div className={"sub"}>
-{"lower is better · amber line"}
+{"Milliseconds"}
 </div>
-<canvas id={"sdTrend"} height={"140"} style={{"width": "100%"} as CSSProperties}>
+<canvas role="img" aria-label="p95 latency across runs" id={"sdTrend"} height={"140"} style={{"width": "100%"} as CSSProperties}>
 
 </canvas>
 </div>
@@ -117,9 +115,9 @@ return <>
 {"Error rate across runs"}
 </h4>
 <div className={"sub"}>
-{"percentage of failed requests · red line"}
+{"Percentage of failed requests"}
 </div>
-<canvas id={"sdErrTrend"} height={"140"} style={{"width": "100%"} as CSSProperties}>
+<canvas role="img" aria-label="Error rate across runs" id={"sdErrTrend"} height={"140"} style={{"width": "100%"} as CSSProperties}>
 
 </canvas>
 </div>
@@ -130,7 +128,7 @@ return <>
 <div className={"sub"}>
 {"pass / fail / inconclusive"}
 </div>
-<canvas id={"sdDonut"} height={"140"} style={{"width": "100%"} as CSSProperties}>
+<canvas role="img" aria-label="Verdict breakdown" id={"sdDonut"} height={"140"} style={{"width": "100%"} as CSSProperties}>
 
 </canvas>
 </div>
@@ -141,7 +139,7 @@ return <>
 <div className={"sub"}>
 {"p50 · p95 · p99 in ms"}
 </div>
-<canvas id={"sdBars"} height={"140"} style={{"width": "100%"} as CSSProperties}>
+<canvas role="img" aria-label="Latency percentiles for latest run" id={"sdBars"} height={"140"} style={{"width": "100%"} as CSSProperties}>
 
 </canvas>
 </div>

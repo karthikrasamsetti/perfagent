@@ -53,6 +53,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Length", "2"); self.end_headers()
         self.wfile.write(b"{}")
     def do_GET(self):
+        if self.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", "/products")
+            self.end_headers()
+            return
         self._send(200 if self.path == "/products" else 404)
     def do_POST(self):
         ln = int(self.headers.get("Content-Length", 0))
@@ -103,3 +108,53 @@ def test_preflight_flags_bad_endpoint():
         assert r["all_ok"] is False
     finally:
         _stop(srv)
+
+
+def test_preflight_reports_redirect_without_following_it():
+    server = _serve()
+    try:
+        model = _model(port=server.server_port)
+        model.scenarios[0].steps = [Step(name="redirect", path="/redirect")]
+        result = preflight(model)
+        assert result["all_ok"] is False
+        assert result["results"][0]["status"] == 302
+        assert "use the final endpoint URL" in result["results"][0]["error"]
+    finally:
+        _stop(server)
+
+
+def test_k6_verification_runs_every_journey_and_reports_failed_checks():
+    import pytest
+
+    from perfagent.contracts.load_model import Assertion, Extract
+    from perfagent.runner.k6_binary import find_k6
+    from perfagent.runner.validator import preflight_script
+
+    if find_k6() is None:
+        pytest.skip("An installed k6 binary is required.")
+    server = _serve()
+    try:
+        model = _model(port=server.server_port)
+        model.scenarios = [
+            Scenario(name="Sign in", steps=[
+                Step(name="Login", method="POST", path="/login", body={"u": "demo"},
+                     extract=[Extract(var="session_id", path="session.id")],
+                     assertions=[Assertion(kind="json_path", op="exists", path="session.id")]),
+            ]),
+            Scenario(name="Browse", steps=[Step(name="Browse products", path="/products")]),
+        ]
+        model.load_profile.start_users = 1
+        for scenario in model.scenarios:
+            scenario.think_time.min_seconds = scenario.think_time.max_seconds = 0
+
+        result = preflight_script(render_k6(model))
+        assert result["all_ok"] is False
+        sign_in, browse = result["journeys"]
+        assert sign_in["name"] == "sign_in"
+        assert sign_in["requests"] == [{"method": "POST", "status": 200, "ok": True}]
+        checks = {check["name"]: check["ok"] for check in sign_in["checks"]}
+        assert checks["session.id exists"] is False
+        assert checks["Login captured session_id"] is False
+        assert browse["name"] == "browse" and browse["ok"] is True
+    finally:
+        _stop(server)

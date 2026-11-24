@@ -64,6 +64,11 @@ async function main(){
  async function check(name,expression){checks.push({name,result:await evaluate(expression)});}
  await send('Runtime.enable');await send('Page.enable');await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/'});await pause(900);
  await check('Starts at Projects','document.getElementById("view-projects").classList.contains("show")');
+ if(spaMode){
+ await check('Project library is visible', "document.querySelector('.projects-intro h2').textContent==='Performance workspace'&&Boolean(document.querySelector('.project-card-meta'))");
+ fs.writeFileSync(path.join(os.tmpdir(),'perfagent-ui-projects.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ await check('Generated code is collapsed by default', "document.querySelector('.script-details').open===false&&document.getElementById('preflightBtn').closest('details')===null");
+ }
  await evaluate("document.querySelector('#view-projects .btn').click();document.getElementById('projectName').value='New app';document.getElementById('projectTarget').value='http://fixture.test';document.querySelector('#projectForm .btn').click()");await pause(200);
  await check('Project created and selected',"currentProject?.project_id==='project-new'");
  await evaluate("document.querySelector('#activeProject .btn').click();document.getElementById('newTestName').value='Named checkout';document.getElementById('newTestPurpose').value='Verify checkout';document.querySelector('#newTestForm .btn').click()");

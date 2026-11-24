@@ -29,8 +29,9 @@ def plan_request_from_intent(intent: ChatIntent, fallback_goal: str = "") -> Pla
         max_users=intent.max_users or DEFAULT_USERS,
         duration_seconds=intent.duration_seconds or DEFAULT_DURATION_SECONDS,
         profile_type=intent.profile_type,
+        thresholds=intent.thresholds,
         endpoints=[
-            EndpointSpec(method=e.method, path=e.path, example_body=e.example_body)
+            EndpointSpec(method=e.method, path=e.path, example_body=e.example_body, assertions=e.assertions)
             for e in intent.endpoints
         ],
     )

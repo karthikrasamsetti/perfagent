@@ -256,10 +256,10 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "errors and bad options. No request is sent to the target.",
         returns="`ok`, `status`, `message`, `detail`."),
     ("POST", "/api/preflight"): _e(
-        "Scripts", "Check plan endpoints or run an edited script",
-        "Sends one request per plan endpoint using the saved headers and a sample data row. "
-        "For an edited generated k6 script, runs one iteration of the first scenario.",
-        "run", returns="Endpoint results or the outcome of the edited script iteration."),
+        "Scripts", "Verify k6 journeys or check plan endpoints",
+        "Exercises each journey of a saved k6 script once with a single virtual user. "
+        "Using a plan directly checks endpoint reachability.",
+        "run", returns="Journey requests and checks, or endpoint reachability results."),
 
     # -------------------------------------------------------------------- Runs
     ("GET", "/api/run/available"): _e(
@@ -273,14 +273,15 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "run", returns="`run_id`, `status`, `message`."),
     ("GET", "/api/scripts/{script_id}/readiness"): _e(
         "Runs", "Execution readiness checklist",
-        "Check frozen inputs, engine availability and planned load without sending traffic.",
-        returns="`checks`, `execution`, `target`, `smoke_supported`."),
+        "Check frozen inputs, engine availability, planned load and the latest verification "
+        "of this version without sending traffic.",
+        returns="`checks`, `execution`, `target`, `smoke_supported`, `verification`."),
     ("GET", "/api/runs/{run_id}"): _e(
         "Runs", "Live status of a run",
         "The run's status and the metrics measured so far (requests, error rate, "
         "throughput, percentiles), all computed in code from k6's raw output, plus the "
         "recent log lines.",
-        returns="`run_id`, `status`, `message`, `elapsed_s`, `snapshot`, `logs`."),
+        returns="`run_id`, `status`, `message`, `elapsed_s`, `planned_load`, `snapshot`, `logs`."),
     ("POST", "/api/runs/{run_id}/stop"): _e(
         "Runs", "Stop a run",
         "Stops a run in progress. The metrics measured up to that point are kept.",

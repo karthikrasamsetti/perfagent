@@ -53,39 +53,53 @@ def _ref(name: str, cap: set[str], has_data: bool = True) -> str:
     return "''"
 
 
+def _template_text(text: str, cap: set[str], has_data: bool) -> str:
+    """Escape literal segments and render only supported placeholder syntax."""
+    parts = []
+    end = 0
+    for match in _PLACEHOLDER.finditer(text):
+        parts.append(_escape_template_segment(text[end:match.start()]))
+        parts.append("${" + _ref(match.group(1), cap, has_data) + "}")
+        end = match.end()
+    parts.append(_escape_template_segment(text[end:]))
+    return "".join(parts)
+
+
+def _escape_template_segment(text: str) -> str:
+    return json.dumps(text)[1:-1].replace('\"', '"').replace("`", "\\`").replace("${", "\\${")
+
+
 def path_expr(path: str, cap: set[str], has_data: bool = True) -> str:
-    """Render a path with ${name} -> its JS expression for a template literal."""
-    path = _normalize_postman(path)
-    return _PLACEHOLDER.sub(lambda m: "${" + _ref(m.group(1), cap, has_data) + "}", path)
+    return _template_text(_normalize_postman(path), cap, has_data)
 
 
 def body_expr(body: dict | None, cap: set[str], has_data: bool = True) -> str:
-    """Render a body dict (with ${name}) into a JS expression string."""
-    if not body:
-        return "{}"
-    raw = _normalize_postman(json.dumps(body))
-    # "${name}" (a quoted placeholder alone) -> its JS expression (unquoted).
-    #   name may be a column, a captured var, or a generator like randomInt(1,5).
-    raw = re.sub(r'"\$\{([A-Za-z_][A-Za-z0-9_]*(?:\([^}]*\))?)\}"',
-                 lambda m: _ref(m.group(1), cap, has_data), raw)
-    # inline "...${name}..." within a longer string -> template literal
-    def _inline(m: re.Match) -> str:
-        inner = _PLACEHOLDER.sub(lambda mm: "${" + _ref(mm.group(1), cap, has_data) + "}", m.group(1))
-        return "`" + inner + "`"
-    raw = re.sub(r'"([^"]*\$\{[A-Za-z_][A-Za-z0-9_]*(?:\([^}]*\))?\}[^"]*)"', _inline, raw)
-    return raw
+    """Render request values, interpolating strings without treating them as code."""
+    def render(value) -> str:
+        if isinstance(value, dict):
+            return "{" + ", ".join(f"{json.dumps(key)}: {render(item)}" for key, item in value.items()) + "}"
+        if isinstance(value, list):
+            return "[" + ", ".join(render(item) for item in value) + "]"
+        if isinstance(value, str):
+            value = _normalize_postman(value)
+            match = _PLACEHOLDER.fullmatch(value)
+            if match:
+                return _ref(match.group(1), cap, has_data)
+            if _PLACEHOLDER.search(value):
+                return "`" + _template_text(value, cap, has_data) + "`"
+        return json.dumps(value)
+
+    return render(body or {})
 
 
 def headers_expr(headers: dict, cap: set[str], has_data: bool = True) -> str:
-    """Render global headers, substituting ${name} refs inside header VALUES."""
-    # Build a JS object literal where values containing ${name} become template literals.
     parts = []
-    for k, v in headers.items():
-        if isinstance(v, str) and _PLACEHOLDER.search(v):
-            tmpl = _PLACEHOLDER.sub(lambda m: "${" + _ref(m.group(1), cap, has_data) + "}", v)
-            parts.append(f"{json.dumps(k)}: `{tmpl}`")
+    for key, value in headers.items():
+        if isinstance(value, str) and _PLACEHOLDER.search(value):
+            rendered = "`" + _template_text(value, cap, has_data) + "`"
         else:
-            parts.append(f"{json.dumps(k)}: {json.dumps(v)}")
+            rendered = json.dumps(value)
+        parts.append(f"{json.dumps(key)}: {rendered}")
     return "{ " + ", ".join(parts) + " }"
 
 
