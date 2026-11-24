@@ -10,6 +10,10 @@ from perfagent.db.models import ScriptSnapshotRow
 from perfagent.api.test_identity import model_identity
 
 
+def script_workload_version(content: str, model_json: str, data_content: str) -> str:
+    return hashlib.sha256((content + model_json + data_content).encode()).hexdigest()
+
+
 def freeze_script(session, script, model: LoadModel, *, generated=False):
     saved = session.get(ScriptSnapshotRow, script.id)
     if saved is not None:
@@ -25,7 +29,7 @@ def freeze_script(session, script, model: LoadModel, *, generated=False):
         filename, content = data.filename, data.content
         model.data_file.data_file_id = data.id
     model_json = model.model_dump_json()
-    signature = hashlib.sha256((script.content + model_json + content).encode()).hexdigest()
+    signature = script_workload_version(script.content, model_json, content)
     metadata = {
         **model_identity(model, script.filename),
         "workload_version": signature,

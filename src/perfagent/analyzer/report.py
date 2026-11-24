@@ -11,6 +11,7 @@ import html
 from datetime import datetime, timezone
 
 from perfagent.analyzer.narrator import Narrative
+from perfagent.analyzer.verdict import format_threshold_value
 
 
 def _badge(passed) -> str:
@@ -36,8 +37,9 @@ def render_report_html(
     esc = html.escape
 
     checks_rows = "".join(
-        f"<tr><td>{esc(c['metric'])}</td><td>{esc(c['op'])} {c['target']}</td>"
-        f"<td>{'-' if c['actual'] is None else c['actual']}</td>"
+        f"<tr><td>{esc(c['metric'])}</td><td>{esc(c['op'])} "
+        f"{esc(format_threshold_value(c['metric'], c['target']))}</td>"
+        f"<td>{esc(format_threshold_value(c['metric'], c['actual']))}</td>"
         f"<td>{_badge(c['passed'])}</td></tr>"
         for c in verdict.get("checks", [])
     )

@@ -241,23 +241,25 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
     ("POST", "/api/scripts/upload"): _e(
         "Scripts", "Use your own script",
         "Stores a hand-written or existing k6 script so it can be validated and run, "
-        "skipping planning. Also used when the generated script is edited.",
+        "skipping planning.",
         "write", returns="`script_id`, `plan_id`, `tool`, `filename`, `content`."),
     ("GET", "/api/scripts/{script_id}/download"): _e(
         "Scripts", "Download a script",
         "The script as a file.", returns="The script text, as an attachment."),
+    ("POST", "/api/scripts/{script_id}/edit"): _e(
+        "Scripts", "Save an edited script version",
+        "Keeps the source plan, environment and frozen data with the edited content.",
+        "write", returns="`script_id`, `plan_id`, and `script_edited` for a modified version."),
     ("POST", "/api/scripts/{script_id}/validate"): _e(
         "Scripts", "Check a script without running it",
         "Asks k6 to load the script and its options (`k6 inspect`). Catches syntax "
         "errors and bad options. No request is sent to the target.",
         returns="`ok`, `status`, `message`, `detail`."),
     ("POST", "/api/preflight"): _e(
-        "Scripts", "Send one request per endpoint",
-        "Before a full run, sends exactly ONE request to each endpoint of the plan — "
-        "with the custom headers, a real data row and sample generated values — and "
-        "reports the status of each. Answers 'will we get valid responses?'. This is "
-        "not load, but it does touch the target.",
-        "run", returns="`total`, `ok`, `failed`, `all_ok`, and the status per endpoint."),
+        "Scripts", "Check plan endpoints or run an edited script",
+        "Sends one request per plan endpoint using the saved headers and a sample data row. "
+        "For an edited generated k6 script, runs one iteration of the first scenario.",
+        "run", returns="Endpoint results or the outcome of the edited script iteration."),
 
     # -------------------------------------------------------------------- Runs
     ("GET", "/api/run/available"): _e(

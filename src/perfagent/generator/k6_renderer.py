@@ -71,12 +71,18 @@ def _func_name(name: str, index: int) -> str:
     return camel or f"scenario{index}"
 
 
-def _scale_stages(model: LoadModel, frac: float) -> list[dict]:
-    stages = []
-    for stage in model.load_profile.stages:
-        target = 0 if stage.target_users <= 0 else max(1, round(stage.target_users * frac))
-        stages.append({"duration": stage.duration_seconds, "target": target})
-    return stages
+def _allocate_users(total: int, fractions: list[float]) -> list[int]:
+    values = [int(total * fraction) for fraction in fractions]
+    highest = max(range(len(fractions)), key=fractions.__getitem__)
+    values[highest] += total - sum(values)
+    # Keep every journey active when the requested total can accommodate it.
+    if total >= len(values):
+        for i, value in enumerate(values):
+            if value == 0:
+                donor = max(range(len(values)), key=values.__getitem__)
+                values[donor] -= 1
+                values[i] = 1
+    return values
 
 
 def _allocate(total: int, fractions: list[float]) -> list[int]:
@@ -93,14 +99,14 @@ def _allocate(total: int, fractions: list[float]) -> list[int]:
 
 
 def _thresholds(model: LoadModel) -> list[dict]:
-    out = []
+    rules: dict[str, list[str]] = {}
     for th in model.thresholds:
         mapped = _METRIC_MAP.get(th.metric)
         if not mapped:
             continue
         metric, agg = mapped
-        out.append({"expr": f"'{metric}': ['{agg}{th.op}{th.value:g}'],"})
-    return out
+        rules.setdefault(metric, []).append(f"{agg}{th.op}{str(th.value).removesuffix('.0')}")
+    return [{"expr": f"'{metric}': {expressions!r},"} for metric, expressions in rules.items()]
 
 
 def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEADERS") -> str:
@@ -197,14 +203,20 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
     vus = _allocate(model.load_profile.pre_allocated_vus, fractions) if model.load_profile.arrival_rate else [0] * len(fractions)
     scenarios_meta = []
     scenario_funcs = []
-    for i, (sc, frac) in enumerate(zip(model.scenarios, fractions, strict=False)):
+    profile = model.load_profile
+    if not profile.arrival_rate and max(profile.peak_users, profile.start_users) < len(fractions):
+        raise ValueError("Peak users must be at least the number of journeys. Increase users or combine journeys.")
+    targets = [_allocate_users(stage.target_users, fractions) for stage in profile.stages]
+    starts = _allocate_users(profile.start_users, fractions)
+    for i, sc in enumerate(model.scenarios):
         scenarios_meta.append({
             "key": _identifier(sc.name, f"scenario_{i}").lower(),
             "func_name": _func_name(sc.name, i),
-            "stages": _scale_stages(model, frac),
+            "stages": [{"duration": stage.duration_seconds, "target": allocation[i]}
+                       for stage, allocation in zip(profile.stages, targets, strict=True)],
             "rate": rates[i],
             "vus": vus[i],
-            "start_vus": max(1, round(model.load_profile.start_users * frac)) if model.load_profile.start_users else 0,
+            "start_vus": starts[i],
         })
         scenario_funcs.append(_scenario_js(
             sc, i, cap, data_on, corr_on, has_headers, dynamic,

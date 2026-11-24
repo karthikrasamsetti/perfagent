@@ -31,12 +31,12 @@ class _Fake:
         return self._m
 
 
-def _req():
+def _req(*endpoints):
     return PlanRequest(
         target_base_url="http://127.0.0.1:8001",
         max_users=5, duration_seconds=60,
-        endpoints=[EndpointSpec(method="POST", path="/login"),
-                   EndpointSpec(method="GET", path="/me")],
+        endpoints=list(endpoints) or [EndpointSpec(method="POST", path="/login"),
+                                      EndpointSpec(method="GET", path="/me")],
     )
 
 
@@ -63,7 +63,7 @@ def test_no_header_added_without_token():
         load_profile=LoadProfile(type=LoadProfileType.RAMP,
                                  stages=[Stage(duration_seconds=5, target_users=5)]),
     )
-    plan = draft_plan(_req(), _Fake(model))
+    plan = draft_plan(_req(EndpointSpec(path="/products")), _Fake(model))
     assert "Authorization" not in plan.load_model.headers
 
 
@@ -78,5 +78,5 @@ def test_existing_auth_header_not_overwritten():
                                  stages=[Stage(duration_seconds=5, target_users=5)]),
         headers={"Authorization": "Bearer custom"},
     )
-    plan = draft_plan(_req(), _Fake(model))
+    plan = draft_plan(_req(EndpointSpec(method="POST", path="/login")), _Fake(model))
     assert plan.load_model.headers["Authorization"] == "Bearer custom"

@@ -28,7 +28,7 @@ class _Fake:
 
 def _req():
     return PlanRequest(target_base_url="http://x:8001", max_users=3, duration_seconds=10,
-                       endpoints=[EndpointSpec(method="POST", path="/login")])
+                       endpoints=[EndpointSpec(method="POST", path="/login"), EndpointSpec(path="/me")])
 
 
 def _auth_model(var):

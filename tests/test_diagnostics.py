@@ -67,3 +67,15 @@ def test_to_dict_shape():
     out = diagnose(snap, peak_users=3).to_dict()
     assert "headline" in out and "findings" in out
     assert isinstance(out["findings"], list)
+
+
+def test_shared_waiting_baseline_is_not_reported_as_server_bottleneck():
+    endpoints = [
+        {"name": name, "p95_ms": ms, "requests": 10, "failed": 0,
+         "timing_phases": {"waiting": {"p10_ms": 300, "p95_ms": ms}}}
+        for name, ms in [("config", 301), ("home", 303), ("quotes", 315), ("pizza", 403)]
+    ]
+    diagnosis = diagnose({"per_endpoint": endpoints})
+    timing = next(finding for finding in diagnosis.findings if finding.title == "Client request timing")
+    assert "300 ms" in timing.detail and "103 ms above baseline" in timing.detail
+    assert all(finding.severity == "info" for finding in diagnosis.findings)

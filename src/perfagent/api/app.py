@@ -42,7 +42,9 @@ from pydantic import BaseModel, Field
 
 from perfagent import __version__, audit, tracing
 from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline
-from perfagent.analyzer.diagnostics import diagnose
+from perfagent.analyzer.diagnostics import Finding, diagnose
+from perfagent.observability.correlation import correlate
+from perfagent.analyzer.verdict import evaluate_k6_summary
 from perfagent.api.chat_routes import router as chat_router
 from perfagent.api.docs import API_DESCRIPTION, API_TITLE, TAGS, doc
 from perfagent.api.export_routes import router as export_router
@@ -80,16 +82,17 @@ from perfagent.plan_summary import (
     usage_summary as _usage_summary,
 )
 from perfagent.planner import PlanRequest, draft_plan
+from perfagent.planner.planner import DraftEndpointMismatch
 from perfagent.planner.profile import build_profile
 from perfagent.preflight import preflight
 from perfagent.providers import build_provider
 from perfagent.request_data import preview_requests
-from perfagent.api.run_inputs import freeze_script
+from perfagent.api.run_inputs import freeze_script, script_workload_version
 from perfagent.api.test_identity import saved_identity
 from perfagent.api.projects import router as projects_router, require_project
 from perfagent.db.models import ScriptSnapshotRow
 from perfagent.runner import get_run, k6_available, start_run, stop_run
-from perfagent.runner.validator import validate_script
+from perfagent.runner.validator import preflight_script, validate_script
 
 app = FastAPI(
     title=API_TITLE,
@@ -433,7 +436,10 @@ def create_plan(request: PlanRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     tracing.set_step("plan")
-    plan: PlanArtifact = draft_plan(request, provider)
+    try:
+        plan = draft_plan(request, provider)
+    except DraftEndpointMismatch as exc:
+        raise HTTPException(422, str(exc)) from exc
     plan.load_model.test_name = request.test_name.strip() or plan.load_model.test_name
     redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
 
@@ -755,14 +761,20 @@ class PreflightBody(BaseModel):
 
 @app.post("/api/preflight", **doc("POST", "/api/preflight"))
 def api_preflight(body: PreflightBody) -> dict:
-    """Fire one request per endpoint and report status codes (no load)."""
+    """Check plan endpoints or run one iteration of an edited script."""
     model = body.load_model
     if body.script_id:
         with get_session() as s:
             saved = s.get(ScriptSnapshotRow, body.script_id)
             if saved is None:
                 raise HTTPException(400, "No frozen plan for this script. Validate the imported script instead.")
+            script = s.get(ScriptRow, body.script_id)
+            metadata = json.loads(saved.metadata_json)
             model = LoadModel.model_validate_json(saved.load_model_json)
+            if not metadata.get("generated") and model.scenarios[0].name == "uploaded":
+                raise HTTPException(400, "Pre-flight requires a generated script. Validate the imported script instead.")
+            if metadata.get("script_edited") and script.tool == "k6":
+                return preflight_script(script.content, saved.data_filename, saved.data_content)
             rows = load_data(saved.data_filename, saved.data_content).rows if saved.data_filename else []
             return preflight(model, sample_row=rows[0] if rows else None)
     if model is None:
@@ -809,6 +821,41 @@ def api_validate_script(script_id: str) -> dict:
 
 
 
+class EditScriptBody(BaseModel):
+    content: str
+
+
+@app.post("/api/scripts/{script_id}/edit", **doc("POST", "/api/scripts/{script_id}/edit"))
+def edit_script(script_id: str, body: EditScriptBody) -> dict:
+    """Save an edited version with the original plan and frozen test data."""
+    if not body.content.strip():
+        raise HTTPException(400, "Script content is empty.")
+    with get_session() as s:
+        source = s.get(ScriptRow, script_id)
+        if source is None:
+            raise HTTPException(404, "Script not found.")
+        saved = s.get(ScriptSnapshotRow, script_id)
+        if saved is None:
+            plan = s.get(PlanRow, source.plan_id)
+            if plan is None:
+                raise HTTPException(400, "The script's plan is missing.")
+            model = LoadModel.model_validate_json(plan.load_model_json)
+            saved = freeze_script(s, source, model, generated=plan.goal != "Uploaded script (no AI plan)")
+        if body.content == source.content:
+            return {"script_id": source.id, "plan_id": source.plan_id}
+        edited = ScriptRow(id=uuid.uuid4().hex, plan_id=source.plan_id, tool=source.tool,
+                           filename=source.filename, content=body.content)
+        metadata = json.loads(saved.metadata_json)
+        metadata.update(script_edited=True, workload_version=script_workload_version(
+            body.content, saved.load_model_json, saved.data_content))
+        s.add(edited)
+        s.add(ScriptSnapshotRow(script_id=edited.id, load_model_json=saved.load_model_json,
+                                data_filename=saved.data_filename, data_content=saved.data_content,
+                                metadata_json=json.dumps(metadata)))
+        s.commit()
+        return {"script_id": edited.id, "plan_id": edited.plan_id, "script_edited": True}
+
+
 class UploadScriptBody(BaseModel):
     project_id: str | None = None
     test_name: str = Field(default="", max_length=120)
@@ -832,14 +879,12 @@ def upload_script(body: UploadScriptBody) -> dict:
         raise HTTPException(status_code=400, detail=f"unsupported tool {tool!r}")
 
     target = body.target_base_url.strip() or "http://127.0.0.1:8000"
-    # a minimal LoadModel so the report/verdict path has something to read
-    minimal = (
-        '{"target_base_url":"' + target + '",'
-        '"scenarios":[{"name":"uploaded","steps":[{"name":"request","path":"/"}]}],'
-        '"load_profile":{"stages":[{"duration_seconds":1,"target_users":1}]},'
-        '"thresholds":[{"metric":"error_rate","op":"<","value":0.05}]}'
-    )
-    uploaded_model = json.loads(minimal)
+    uploaded_model = {
+        "target_base_url": target,
+        "scenarios": [{"name": "uploaded", "steps": [{"name": "request", "path": "/"}]}],
+        "load_profile": {"stages": [{"duration_seconds": 1, "target_users": 1}]},
+        "thresholds": [],
+    }
     uploaded_model["test_name"] = body.test_name.strip() or Path(body.filename or "loadtest.js").stem
     minimal = json.dumps(uploaded_model)
     with get_session() as s:
@@ -931,7 +976,7 @@ def execution_readiness(script_id: str) -> dict:
                 "execution": {**metadata, "duration_seconds": model.load_profile.total_seconds,
                               "peak_users": model.load_profile.peak_users,
                               "arrival_rate": model.load_profile.arrival_rate},
-                "smoke_supported": script.tool == "k6" and bool(metadata.get("generated"))}
+                "smoke_supported": script.tool == "k6" and bool(metadata.get("generated")) and not metadata.get("script_edited")}
 
 
 class RunOptions(BaseModel):
@@ -958,14 +1003,15 @@ def run_script(script_id: str, body: RunOptions | None = None) -> dict:
             saved = freeze_script(s, row, LoadModel.model_validate_json(plan.load_model_json))
         metadata = json.loads(saved.metadata_json)
         if body.smoke:
-            if not metadata.get("generated"):
+            if not metadata.get("generated") or metadata.get("script_edited"):
                 raise HTTPException(400, "Smoke mode requires an unedited generated k6 script. Use Validate for imported scripts.")
             model = LoadModel.model_validate_json(saved.load_model_json)
             smoke_filename = Path(row.filename).stem[:111] + ".smoke.js"
             model.script_filename = smoke_filename
             from perfagent.contracts.load_model import LoadProfile
-            model.load_profile = LoadProfile.model_validate({"type": "ramp", "graceful_stop_seconds": 0, "start_users": 1,
-                "stages": [{"duration_seconds": 10, "target_users": 1}]})
+            smoke_users = len(model.scenarios)
+            model.load_profile = LoadProfile.model_validate({"type": "ramp", "graceful_stop_seconds": 0,
+                "start_users": smoke_users, "stages": [{"duration_seconds": 10, "target_users": smoke_users}]})
             model = LoadModel.model_validate(model.model_dump())
             smoke_script = generate_script(PlanArtifact(load_model=model), tool="k6")
             row = ScriptRow(id=smoke_script.id, plan_id=row.plan_id, tool="k6",
@@ -976,7 +1022,7 @@ def run_script(script_id: str, body: RunOptions | None = None) -> dict:
                                       data_filename=saved.data_filename, data_content=saved.data_content,
                                       metadata_json=json.dumps({**metadata, "duration_seconds": 10,
                                           "script_name": smoke_filename,
-                                          "peak_users": len(model.scenarios), "arrival_rate": None,
+                                          "peak_users": model.load_profile.peak_users, "arrival_rate": None,
                                           "mode": "smoke"}))
             s.add(saved)
             metadata = json.loads(saved.metadata_json)
@@ -992,14 +1038,15 @@ def run_script(script_id: str, body: RunOptions | None = None) -> dict:
                 raise HTTPException(400, "Baseline must use the same plan, workload version and run mode.")
         s.commit()
         model = LoadModel.model_validate_json(saved.load_model_json)
+        execution = {**metadata, "baseline_id": body.baseline_id,
+                     "release_label": body.release_label, "plan_id": row.plan_id}
         run = start_run(run_id=uuid.uuid4().hex, script_id=row.id, tool=row.tool,
                         target=model.target_base_url, content=row.content,
                         load_model_json=saved.load_model_json,
-                        data_filename=saved.data_filename, data_content=saved.data_content)
-        run.metadata = {**metadata, "baseline_id": body.baseline_id,
-                        "release_label": body.release_label, "plan_id": row.plan_id}
+                        data_filename=saved.data_filename, data_content=saved.data_content,
+                        metadata=execution)
     audit.record("run.started", entity="run", entity_id=run.run_id, target=run.target,
-                 summary="Load run started (" + run.metadata.get("mode", "full") + ")")
+                 summary="Load run started (" + execution.get("mode", "full") + ")")
     return {"run_id": run.run_id, "status": run.status, "message": run.message}
 
 
@@ -1027,7 +1074,7 @@ def run_stop(run_id: str) -> dict:
     ok = stop_run(run_id)
     if not ok:
         raise HTTPException(status_code=400, detail="run not running")
-    return {"run_id": run_id, "status": "stopped"}
+    return {"run_id": run_id, "status": "stopping"}
 
 
 # ---------- analyze + report ----------
@@ -1048,10 +1095,12 @@ def _build_report(run) -> tuple[dict, str]:
 
     verdict = evaluate(model, run.snapshot)
 
-    try:
-        provider = build_provider()
-    except ValueError:
-        provider = None
+    provider = None
+    if not run.metadata.get("script_edited") and not (model and model.scenarios[0].name == "uploaded"):
+        try:
+            provider = build_provider()
+        except ValueError:
+            pass
     tracing.set_step('narrate')
     narrative = narrate(run.target, run.snapshot, verdict, provider)
 
@@ -1105,13 +1154,21 @@ def _finish_report(run_id: str) -> dict:
     else:
         model = None
 
-    verdict = evaluate(model, run.snapshot) if model else {"overall_passed": None, "checks": []}
+    if run.summary_metrics is not None:
+        verdict = evaluate_k6_summary(run.summary_metrics)
+    elif (run.run_start_ts is None and model and not run.metadata.get("script_edited")
+          and model.scenarios[0].name != "uploaded"):
+        verdict = evaluate(model, run.snapshot)
+    else:
+        verdict = {"overall_passed": None, "checks": []}
     if run.status != "finished":
         verdict["overall_passed"] = None
-    try:
-        provider = build_provider()
-    except ValueError:
-        provider = None
+    provider = None
+    if not run.metadata.get("script_edited") and not (model and model.scenarios[0].name == "uploaded"):
+        try:
+            provider = build_provider()
+        except ValueError:
+            pass
     tracing.set_step('narrate')
     narrative = narrate(run.target, run.snapshot, verdict, provider)
 
@@ -1130,10 +1187,24 @@ def _finish_report(run_id: str) -> dict:
         except Exception:  # noqa: BLE001
             peak = None
     diag = diagnose(run.snapshot, peak_users=peak)
+    execution = {**run.metadata, "run_start_ts": run.run_start_ts, "run_end_ts": run.run_end_ts}
+    diagnostics = diag.to_dict()
+    telemetry = correlate(run.target, run.run_start_ts, run.run_end_ts)
+    if telemetry:
+        diagnostics["server_metrics"] = telemetry
+        for metric in telemetry["metrics"]:
+            before, during = metric["baseline_mean"], metric["run_mean"]
+            baseline_text = f"{before:.3g}" if before is not None else "unavailable"
+            run_text = f"{during:.3g}" if during is not None else "unavailable"
+            diagnostics["findings"].append(vars(Finding(
+                "info", metric["name"],
+                f"Two-minute baseline mean {baseline_text}. Run mean {run_text}.",
+            )))
 
     # ----- baseline / regression: compare to the previous run of this plan -----
     cur_metrics = metrics_from_snapshot(run.snapshot)
     plan_id = ""
+    prev = None
     with get_session() as s:
         sc = s.get(ScriptRow, run.script_id)
         if sc is not None:
@@ -1172,7 +1243,7 @@ def _finish_report(run_id: str) -> dict:
                 "status": run.status,
                 "message": run.message,
                 "samples": run.samples,
-                "execution": run.metadata,
+                "execution": execution,
                 "baseline_id": prev.id if prev else None,
                 "script_id": run.script_id,
                 "run_id": run.run_id,
@@ -1180,7 +1251,7 @@ def _finish_report(run_id: str) -> dict:
                 "verdict": verdict,
                 "narrative": narrative.model_dump(),
                 "evaluation": report_eval,
-                "diagnostics": diag.to_dict(),
+                "diagnostics": diagnostics,
                 "baseline": baseline_summary,
                 "snapshot": run.snapshot,
                 "logs": list(getattr(run, "logs", []) or []),   # persisted run logs
@@ -1214,7 +1285,7 @@ def _finish_report(run_id: str) -> dict:
         "verdict": verdict,
         "narrative": narrative.model_dump(),
         "evaluation": report_eval,
-        "diagnostics": diag.to_dict(),
+        "diagnostics": diagnostics,
         "baseline": baseline_summary,
         "logs": list(getattr(run, "logs", []) or [])[-500:],
     }

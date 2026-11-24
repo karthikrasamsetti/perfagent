@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # Empty = ~/.perfagent
     perfagent_home: str = Field(default="")
 
+    # Target-scoped Prometheus or Grafana Prometheus datasource proxy.
+    perfagent_prometheus_url: str = Field(default="")
+    perfagent_prometheus_token: SecretStr = Field(default=SecretStr(""))
+    perfagent_observability_target: str = Field(default="")
+    perfagent_prometheus_queries: dict[str, str] = Field(default_factory=dict)
+
     # ---- Git export / import ---------------------------------------------------
     # The repository URL, branch and access token are entered by the user in the
     # UI for each push or import and are never stored. These are server-side options.

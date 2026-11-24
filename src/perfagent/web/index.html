@@ -1743,7 +1743,7 @@ function checkLabel(c){
   if(c.kind==='not_contains')  return 'Body does NOT contain "'+c.value+'"';
   if(c.kind==='status')        return 'Status is '+c.value;
   if(c.kind==='response_time') return 'Response under '+c.value+'ms';
-  if(c.kind==='json_path')     return 'Field '+c.path+' '+c.op+' '+c.value;
+  if(c.kind==='json_path')     return 'Field '+c.path+(c.op==='exists'?' exists':' '+c.op+' '+c.value);
   return c.kind;
 }
 function applySuggestedChecks(){
@@ -2331,14 +2331,14 @@ const CHECK_TYPES=[
 function assertRowHtml(si,sti,ai,a){
   const typeOpts=CHECK_TYPES.map(t=>`<option value="${t.k}" ${t.k===a.kind?'selected':''}>${t.label}</option>`).join('');
   const ct=CHECK_TYPES.find(t=>t.k===a.kind)||CHECK_TYPES[0];
-  const ops=['eq','ne','gt','lt','contains'];
+  const ops=['eq','ne','gt','lt','contains','exists'];
   const opOpts=ops.map(o=>`<option ${o===a.op?'selected':''}>${o}</option>`).join('');
   return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;flex-wrap:wrap;background:#f7faf8;padding:6px 8px;border-radius:8px">`+
     `<span style="color:var(--teal-d)">✔</span>`+
     `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'kind',this.value);renderPlanForm()">${typeOpts}</select>`+
     (ct.path?`<input style="width:100px;padding:4px 7px" value="${esc(a.path||'')}" placeholder="field" oninput="setAssert(${si},${sti},${ai},'path',this.value)"/>`+
-      `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'op',this.value)">${opOpts}</select>`:'')+
-    `<input style="width:130px;padding:4px 7px" value="${esc(a.value||'')}" placeholder="${ct.vph}" oninput="setAssert(${si},${sti},${ai},'value',this.value)"/>`+
+      `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'op',this.value);renderPlanForm()">${opOpts}</select>`:'')+
+    (ct.path&&a.op==='exists'?'':`<input style="width:130px;padding:4px 7px" value="${esc(a.value||'')}" placeholder="${ct.vph}" oninput="setAssert(${si},${sti},${ai},'value',this.value)"/>`)+
     `<button class="iconbtn" style="padding:2px 7px" onclick="removeAssertion(${si},${sti},${ai})">×</button></div>`;
 }
 function setAssert(si,sti,ai,key,val){
@@ -2480,7 +2480,7 @@ async function doGenerate(){
     const hdrs=readHeaders(); planModel.headers=hdrs; if(Object.keys(hdrs).length) payload.headers=hdrs;
     const r=await fetch(`/api/plan/${currentPlanId}/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'generate failed');
-    currentScriptId=j.script_id;
+    currentScriptId=j.script_id; _scriptEdited=false;
     document.getElementById('scriptOut').textContent=j.content;
     document.getElementById('dlBtn').disabled=false;
     document.getElementById('runBtn').disabled=(j.tool!=='k6');
@@ -2874,19 +2874,24 @@ async function gitUseScript(){
 
 /* ---------- editable script ---------- */
 let _scriptEdited=false;
+let scriptEditorSourceId=null;
 function toggleEditScript(){
   const pre=document.getElementById('scriptOut'); const ta=document.getElementById('scriptEdit');
   const editing = ta.style.display==='none';
   if(editing){
+    scriptEditorSourceId=currentScriptId;
     ta.value=pre.textContent; ta.style.display='block'; pre.style.display='none';
     document.getElementById('editNote').style.display='block';
     document.getElementById('editBtn').textContent='✓ Done editing';
     document.getElementById('regenBtn').style.display='inline-flex';
   } else {
-    pre.textContent=ta.value; ta.style.display='none'; pre.style.display='block';
+    if(scriptEditorSourceId===currentScriptId){
+      _scriptEdited=_scriptEdited || ta.value!==pre.textContent;
+      pre.textContent=ta.value;
+    }
+    ta.style.display='none'; pre.style.display='block';
     document.getElementById('editNote').style.display='none';
     document.getElementById('editBtn').textContent='✏️ Edit script';
-    _scriptEdited=true;
   }
 }
 async function regenScript(){
@@ -2901,16 +2906,17 @@ async function regenScript(){
 }
 function currentScriptText(){
   const ta=document.getElementById('scriptEdit');
-  return (ta.style.display!=='none') ? ta.value : document.getElementById('scriptOut').textContent;
+  return (ta.style.display!=='none' && scriptEditorSourceId===currentScriptId) ? ta.value : document.getElementById('scriptOut').textContent;
 }
-// If the script was edited, upload it as an existing script and return the new id.
+// Save edits as a new version of the current script.
 async function ensureScriptId(){
-  if(!_scriptEdited) return currentScriptId;
+  if(!currentScriptId) return currentScriptId;
+  const output=document.getElementById('scriptOut');
   const content=currentScriptText();
-  const target=(planModel&&planModel.target_base_url)||document.getElementById('target').value||'';
-  const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({content, target_base_url:target, tool:'k6'})});
-  const j=await r.json(); if(!r.ok) throw new Error(j.detail||'could not save edited script');
+  if(!_scriptEdited && content===output.textContent) return currentScriptId;
+  const j=await gitPost(`/api/scripts/${currentScriptId}/edit`, {content});
+  output.textContent=content;
+  if(scriptEditorSourceId===currentScriptId) scriptEditorSourceId=j.script_id;
   currentScriptId=j.script_id; _scriptEdited=false;
   return currentScriptId;
 }
@@ -3077,7 +3083,7 @@ function renderReport(j){
       cc.style.display='block';
       const failing=chk.filter(c=>c.failed>0).length;
       const head=failing
-        ? `<div class="note err" style="margin:0 0 8px">${failing} check${failing>1?'s':''} failing — these count as errors and fail the run.</div>`
+        ? `<div class="note err" style="margin:0 0 8px">${failing} check${failing>1?'s':''} failing — check the threshold results for their effect on the verdict.</div>`
         : `<div class="note ok" style="margin:0 0 8px">All response checks passed.</div>`;
       cb.innerHTML=head+'<table><thead><tr><th>Check</th><th>Passed</th><th>Result</th></tr></thead><tbody>'+
         chk.map(c=>{
@@ -3523,12 +3529,17 @@ async function doValidate(){
 /* ---------- pre-flight check ---------- */
 async function doPreflight(){
   const el=document.getElementById('preflightResult'); el.style.display='flex'; el.className='note info';
-  el.textContent='Pre-flight: sending one request per endpoint…';
+  el.textContent='Running pre-flight check…';
   try{
     await ensureScriptId();
     const payload={script_id:currentScriptId};
     const r=await fetch('/api/preflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'preflight failed');
+    if(j.mode==='script'){
+      el.className=j.all_ok?'note ok':'note warn';
+      el.textContent=j.message;
+      return;
+    }
     const rows=j.results.map(x=>{
       const dot = x.ok ? '🟢' : '🔴';
       const st = x.status!==null ? x.status : (x.error||'no response');
@@ -3733,6 +3744,8 @@ function startNamedTest(){
   if(pollTimer){showError('Wait for the current run to finish before creating another test.');return;}
   convNew();newTestName=name;currentPlanId=null;currentScriptId=null;planModel=null;currentDataFileId=null;_scriptEdited=false;
   document.getElementById('target').value=currentProject.target_url||'';
+  document.getElementById('endpoints').replaceChildren();
+  addEndpoint();
   document.getElementById('goal').value=document.getElementById('newTestPurpose').value.trim();
   document.querySelector('#panel1 > .card > h2').textContent=name+' — choose how to build the test';
   document.querySelector('#panel1 .modeswitch').style.display='inline-flex';
@@ -3847,7 +3860,13 @@ function renderReportDetails(j){
   document.getElementById('reportContext').textContent=(x.test_name||'Unnamed test')+' | '+(x.script_name||'Script not recorded')+' | '+(x.endpoint_summary||'Endpoints not recorded')+' | '+(j.status||'Recorded')+' · '+(x.mode||'full')+' · environment: '+(x.environment||'unlabeled')+' · release: '+(x.release_label||'unlabeled')+' · workload: '+(x.workload_version?.slice(0,12)||'not recorded')+' · baseline: '+(j.baseline_id?.slice(0,8)||'none')+(j.message?' · '+j.message:'');
   document.getElementById('baselineSelection').textContent=getSelectedBaseline()?'Selected baseline: '+getSelectedBaseline().slice(0,8):'Automatic baseline: previous matching workload.';
   const endpoints=[...(snap.per_endpoint||[])].sort((a,b)=>(b.p95_ms||0)-(a.p95_ms||0));
-  const rules=(j.verdict?.checks||[]).map(c=>'<tr><td>'+esc(c.metric)+'</td><td>'+esc(c.op)+' '+esc(c.target)+'</td><td>'+esc(c.actual??'Unavailable')+'</td><td>'+(c.passed===true?'Pass':c.passed===false?'Fail':'Inconclusive')+'</td></tr>').join('');
+  const formatThreshold=(metric,value)=>{
+    if(value==null) return 'Unavailable';
+    if(metric==='error_rate') return Number((value*100).toPrecision(15))+'%';
+    if(metric.endsWith('_ms')) return value+' ms';
+    return value;
+  };
+  const rules=(j.verdict?.checks||[]).map(c=>'<tr><td>'+esc(c.metric)+'</td><td>'+esc(c.target==null?'':c.op+' '+formatThreshold(c.metric,c.target))+'</td><td>'+esc(formatThreshold(c.metric,c.actual))+'</td><td>'+(c.passed===true?'Pass':c.passed===false?'Fail':'Inconclusive')+'</td></tr>').join('');
   document.getElementById('reportDetails').innerHTML='<h2>Measured workload</h2><p>'+esc(lat.samples??'Unavailable')+' latency samples · '+esc(snap.iterations??'Unavailable')+' completed iterations · '+esc(snap.iterations_per_second??'Unavailable')+' achieved iterations/s · '+esc(snap.dropped_iterations??'Unavailable')+' dropped iterations'+(x.arrival_rate?' · '+esc(x.arrival_rate)+' requested iterations/s':'')+'</p>'+(j.status&&j.status!=='finished'?'<p class="note warn">The run did not complete. These are partial measurements, not a passing full test.</p>':'')+'<h3>Threshold results</h3><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Rule</th><th>Measured</th><th>Result</th></tr></thead><tbody>'+rules+'</tbody></table></div><h3>Slowest endpoints</h3><div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Requests</th><th>Transport failures</th><th>p95</th></tr></thead><tbody>'+endpoints.slice(0,10).map(e=>'<tr><td>'+esc(e.name)+'</td><td>'+esc(e.requests)+'</td><td>'+esc(e.failed)+'</td><td>'+esc(e.p95_ms)+' ms</td></tr>').join('')+'</tbody></table></div>';
 }
 

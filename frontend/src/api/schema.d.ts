@@ -1091,8 +1091,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Send one request per endpoint
-         * @description Before a full run, sends exactly ONE request to each endpoint of the plan — with the custom headers, a real data row and sample generated values — and reports the status of each. Answers 'will we get valid responses?'. This is not load, but it does touch the target.
+         * Check plan endpoints or run an edited script
+         * @description Sends one request per plan endpoint using the saved headers and a sample data row. For an edited generated k6 script, runs one iteration of the first scenario.
          *
          *     **Access level:** `run` — sends real requests or load to the system under test.
          */
@@ -1125,6 +1125,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/scripts/{script_id}/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save an edited script version
+         * @description Keeps the source plan, environment and frozen data with the edited content.
+         *
+         *     **Access level:** `write` — creates or changes stored data.
+         */
+        post: operations["edit_script_api_scripts__script_id__edit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/scripts/upload": {
         parameters: {
             query?: never;
@@ -1136,7 +1158,7 @@ export interface paths {
         put?: never;
         /**
          * Use your own script
-         * @description Stores a hand-written or existing k6 script so it can be validated and run, skipping planning. Also used when the generated script is edited.
+         * @description Stores a hand-written or existing k6 script so it can be validated and run, skipping planning.
          *
          *     **Access level:** `write` — creates or changes stored data.
          */
@@ -1359,7 +1381,7 @@ export interface components {
          *       status        — the HTTP status code (value = expected code, e.g. 200)
          *       json_path     — a field in the JSON body (path = dotted field, value = expected)
          *       body_contains — the response body contains the given text (value = text)
-         *     op: eq | ne | contains | gt | lt  (status/json_path support eq/ne/gt/lt; body uses contains)
+         *     op: eq | ne | contains | gt | lt | exists (exists checks whether a JSON field is present)
          */
         Assertion: {
             /**
@@ -1369,7 +1391,7 @@ export interface components {
             kind: string;
             /**
              * Op
-             * @description eq | ne | contains | gt | lt
+             * @description eq | ne | contains | gt | lt | exists
              * @default eq
              */
             op?: string;
@@ -1459,6 +1481,11 @@ export interface components {
             };
             /** Data File Id */
             data_file_id?: string | null;
+        };
+        /** EditScriptBody */
+        EditScriptBody: {
+            /** Content */
+            content: string;
         };
         /**
          * EndpointSpec
@@ -3876,7 +3903,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description `total`, `ok`, `failed`, `all_ok`, and the status per endpoint. */
+            /** @description Endpoint results or the outcome of the edited script iteration. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3910,6 +3937,43 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description `ok`, `status`, `message`, `detail`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_script_api_scripts__script_id__edit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                script_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditScriptBody"];
+            };
+        };
+        responses: {
+            /** @description `script_id`, `plan_id`, and `script_edited` for a modified version. */
             200: {
                 headers: {
                     [name: string]: unknown;

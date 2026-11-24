@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from perfagent.analyzer.verdict import format_threshold_value
 from perfagent.providers.base import LLMProvider
 
 
@@ -99,16 +100,17 @@ def _fallback_narrative(target: str, snapshot: dict, verdict: dict) -> Narrative
         f"The system handled {reqs} requests with a {err:.2f}% error rate and a "
         f"95th-percentile latency of {p95} ms. "
     )
-    failed = [c for c in verdict.get("checks", []) if c["passed"] is False]
-    if failed:
-        parts = [
-            f"{c['metric']} was {c['actual']} (target {c['op']} {c['target']})"
-            for c in failed
-        ]
-        summary += "Thresholds missed: " + "; ".join(parts) + "."
-    elif passed is True:
-        summary += "All configured thresholds were satisfied."
-    else:
+    for check in verdict.get("checks", []):
+        metric = check["metric"]
+        label = "Error rate" if metric == "error_rate" else metric.removesuffix("_ms")
+        target_value = format_threshold_value(metric, check["target"])
+        actual_value = format_threshold_value(metric, check["actual"])
+        outcome = {True: "passed", False: "failed", None: "was inconclusive"}[check["passed"]]
+        if check["target"] is None:
+            summary += f"{label} {outcome}. "
+        else:
+            summary += f"{label} {check['op']} {target_value} {outcome} (measured {actual_value}). "
+    if passed is None:
         summary += "A final pass/fail verdict is unavailable."
 
     observations = []

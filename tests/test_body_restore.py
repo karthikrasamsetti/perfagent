@@ -6,6 +6,9 @@ from perfagent.contracts.load_model import (
     LoadModel, LoadProfile, LoadProfileType, Scenario, Stage, Step,
 )
 from perfagent.planner import PlanRequest, draft_plan
+import pytest
+
+from perfagent.planner.planner import DraftEndpointMismatch
 from perfagent.planner.spec import EndpointSpec
 
 
@@ -60,7 +63,7 @@ def test_generators_preserved():
     assert plan.load_model.scenarios[0].steps[0].body["email"] == "${randomEmail}"
 
 
-def test_unmatched_step_body_left_intact():
+def test_unmatched_step_blocks_the_draft():
     model = LoadModel(
         target_base_url="http://wrong",
         scenarios=[Scenario(name="s", steps=[
@@ -71,5 +74,5 @@ def test_unmatched_step_body_left_intact():
         target_base_url="http://x:8000", max_users=3, duration_seconds=20,
         endpoints=[EndpointSpec(method="GET", path="/products")],
     )
-    plan = draft_plan(req, _Fake(model))
-    assert plan.load_model.scenarios[0].steps[0].body == {"x": 1}
+    with pytest.raises(DraftEndpointMismatch, match="Missing: GET /products. Unexpected: POST /unlisted"):
+        draft_plan(req, _Fake(model))

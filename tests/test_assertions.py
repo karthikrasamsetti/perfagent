@@ -33,7 +33,8 @@ def test_json_path_eq():
 
 def test_json_path_gt_numeric():
     s = render_k6(_model([Assertion(kind="json_path", op="gt", path="total", value="0")]))
-    assert 'Number(r.json("total")) > 0' in s
+    assert 'const field = r.json("total")' in s
+    assert "Number(field) > 0" in s
 
 
 def test_body_contains():

@@ -98,3 +98,10 @@ def test_k6_lineage():
     assert script.plan_id == plan.id
     assert script.tool == "k6"
     assert script.filename == "loadtest.js"
+
+
+def test_weighted_stage_targets_sum_to_requested_peak():
+    from perfagent.generator.k6_renderer import _allocate_users
+
+    assert _allocate_users(15, [0.7, 0.3]) == [11, 4]
+    assert _allocate_users(0, [0.7, 0.3]) == [0, 0]

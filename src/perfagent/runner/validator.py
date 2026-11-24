@@ -4,11 +4,8 @@ Uses `k6 inspect`, which parses the script and its options/scenarios and reports
 problems WITHOUT running load. This catches syntax errors, bad imports, and invalid
 configuration in a fraction of a second.
 
-Why not `k6 run --vus 1 --iterations 1`? Those CLI flags override a script's
-`scenarios` block entirely, which makes k6 look for a `export default` function. Our
-scripts use named `scenarios` + `exec` functions (no default export), so that
-approach falsely reports "function 'default' not found". `k6 inspect` has no such
-problem — it validates the script as written.
+Edited script pre-flight uses a wrapper with a default export so k6's one-iteration
+CLI options can call a script whose scenario uses a named export.
 
 Deterministic, no LLM. k6 is located or auto-provisioned by k6_binary (same as a
 real run), so the customer doesn't install it.
@@ -118,3 +115,42 @@ def _tail(text: str, max_chars: int = 600) -> str:
     if len(text) <= max_chars:
         return text
     return "…" + text[-max_chars:]
+
+def preflight_script(content: str, data_filename: str = "", data_content: str = "",
+                     timeout: float = 30.0) -> dict:
+    """Run one iteration of the first configured scenario of an edited script."""
+    wrapper = """
+import * as source from './loadtest.js';
+const { scenarios, stages, duration, iterations, vus, thresholds, ...settings } = source.options || {};
+const scenario = Object.values(scenarios || {})[0];
+const execute = source[scenario?.exec || 'default'];
+export const options = { ...settings, thresholds: {
+  http_req_failed: ['rate==0'], checks: ['rate==1'], iterations: ['count==1'],
+} };
+export function setup() { return source.setup?.(); }
+export function teardown(data) { source.teardown?.(data); }
+export default function (data) { return execute(data); }
+"""
+    result = {"mode": "script", "all_ok": False}
+    try:
+        k6 = _k6_path()
+        with tempfile.TemporaryDirectory(prefix="perfagent_preflight_") as tmpdir:
+            directory = Path(tmpdir)
+            source = directory / "loadtest.js"
+            source.write_text(content, encoding="utf-8")
+            if data_filename and data_content:
+                (directory / data_filename).write_text(data_content, encoding="utf-8")
+            entry = directory / "perfagent-preflight.js"
+            entry.write_text(wrapper, encoding="utf-8")
+            proc = subprocess.run(
+                [k6, "run", "--address=", "--quiet", "--vus", "1", "--iterations", "1", str(entry)],
+                cwd=tmpdir, capture_output=True, text=True, timeout=timeout,
+            )
+    except subprocess.TimeoutExpired:
+        return {**result, "message": f"Script pre-flight timed out after {int(timeout)} seconds."}
+    except (K6Unavailable, OSError) as exc:
+        return {**result, "message": f"Could not run script pre-flight: {exc}"}
+    if proc.returncode or 'level=error' in proc.stderr:
+        return {**result, "message": "Script pre-flight failed. " + _tail(proc.stderr or proc.stdout)}
+    return {**result, "all_ok": True,
+            "message": "Script pre-flight passed. One iteration of the first configured scenario completed."}

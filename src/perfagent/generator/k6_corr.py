@@ -151,16 +151,19 @@ def assertion_checks(step) -> str:
             label = f"status {op} {val}"
             parts.append(f"{_json.dumps(label)}: (r) => r.status {cmp} {int(val) if str(val).lstrip('-').isdigit() else 0}")
         elif kind == "json_path":
-            getter = f"r.json({_json.dumps(path)})"
-            label = f"{path} {op} {val}"
+            getter = f"r.json({_json.dumps(_json_path_to_k6(path))})"
+            label = f"{path} {op}" if op == "exists" else f"{path} {op} {val}"
+            comparison = "true"
             if op == "contains":
-                parts.append(f"{_json.dumps(label)}: (r) => {{ try {{ return String({getter}).includes({_json.dumps(val)}); }} catch(e) {{ return false; }} }}")
+                comparison = f"String(field).includes({_json.dumps(val)})"
             elif op in ("gt", "lt"):
                 cmp = ">" if op == "gt" else "<"
-                parts.append(f"{_json.dumps(label)}: (r) => {{ try {{ return Number({getter}) {cmp} {_json.dumps_num(val) if False else _num(val)}; }} catch(e) {{ return false; }} }}")
-            else:  # eq / ne
-                cmp = "==" if op == "eq" else "!="
-                parts.append(f"{_json.dumps(label)}: (r) => {{ try {{ return String({getter}) {cmp} {_json.dumps(val)}; }} catch(e) {{ return false; }} }}")
+                comparison = f"Number(field) {cmp} {_num(val)}"
+            elif op in ("eq", "ne"):
+                cmp = "===" if op == "eq" else "!=="
+                comparison = f"String(field) {cmp} {_json.dumps(val)}"
+            parts.append(f"{_json.dumps(label)}: (r) => {{ try {{ const field = {getter}; "
+                         f"return field !== undefined && {comparison}; }} catch(e) {{ return false; }} }}")
         elif kind == "body_contains":
             label = f"body contains {val}"
             parts.append(f"{_json.dumps(label)}: (r) => r.body && r.body.includes({_json.dumps(val)})")

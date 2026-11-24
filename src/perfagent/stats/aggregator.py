@@ -18,6 +18,10 @@ import time
 import numpy as np
 
 
+_HTTP_PHASES = {"http_req_blocked", "http_req_connecting", "http_req_tls_handshaking",
+                "http_req_waiting", "http_req_receiving"}
+
+
 class Aggregator:
     def __init__(self) -> None:
         self._durations: list[float] = []   # http_req_duration values (ms)
@@ -33,6 +37,7 @@ class Aggregator:
         self._by_name: dict[str, dict] = {}
         # per-check pass/fail (by check name) — for the UI "Checks" panel
         self._checks: dict[str, dict] = {}
+        self._phases: dict[str, dict[str, list[float]]] = {}
 
     def add_point(self, obj: dict) -> None:
         metric = obj.get("metric")
@@ -46,6 +51,9 @@ class Aggregator:
             b = self._by_name.setdefault(name, {"durations": [], "count": 0, "failed": 0})
             b["durations"].append(float(value))
             b["count"] += 1
+
+        elif metric in _HTTP_PHASES and value is not None:
+            self._phases.setdefault(name, {}).setdefault(metric, []).append(float(value))
 
         elif metric == "iterations" and value is not None:
             self._iterations += int(value)
@@ -104,9 +112,17 @@ class Aggregator:
         per_endpoint = []
         for name, b in sorted(self._by_name.items()):
             d = b["durations"]
+            phases = self._phases.get(name, {})
             per_endpoint.append(
                 {
                     "name": name,
+                    "timing_phases": {
+                        phase.removeprefix("http_req_"): {
+                            "avg_ms": round(sum(values) / len(values), 2),
+                            "p10_ms": self._pctl(values, 10),
+                            "p95_ms": self._pctl(values, 95),
+                        } for phase, values in sorted(phases.items())
+                    },
                     "requests": b["count"],
                     "failed": b["failed"],
                     "p95_ms": self._pctl(d, 95),

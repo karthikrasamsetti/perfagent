@@ -27,3 +27,32 @@ def test_run_active_toggles():
     s.mark_active(False)
     payload, _ = render_latest()
     assert "perfagent_run_active" in payload.decode()
+
+
+def test_server_metrics_compare_two_minute_baseline_with_run(monkeypatch):
+    import httpx
+
+    from perfagent.config import Settings
+    from perfagent.observability import correlation
+
+    settings = Settings(perfagent_observability_target="https://fixture.test",
+                        perfagent_prometheus_url="https://prometheus.test",
+                        perfagent_prometheus_queries={"CPU (%)": "service_cpu"})
+    monkeypatch.setattr(correlation, "get_settings", lambda: settings)
+
+    def respond(request):
+        assert request.url.path == "/api/v1/query_range"
+        assert float(request.url.params["start"]) == 880
+        assert float(request.url.params["end"]) == 1020
+        assert request.url.params["query"] == "service_cpu"
+        return httpx.Response(200, json={"data": {"result": [{"values": [
+            [879, "100"], [880, "20"], [970, "30"], [1000, "40"],
+            [1020, "50"], [1021, "100"],
+        ]}]}})
+
+    transport = httpx.MockTransport(respond)
+    client = httpx.Client(transport=transport)
+    monkeypatch.setattr(correlation.httpx, "Client", lambda **kwargs: client)
+    assert correlation.correlate("https://unrelated.test", 1000, 1020) is None
+    result = correlation.correlate("https://fixture.test", 1000, 1020)
+    assert result["metrics"] == [{"name": "CPU (%)", "baseline_mean": 25, "run_mean": 45}]

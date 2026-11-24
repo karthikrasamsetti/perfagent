@@ -12,6 +12,9 @@ check the criterion.
 
 from __future__ import annotations
 
+import re
+from decimal import Decimal
+
 from perfagent.contracts.load_model import LoadModel
 
 # The metrics the verdict knows how to read from a snapshot.
@@ -106,3 +109,40 @@ def evaluate(model: LoadModel, snapshot: dict) -> dict:
         "has_unevaluable": had_unevaluable,
         "checks": checks,
     }
+
+
+def evaluate_k6_summary(metrics: dict) -> dict:
+    """Read the exact threshold expressions and outcomes from k6's summary export."""
+    checks = []
+    for metric, summary in metrics.items():
+        for expression, failed in summary.get("thresholds", {}).items():
+            match = re.fullmatch(r"(.+?)\s*(<=|>=|==|!=|<|>)\s*([-+0-9.eE]+)", expression)
+            if not match:
+                checks.append({"metric": f"{metric}: {expression}", "op": "", "target": None,
+                               "actual": None, "passed": not failed, "reason": ""})
+                continue
+            aggregation, op, value = match.groups()
+            aggregation = aggregation.strip()
+            label = f"{metric} {aggregation}"
+            if metric == "http_req_duration":
+                label = {"med": "p50_ms", "p(50)": "p50_ms", "p(90)": "p90_ms",
+                         "p(95)": "p95_ms", "p(99)": "p99_ms", "avg": "avg_ms",
+                         "max": "max_ms"}.get(aggregation, label)
+            elif metric in {"errors", "http_req_failed"} and aggregation == "rate":
+                label = "error_rate"
+            actual = summary.get("value" if aggregation == "rate" and "passes" in summary
+                                 else aggregation)
+            checks.append({"metric": label, "op": op, "target": float(value), "actual": actual,
+                           "passed": not failed, "reason": ""})
+    return {"checks": checks, "has_unevaluable": False,
+            "overall_passed": all(check["passed"] for check in checks) if checks else None}
+
+
+
+def format_threshold_value(metric: str, value: float | None) -> str:
+    if value is None:
+        return "Unavailable"
+    if metric == "error_rate":
+        return f"{(Decimal(str(value)) * 100).normalize():f}%"
+    number = str(value).removesuffix(".0")
+    return f"{number} ms" if metric.endswith("_ms") else number

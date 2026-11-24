@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from perfagent.contracts.load_model import LoadModel
+from perfagent.contracts.load_model import Assertion, HttpMethod, LoadModel
 from perfagent.db.models import Base, DataFileRow, PlanRow, RunResultRow, ScriptRow, ScriptSnapshotRow
 from perfagent.runner.k6_runner import RunState
 
@@ -217,3 +217,90 @@ def test_automatic_baseline_skips_stopped_results_and_smoke_is_not_latest_full(s
     scripts = client.get('/api/plans/plan').json()['scripts']
     assert any(script['mode'] == 'smoke' for script in scripts)
     assert [script for script in scripts if script['mode'] != 'smoke'][-1]['script_id'] == script_id
+
+
+def test_edited_k6_preflight_and_report_keep_plan_and_use_actual_thresholds(setup):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from time import monotonic, sleep
+
+    from perfagent.runner.k6_binary import find_k6
+
+    if find_k6() is None:
+        pytest.skip("Requires an installed k6.")
+
+    client, _, _, _, model = setup
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append((self.path, self.headers.get("Authorization")))
+            payload = (self.server.payload if isinstance(self.server.payload, bytes)
+                       else json.dumps(self.server.payload).encode())
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.payload = {"pizza": {"name": "Margherita"}}
+    worker = Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        model.target_base_url = f"http://127.0.0.1:{server.server_port}"
+        model.headers = {"Authorization": "Token fixture"}
+        scenario = model.scenarios[0]
+        scenario.think_time.min_seconds = scenario.think_time.max_seconds = 0
+        step = scenario.steps[0]
+        step.method, step.path = HttpMethod.POST, "/api/pizza"
+        step.assertions = [Assertion(kind="json_path", op="exists", path="pizza.name")]
+        response = client.post("/api/plan/plan/generate", json={"load_model": model.model_dump()})
+        assert response.status_code == 200, response.text
+        source = response.json()
+        content = source["content"] + """
+options.scenarios.browse = { executor: 'shared-iterations', vus: 1, iterations: 1, exec: 'browse' };
+options.thresholds = { http_req_duration: ['p(95)<=500'], errors: ['rate<0.01'] };
+"""
+        edited = client.post(f"/api/scripts/{source['script_id']}/edit", json={"content": content})
+        assert edited.status_code == 200, edited.text
+        assert edited.json()["plan_id"] == "plan"
+        script_id = edited.json()["script_id"]
+        assert script_id != source["script_id"]
+        preflight = client.post("/api/preflight", json={"script_id": script_id})
+        assert preflight.json()["all_ok"], preflight.text
+        assert requests == [("/api/pizza", "Token fixture")]
+
+        for invalid_payload in ({"pizza": {}}, b"not JSON"):
+            server.payload = invalid_payload
+            assert not client.post("/api/preflight", json={"script_id": script_id}).json()["all_ok"]
+        server.payload = {"pizza": {"name": "Margherita"}}
+
+        response = client.post(f"/api/scripts/{script_id}/run", json={"release_label": "demo-release"})
+        assert response.status_code == 200, response.text
+        run_id = response.json()["run_id"]
+        deadline = monotonic() + 15
+        while monotonic() < deadline:
+            if client.get(f"/api/runs/{run_id}").json()["status"] not in {"starting", "preparing", "running"}:
+                break
+            sleep(0.05)
+        report = client.get(f"/api/runs/{run_id}/report").json()
+        assert report["plan_id"] == "plan"
+        assert report["execution"]["environment"] == "staging"
+        assert report["execution"]["release_label"] == "demo-release"
+        assert report["execution"]["script_edited"] is True
+        assert report["execution"]["run_start_ts"] <= report["execution"]["run_end_ts"]
+        assert report["verdict"]["overall_passed"] is True, report
+        assert {(c["metric"], c["op"], c["target"]) for c in report["verdict"]["checks"]} == {
+            ("p95_ms", "<=", 500), ("error_rate", "<", 0.01),
+        }
+        assert "Error rate < 1%" in report["narrative"]["summary"]
+        assert "p95 <= 500 ms" in report["narrative"]["summary"]
+        assert report["snapshot"]["per_endpoint"][0]["timing_phases"]["waiting"]["avg_ms"] >= 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)

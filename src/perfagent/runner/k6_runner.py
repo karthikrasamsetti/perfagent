@@ -20,6 +20,7 @@ If that fails (e.g. offline), the run is marked 'error' with a clear message.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -53,11 +54,15 @@ class RunState:
     data_content: str = ""
     # live aggregated snapshot (computed deterministically)
     snapshot: dict = field(default_factory=dict)
+    summary_metrics: dict | None = None
+    run_start_ts: float | None = None
+    run_end_ts: float | None = None
     # human-readable k6 output lines (console.*, thresholds, checks) — for live logs
     logs: list[str] = field(default_factory=list)
     samples: list[dict] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
     _proc: subprocess.Popen | None = None
+    _stop_requested: bool = False
     _agg: Aggregator = field(default_factory=Aggregator)
     _tmpdir: str | None = None
 
@@ -81,10 +86,9 @@ def k6_available() -> bool:
 
 def stop_run(run_id: str) -> bool:
     run = _RUNS.get(run_id)
-    if run and run._proc and run.status == "running":
+    if run and run._proc and run.status == "running" and run._proc.poll() is None:
+        run._stop_requested = True
         run._proc.terminate()
-        run.status = "stopped"
-        run.ended_at = time.time()
         return True
     return False
 
@@ -98,6 +102,7 @@ def start_run(
     load_model_json: str = "",
     data_filename: str = "",
     data_content: str = "",
+    metadata: dict | None = None,
 ) -> RunState:
     """Launch k6 for the given script content. Returns the RunState immediately;
     a background thread keeps parsing output and updating the snapshot."""
@@ -105,6 +110,7 @@ def start_run(
     run.load_model_json = load_model_json
     run.data_filename = data_filename
     run.data_content = data_content
+    run.metadata = dict(metadata or {})
     _RUNS[run_id] = run
 
     if tool != "k6":
@@ -165,9 +171,12 @@ def _run_worker(run: RunState, content: str) -> None:
         (Path(tmpdir) / run.data_filename).write_text(run.data_content, encoding="utf-8")
 
     # k6 --out json=- streams one JSON object per line to stdout.
-    cmd = [k6_path, "run", "--out", "json=-", "--quiet", str(script_path)]
+    summary_path = Path(tmpdir) / "perfagent-summary.json"
+    cmd = [k6_path, "run", "--address=", "--out", "json=-", "--quiet", "--summary-export",
+           str(summary_path), str(script_path)]
 
     try:
+        run.run_start_ts = time.time()
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -180,6 +189,7 @@ def _run_worker(run: RunState, content: str) -> None:
         )
     except Exception as e:  # noqa: BLE001
         run.status = "error"
+        shutil.rmtree(tmpdir, ignore_errors=True)
         run.message = f"failed to launch k6: {e}"
         run.ended_at = time.time()
         return
@@ -221,25 +231,33 @@ def _run_worker(run: RunState, content: str) -> None:
             last_snapshot = now
 
     proc.wait()
+    run.run_end_ts = time.time()
     stderr_thread.join(timeout=2)
+    try:
+        metrics = json.loads(summary_path.read_text(encoding="utf-8"))["metrics"]
+        if isinstance(metrics, dict):
+            run.summary_metrics = metrics
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
     run.snapshot = run._agg.snapshot()
-    if run.status != "stopped":
-        if proc.returncode in (0, 99):
-            # k6 exits 99 when a threshold fails — that's a completed run, not a crash.
-            run.status = "finished"
-        elif proc.returncode == _K6_SCRIPT_ABORTED:
-            # The script ended the test on purpose (exec.test.abort) — e.g. a data
-            # file set to "use each row once" ran out of rows. The metrics up to that
-            # point are real, so this is a stopped run, not a crash.
-            run.status = "stopped"
-            reason = next((ln for ln in reversed(run.logs) if "Data file exhausted" in ln), "")
-            run.message = (
-                "The test stopped early: the data file ran out of rows (each row is "
-                "used once). Add rows, or let rows repeat."
-                if reason else
-                "The script stopped the test early. See the run logs for the reason.")
-        else:
-            run.status = "error"
-            run.message = f"k6 exited {proc.returncode}. See the run logs for details."
+    if run._stop_requested:
+        status = "stopped"
+    elif proc.returncode in (0, 99):
+        # k6 exits 99 when an evaluated threshold fails.
+        status = "finished"
+    elif proc.returncode == _K6_SCRIPT_ABORTED:
+        status = "stopped"
+        reason = next((ln for ln in reversed(run.logs) if "Data file exhausted" in ln), "")
+        run.message = (
+            "The test stopped early: the data file ran out of rows (each row is "
+            "used once). Add rows, or let rows repeat." if reason else
+            "The script stopped the test early. See the run logs for the reason."
+        )
+    else:
+        status = "error"
+        run.message = f"k6 exited {proc.returncode}. See the run logs for details."
     _append_log(run, f"— k6 exited {proc.returncode} —")
-    run.ended_at = time.time()
+    run.ended_at = run.run_end_ts
+    run.status = status

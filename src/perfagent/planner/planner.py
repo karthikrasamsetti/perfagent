@@ -155,18 +155,24 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
     return model
 
 
+class DraftEndpointMismatch(ValueError):
+    """The provider did not cover the requested HTTP methods and paths."""
+
+
 def draft_plan(request: PlanRequest, provider: LLMProvider) -> PlanArtifact:
-    system = SYSTEM_PROMPT
     user = build_user_prompt(request)
-
-    model: LoadModel = provider.structured(
-        response_model=LoadModel,
-        system=system,
-        user=user,
-    )
-
-    model = _apply_deterministic_controls(model, request)
-    return PlanArtifact(load_model=model)
+    expected = {(ep.method.value, ep.path) for ep in request.endpoints}
+    feedback = ""
+    for _ in range(2):
+        model = provider.structured(response_model=LoadModel, system=SYSTEM_PROMPT,
+                                    user=user + feedback)
+        actual = {step for scenario in model.scenarios for step in _step_signature(scenario)}
+        if actual == expected:
+            return PlanArtifact(load_model=_apply_deterministic_controls(model, request))
+        missing = ", ".join(f"{method} {path}" for method, path in sorted(expected - actual))
+        unexpected = ", ".join(f"{method} {path}" for method, path in sorted(actual - expected))
+        feedback = f"\nEndpoint coverage mismatch. Missing: {missing or 'none'}. Unexpected: {unexpected or 'none'}."
+    raise DraftEndpointMismatch(feedback.strip())
 
 
 __all__ = ["draft_plan", "PlanRequest"]

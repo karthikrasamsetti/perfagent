@@ -27,11 +27,11 @@ class _Fake:
         return self._m
 
 
-def _req():
+def _req(*endpoints):
     return PlanRequest(
         target_base_url="http://127.0.0.1:8001",
         max_users=3, duration_seconds=10,
-        endpoints=[EndpointSpec(method="POST", path="/login")],
+        endpoints=list(endpoints) or [EndpointSpec(method="POST", path="/login")],
     )
 
 
@@ -65,7 +65,8 @@ def test_distinct_journeys_are_kept():
         ],
         load_profile=_profile(),
     )
-    plan = draft_plan(_req(), _Fake(model))
+    plan = draft_plan(_req(EndpointSpec(path="/products"), EndpointSpec(method="POST", path="/login"),
+                           EndpointSpec(method="POST", path="/checkout")), _Fake(model))
     assert len(plan.load_model.scenarios) == 2   # genuinely different -> both kept
 
 
@@ -88,7 +89,7 @@ def test_zero_latency_threshold_fixed():
         load_profile=_profile(),
         thresholds=[Threshold(metric="p95_ms", op="<=", value=0)],   # <= 0ms impossible
     )
-    plan = draft_plan(_req(), _Fake(model))
+    plan = draft_plan(_req(EndpointSpec(path="/products")), _Fake(model))
     p95 = next(t for t in plan.load_model.thresholds if t.metric == "p95_ms")
     assert p95.value == 500.0
 
@@ -100,6 +101,30 @@ def test_missing_thresholds_get_defaults():
         load_profile=_profile(),
         thresholds=[],
     )
-    plan = draft_plan(_req(), _Fake(model))
+    plan = draft_plan(_req(EndpointSpec(path="/products")), _Fake(model))
     metrics = {t.metric for t in plan.load_model.thresholds}
     assert "error_rate" in metrics and "p95_ms" in metrics
+
+
+def test_draft_retries_with_exact_missing_and_unexpected_endpoints():
+    endpoints = [EndpointSpec(path=path) for path in ("/", "/api/config", "/api/quotes")]
+    endpoints.append(EndpointSpec(method="POST", path="/api/pizza"))
+    steps = [Step(name=endpoint.path, path=endpoint.path, method=endpoint.method)
+             for endpoint in endpoints]
+    prompts = []
+
+    class RetryProvider:
+        def structured(self, *, response_model, system, user):
+            prompts.append(user)
+            draft_steps = steps if len(prompts) == 2 else [
+                steps[0], Step(name="fake", path="/api/quotes/cart"), steps[3],
+            ]
+            return LoadModel(target_base_url="https://fixture.test", load_profile=_profile(),
+                             scenarios=[Scenario(name="browse", steps=draft_steps)])
+
+    plan = draft_plan(_req(*endpoints), RetryProvider())
+    assert [(step.method, step.path) for step in plan.load_model.scenarios[0].steps] == [
+        (endpoint.method, endpoint.path) for endpoint in endpoints
+    ]
+    assert "Missing: GET /api/config, GET /api/quotes" in prompts[1]
+    assert "Unexpected: GET /api/quotes/cart" in prompts[1]
