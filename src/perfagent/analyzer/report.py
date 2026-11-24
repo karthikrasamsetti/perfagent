@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import html
 from datetime import datetime, timezone
+from math import isfinite
 
 from perfagent.analyzer.narrator import Narrative
+from perfagent.analyzer.report_evidence import report_evidence
 from perfagent.analyzer.verdict import format_threshold_value
 
 
@@ -22,6 +24,38 @@ def _badge(passed) -> str:
     return '<span class="badge na">INCONCLUSIVE</span>'
 
 
+def _timeline_charts(samples: list[dict], phases: list[dict]) -> str:
+    def finite(value):
+        return type(value) in (int, float) and isfinite(value) and value >= 0
+
+    recorded = [sample for sample in samples if finite(sample.get("t"))]
+    if not recorded:
+        return ""
+    end = max(sample["t"] for sample in recorded)
+    duration = end or 1
+    boundaries = "".join(
+        f'<i class="phase-line" style="left:{phase["end_s"] / duration * 100:.4f}%"></i>'
+        for phase in phases if finite(phase.get("end_s")) and 0 < phase["end_s"] < end
+    )
+    charts = []
+    for label, key in (("Throughput (requests/s)", "rps"), ("p95 latency (ms)", "p95"), ("Error rate (%)", "err")):
+        points = [(sample["t"], sample[key]) for sample in recorded if finite(sample.get(key))]
+        if not points:
+            charts.append(f"<figure><figcaption>{label}</figcaption><p>No measurements recorded.</p></figure>")
+            continue
+        maximum = max(value for _, value in points) or 1
+        dots = "".join(
+            f'<i style="left:{time / duration * 100:.4f}%;bottom:{value / maximum * 100:.4f}%"></i>'
+            for time, value in points
+        )
+        charts.append(
+            f'<figure><figcaption>{label}</figcaption><div class="chart-scale" aria-hidden="true">'
+            f'{maximum:.4g}<div class="timeline-chart">{boundaries}{dots}</div>'
+            f'<span>0 seconds</span><span>{end:.4g} seconds</span></div></figure>'
+        )
+    return '<div class="timeline-charts">' + "".join(charts) + "</div>"
+
+
 def render_report_html(
     *,
     target: str,
@@ -31,22 +65,73 @@ def render_report_html(
     narrative: Narrative,
     plan_id: str = "",
     run_id: str = "",
+    execution: dict | None = None,
+    status: str | None = None,
+    samples: list[dict] | None = None,
 ) -> str:
     lat = snapshot.get("latency", {})
+    execution = execution or {}
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     esc = html.escape
+    evidence = report_evidence({"execution": execution, "snapshot": snapshot, "verdict": verdict, "status": status})
+    threshold_count = evidence["total_thresholds"]
+    threshold_note = (f"{evidence['passed_count']} of {threshold_count} thresholds passed"
+                      if threshold_count else "No threshold outcomes were recorded.")
+    partial_note = "<p>The run ended early. Measurements are partial.</p>" if evidence["partial"] else ""
+
 
     checks_rows = "".join(
         f"<tr><td>{esc(c['metric'])}</td><td>{esc(c['op'])} "
         f"{esc(format_threshold_value(c['metric'], c['target']))}</td>"
         f"<td>{esc(format_threshold_value(c['metric'], c['actual']))}</td>"
         f"<td>{_badge(c['passed'])}</td></tr>"
-        for c in verdict.get("checks", [])
+        for c in evidence["thresholds"]
     )
+    def cell(value) -> str:
+        return esc(str(value)) if value is not None else "Unavailable"
+
+    def rate(value) -> str:
+        return f"{value * 100:.2f}%" if value is not None else "Unavailable"
+
+    def latency(value) -> str:
+        return f"{value} ms" if value is not None else "Unavailable"
+
+    def rows(records, keys):
+        return "".join(
+            "<tr>" + "".join(f"<td>{cell(record.get(key))}</td>" for key in keys) + "</tr>"
+            for record in records
+        )
+
+    throughput = cell(evidence["metrics"]["rps"])
+    if evidence["metrics"]["target_rps"] is not None:
+        throughput += " / " + cell(evidence["metrics"]["target_rps"])
+
     ep_rows = "".join(
-        f"<tr><td>{esc(e['name'])}</td><td>{e['requests']}</td><td>{e['failed']}</td>"
-        f"<td>{e['avg_ms']}</td><td>{e['p95_ms']}</td></tr>"
+        f"<tr><td>{cell(e.get('name'))}</td><td>{cell(e.get('requests'))}</td><td>{cell(e.get('failed'))}</td>"
+        f"<td>{latency(e.get('avg_ms'))}</td><td>{latency(e.get('p95_ms'))}</td><td>{cell(e.get('checks_failed'))}</td>"
+        f"<td>{cell(', '.join(f'{code}: {count}' for code, count in sorted((e.get('status_codes') or {}).items())) or None)}</td></tr>"
         for e in snapshot.get("per_endpoint", [])
+    )
+    journey_rows = rows(snapshot.get("per_journey", []), (
+        "name", "requests", "failed", "iterations", "dropped_iterations", "checks_failed"))
+    response_checks = rows(snapshot.get("checks", []), ("name", "passed", "failed"))
+    sample_rows = rows(samples or [], ("t", "rps", "p95", "err"))
+    phases = execution.get("planned_phases") or []
+    phase_note = " · ".join(
+        f"{cell(phase.get('label'))} {cell(phase.get('start_s'))}–{cell(phase.get('end_s'))} s" for phase in phases
+    )
+    timeline_charts = _timeline_charts(samples or [], phases)
+    timing_rows = rows(
+        ({"endpoint": endpoint.get("name"), "phase": name.replace("_", " "), **values}
+         for endpoint in snapshot.get("per_endpoint", [])
+         for name, values in (endpoint.get("timing_phases") or {}).items()),
+        ("endpoint", "phase", "avg_ms", "p95_ms"),
+    )
+    metadata = " &nbsp;|&nbsp; ".join(
+        f"{label} {cell(execution[key])}"
+        for key, label in (("test_name", "Test"), ("environment", "Environment"),
+                           ("release_label", "Release"), ("mode", "Mode"))
+        if execution.get(key)
     )
     obs = "".join(f"<li>{esc(o)}</li>" for o in narrative.observations)
     recs = "".join(f"<li>{esc(r)}</li>" for r in narrative.recommendations)
@@ -74,35 +159,71 @@ def render_report_html(
   .kpi .v {{ font-size:22px; font-weight:700; color:#0a4f3e; }}
   .kpi .l {{ font-size:12px; color:#6b6a64; }}
   ul {{ margin:8px 0; }}
+  .timeline-charts {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }}
+  .timeline-charts figure {{ margin:0; padding:12px; border:1px solid #e2e0d8; break-inside:avoid; }}
+  .timeline-charts figcaption {{ font-weight:650; font-size:13px; }}
+  .chart-scale {{ font-size:11px; }}
+  .chart-scale span:last-child {{ float:right; }}
+  .timeline-chart {{ position:relative; height:80px; margin:4px 3px; border-bottom:1px solid #777; }}
+  .timeline-chart i {{ position:absolute; width:4px; height:4px; color:#5545bb; background:currentColor; border-radius:50%; transform:translate(-50%,50%); }}
+  .timeline-chart .phase-line {{ top:0; bottom:0; height:auto; width:0; border-left:1px dashed #777; border-radius:0; transform:none; }}
+  @media (max-width:540px) {{ .timeline-charts {{ grid-template-columns:1fr; }} }}
   footer {{ margin-top:36px; color:#9a988f; font-size:11px; }}
 </style></head><body>
 
 <h1>Performance Test Report {_badge(verdict.get('overall_passed'))}</h1>
+<div class="meta">{metadata}</div>
 <div class="meta">Target: {esc(target)} &nbsp;|&nbsp; Tool: {esc(tool)} &nbsp;|&nbsp; Generated: {now}
 {f'&nbsp;|&nbsp; Plan: {esc(plan_id[:8])}' if plan_id else ''}</div>
 
 <div class="headline">{esc(narrative.headline)}</div>
 
-<h2>Summary</h2>
+<p>{threshold_note}</p>{partial_note}
+<h2>What happened</h2>
 <p>{esc(narrative.summary)}</p>
 
 <h2>Key metrics</h2>
 <div class="grid">
-  <div class="kpi"><div class="v">{snapshot.get('requests',0)}</div><div class="l">Requests</div></div>
-  <div class="kpi"><div class="v">{snapshot.get('rps',0)}</div><div class="l">Requests/sec</div></div>
-  <div class="kpi"><div class="v">{snapshot.get('error_rate',0)*100:.2f}%</div><div class="l">Error rate</div></div>
-  <div class="kpi"><div class="v">{lat.get('p95_ms',0)} ms</div><div class="l">p95 latency</div></div>
-  <div class="kpi"><div class="v">{lat.get('p99_ms',0)} ms</div><div class="l">p99 latency</div></div>
-  <div class="kpi"><div class="v">{lat.get('max_ms',0)} ms</div><div class="l">max latency</div></div>
+  <div class="kpi"><div class="v">{cell(snapshot.get('requests'))}</div><div class="l">Requests</div></div>
+  <div class="kpi"><div class="v">{throughput}</div><div class="l">Requests/sec</div></div>
+  <div class="kpi"><div class="v">{rate(snapshot.get('error_rate'))}</div><div class="l">Error rate</div></div>
+  <div class="kpi"><div class="v">{latency(lat.get('p95_ms'))}</div><div class="l">p95 latency</div></div>
+  <div class="kpi"><div class="v">{latency(lat.get('p99_ms'))}</div><div class="l">p99 latency</div></div>
+  <div class="kpi"><div class="v">{latency(lat.get('max_ms'))}</div><div class="l">max latency</div></div>
 </div>
 
 <h2>Threshold results</h2>
 <table><thead><tr><th>Metric</th><th>Target</th><th>Actual</th><th>Result</th></tr></thead>
 <tbody>{checks_rows or '<tr><td colspan="4">No thresholds were defined.</td></tr>'}</tbody></table>
 
+<h2>Workload and latency</h2>
+<p>Observed peak VUs {cell(snapshot.get('observed_peak_vus'))} · Iterations {cell(snapshot.get('iterations'))}
+· Dropped iterations {cell(snapshot.get('dropped_iterations'))}</p>
+<p>Bytes sent {cell(snapshot.get('bytes_sent'))} · Bytes received {cell(snapshot.get('bytes_received'))}</p>
+<p>Average {latency(lat.get('avg_ms'))} · p50 {latency(lat.get('p50_ms'))} · p90 {latency(lat.get('p90_ms'))}</p>
+
+<h2>Run timeline</h2>
+<p>Values summarize traffic observed up to each sample.</p>
+{f'<p>Planned phases · {phase_note}</p>' if phase_note else ''}
+{timeline_charts}
+<table><thead><tr><th>Elapsed (s)</th><th>Requests/s</th><th>p95 (ms)</th><th>Errors (%)</th></tr></thead>
+<tbody>{sample_rows or '<tr><td colspan="4">Timeline samples are unavailable for this run.</td></tr>'}</tbody></table>
+
 <h2>Per-endpoint</h2>
-<table><thead><tr><th>Endpoint</th><th>Requests</th><th>Failed</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead>
-<tbody>{ep_rows or '<tr><td colspan="5">No per-endpoint data.</td></tr>'}</tbody></table>
+<table><thead><tr><th>Endpoint</th><th>Requests</th><th>HTTP failures</th><th>Avg</th><th>p95</th><th>Failed response checks</th><th>Status counts</th></tr></thead>
+<tbody>{ep_rows or '<tr><td colspan="7">No per-endpoint data was recorded.</td></tr>'}</tbody></table>
+
+<h2>Journeys</h2>
+<table><thead><tr><th>Journey</th><th>Requests</th><th>HTTP failures</th><th>Iterations</th><th>Dropped</th><th>Failed checks</th></tr></thead>
+<tbody>{journey_rows or '<tr><td colspan="6">No journey data was recorded.</td></tr>'}</tbody></table>
+
+<h2>Response checks</h2>
+<table><thead><tr><th>Check</th><th>Passed</th><th>Failed</th></tr></thead>
+<tbody>{response_checks or '<tr><td colspan="3">No response checks were recorded.</td></tr>'}</tbody></table>
+
+<h2>HTTP timing phases</h2>
+<table><thead><tr><th>Endpoint</th><th>Phase</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead>
+<tbody>{timing_rows or '<tr><td colspan="4">No timing phases were recorded.</td></tr>'}</tbody></table>
 
 <h2>Observations</h2>
 <ul>{obs or '<li>None.</li>'}</ul>

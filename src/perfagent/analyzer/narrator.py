@@ -100,7 +100,10 @@ def _fallback_narrative(target: str, snapshot: dict, verdict: dict) -> Narrative
         f"The system handled {reqs} requests with a {err:.2f}% error rate and a "
         f"95th-percentile latency of {p95} ms. "
     )
-    for check in verdict.get("checks", []):
+    checks = verdict.get("checks", [])
+    failed_checks = [check for check in checks if check["passed"] is False]
+    display_checks = failed_checks if failed_checks else checks
+    for check in display_checks[:4]:
         metric = check["metric"]
         label = "Error rate" if metric == "error_rate" else metric.removesuffix("_ms")
         target_value = format_threshold_value(metric, check["target"])
@@ -110,6 +113,8 @@ def _fallback_narrative(target: str, snapshot: dict, verdict: dict) -> Narrative
             summary += f"{label} {outcome}. "
         else:
             summary += f"{label} {check['op']} {target_value} {outcome} (measured {actual_value}). "
+    if len(display_checks) > 4:
+        summary += "See threshold results for the remaining rules. "
     if passed is None:
         summary += "A final pass/fail verdict is unavailable."
 
@@ -119,7 +124,7 @@ def _fallback_narrative(target: str, snapshot: dict, verdict: dict) -> Narrative
             observations.append(
                 f"{e['name']} had {e['failed']} failed request(s) out of {e['requests']}."
             )
-    if not observations:
+    if not observations and snapshot.get("per_endpoint"):
         observations.append("No endpoint returned errors during the run.")
 
     return Narrative(

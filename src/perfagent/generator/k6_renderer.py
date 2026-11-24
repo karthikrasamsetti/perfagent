@@ -108,6 +108,10 @@ def _thresholds(model: LoadModel) -> list[dict]:
             continue
         metric, agg = mapped
         rules.setdefault(metric, []).append(f"{agg}{th.op}{str(th.value).removesuffix('.0')}")
+    if model.load_profile.target_request_rate is not None:
+        expected = model.load_profile.target_request_rate * model.load_profile.total_seconds
+        rules["http_reqs"] = [f"count>={expected}"]
+        rules["dropped_iterations"] = ["count<1"]
     return [{"expr": f"'{metric}': {expressions!r},"} for metric, expressions in rules.items()]
 
 
@@ -156,7 +160,7 @@ def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEAD
     base_check = f"{json.dumps(name + ' status ok')}: (r) => r.status >= 200 && r.status < 400"
     extra = assertion_checks(step)
     all_checks = base_check + (", " + extra if extra else "")
-    lines.append(f"      const ok = check(res, {{ {all_checks} }});")
+    lines.append(f"      const ok = check(res, {{ {all_checks} }}, {{ perfagent_endpoint: {json.dumps(name)} }});")
     lines.append("      errorRate.add(res.status >= 400 || !ok);")
     # Response bodies may contain credentials or user data.
     sname = json.dumps(step.name)
@@ -204,6 +208,13 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
     headers = getattr(model, "headers", {}) or {}
     has_headers = bool(headers)
     dynamic = has_headers and headers_dynamic(headers)
+
+    request_rate = model.load_profile.target_request_rate
+    if request_rate is not None and (
+        len(model.scenarios) != 1 or len(model.scenarios[0].steps) != 1
+        or model.load_profile.arrival_rate != request_rate
+    ):
+        raise ValueError("An HTTP request-rate target needs one journey with one request and a matching arrival rate.")
 
     fractions = model.normalised_weights()
     rates = _allocate(model.load_profile.arrival_rate, fractions) if model.load_profile.arrival_rate else [0] * len(fractions)
@@ -258,6 +269,7 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
         peak_users=model.load_profile.peak_users,
         total_seconds=model.load_profile.total_seconds,
         arrival_rate=model.load_profile.arrival_rate,
+        request_rate=request_rate,
         graceful_stop_seconds=model.load_profile.graceful_stop_seconds,
         scenarios=scenarios_meta,
         thresholds=_thresholds(model),

@@ -2,6 +2,8 @@
 
 PerfAgent opens on **Projects**. Create a project or import a Git framework, then keep its tests and execution history together.
 
+**Open project** takes you to that project's workspace. Search its saved tests on the left. The Git framework panel shows the configured repository, branch, and expected export folders. Use **Project settings** to change those defaults and **Import / sync Git** to browse or import the repository contents.
+
 ## Project setup
 
 Set a project name, description, default target/environment, framework folder, and optional repository, branch and CI templates. Repository credentials are entered for each Git action; they are not project settings.
@@ -18,6 +20,8 @@ Conversation sessions retain the selected project and test name on the server, i
 4. Save named workload profiles such as Average, Stress and Soak. Selecting a profile applies its load shape and thresholds to the editor; approve/generate to create a new execution version.
 5. Validate, preflight, smoke-test, then run the selected workload.
 6. Open the project dashboard or test library to review results and select a compatible baseline.
+
+Each test opens with its latest script in Verify. Repeat approval reuses that version when the generated code and frozen inputs match. **View history** lists older versions for inspection or download and groups smoke artifacts separately.
 
 **Import script** and **Git framework** are separate actions within the open project. Existing scripts retain their own name/content. Generated scripts remain the supported path for framework publishing.
 

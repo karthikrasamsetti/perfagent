@@ -323,8 +323,9 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "Reports & history", "Run history for a stakeholder role",
         "Past runs, newest first, with each run's fields limited to what the given role "
         "may see (executive, qa_lead, engineer, viewer). Optionally filtered by target "
-        "or verdict. Reads stored data only; no AI.",
-        returns="`role`, `count`, `runs`."),
+        "or verdict. The optional overview aggregates all matching runs independently "
+        "of pagination and includes up to 120 recent trend points. Reads stored data only.",
+        returns="`role`, `count`, `total`, `runs` and optional `overview`."),
     ("GET", "/api/reporting/trend"): _e(
         "Reports & history", "A metric's trend across runs",
         "The chosen metric (p95, p99, error rate, avg or RPS) across recent runs, "

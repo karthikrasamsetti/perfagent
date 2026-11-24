@@ -138,7 +138,10 @@ def render_export_script(model: LoadModel) -> tuple[str, dict[str, str], LoadMod
         "// editing by hand, so the script stays in step with its approved plan.\n"
     )
     script = header + script
-    sanitized = model.model_copy(update={"headers": plan_headers})
+    portable_data = model.data_file
+    if portable_data is not None:
+        portable_data = portable_data.model_copy(update={"data_file_id": None})
+    sanitized = model.model_copy(update={"headers": plan_headers, "data_file": portable_data})
     return script, secrets, sanitized
 
 
@@ -205,6 +208,8 @@ def build_framework(
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     script, secrets, sanitized = render_export_script(model)
+    if not sanitized.test_name.strip():
+        sanitized.test_name = test
     result.required_secrets = sorted(secrets)
 
     # ---- the test itself -------------------------------------------------------

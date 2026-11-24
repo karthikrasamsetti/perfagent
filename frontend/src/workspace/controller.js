@@ -19,6 +19,7 @@ function goStep(n){
     verification.style.display='none';
     if(currentScriptId) loadSavedVerification(currentScriptId, verification);
   }
+  if(n===3) loadScriptHistory();
   // the 5 panels live inside the Create view; make sure it is the visible view
   document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-create'));
   markNavigation('create');
@@ -266,11 +267,19 @@ async function convBuild(){
 }
 
 /* Hand a conversation-built plan to the Review step — same as the other two modes. */
-function convOpenPlan(p){
+async function convOpenPlan(p){
   if(!p) return;
   if(currentPlanId!==p.plan_id){                    // don't overwrite edits made in review
+    const projectId=currentProject?.project_id;
+    const name=newTestName||p.load_model.test_name;
+    if(projectId){
+      try{await attachCurrentTest(p.plan_id,projectId,name);}
+      catch(e){convShowError(e.message);return;}
+      if(currentProject?.project_id!==projectId) return;
+    }
     currentPlanId=p.plan_id; planModel=p.load_model;
-    if(currentProject){planModel.test_name=planModel.test_name||newTestName;attachCurrentTest(p.plan_id);} planRationale=p.rationale||'';
+    if(projectId) planModel.test_name=name;
+    planRationale=p.rationale||'';
     document.getElementById('importNote').style.display='none';
     applyIntegrations(p.plan_id);
     renderPlanForm(); renderRawFromModel();
@@ -458,15 +467,39 @@ async function doPlan(){
       if(!input.checkValidity()) throw new Error('Enter valid latency and error rate limits.');
       if(input.value!=='') rules.push({metric,op,value:input.valueAsNumber/divisor});
     }
+    const wholeNumber=(id,label,min=1)=>{
+      const value=document.getElementById(id).valueAsNumber;
+      if(!Number.isInteger(value)||value<min) throw new Error(label+' must be a whole number of at least '+min+'.');
+      return value;
+    };
+    const rateMode=document.getElementById('draftSchedule').value==='rate';
+    const users=wholeNumber('maxUsers',rateMode?'Preallocated virtual users':'Virtual users');
+    const duration=wholeNumber('duration','Duration',rateMode?1:3);
+    const profileType=rateMode?'ramp':document.getElementById('profileType').value;
+    const rate=rateMode?wholeNumber('draftRequestRate','Requests per second'):null;
+    if(users>1000000||rate>1000000) throw new Error('Enter values up to 1,000,000.');
+    if(rateMode&&eps.length!==1) throw new Error('Requests per second needs one endpoint. Use virtual users for a journey with multiple requests.');
+    const stageFields=['draftRampUp','draftHold','draftRampDown'];
+    const customStages=!rateMode&&profileType==='ramp'&&stageFields.some(id=>document.getElementById(id).value!=='');
+    const stages=customStages?stageFields.map((id,index)=>({
+      duration_seconds:wholeNumber(id,['Ramp up','Steady state','Ramp down'][index]),
+      target_users:index===2?0:users,
+    })):null;
+    if(stages&&stages.reduce((sum,stage)=>sum+stage.duration_seconds,0)!==duration){
+      throw new Error('Ramp up, steady state, and ramp down must add up to '+duration+' seconds.');
+    }
     const body={project_id:currentProject.project_id,test_name:newTestName,environment:currentProject.environment||'',target_base_url:target,
       goal:document.getElementById('goal').value.trim(),
-      max_users:parseInt(document.getElementById('maxUsers').value),
-      duration_seconds:parseInt(document.getElementById('duration').value),
-      profile_type:document.getElementById('profileType').value,
-      endpoints:eps, ...(rules.length?{thresholds:rules}:{})};
+      max_users:users, duration_seconds:duration, profile_type:profileType, endpoints:eps,
+      ...(rate?{target_request_rate:rate}:{}), ...(stages?{stages}:{}), ...(rules.length?{thresholds:rules}:{})};
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
+    reviewDraftInputs={planId:j.plan_id,target:body.target_base_url,environment:body.environment,
+      profile:JSON.stringify(planModel.load_profile),rules:JSON.stringify(planModel.thresholds),
+      ruleSource:body.thresholds?'From Describe':'Suggested rules',
+      loadSource:body.stages||body.target_request_rate?'From Describe':'Load shape uses profile defaults',
+      endpoints:new Set(eps.map(endpoint=>endpoint.method+' '+endpoint.path))};
     document.getElementById('importNote').style.display='none';
     applyIntegrations(j.plan_id);
     renderPlanForm(); renderRawFromModel();
@@ -600,40 +633,144 @@ async function saveSla(){
 
 /* ---------- plain-English plan summary ---------- */
 let planRationale = "";   // the AI's "why", set when a plan is drafted
-function renderSummary(){
-  const el=document.getElementById('planSummary'); if(!el||!planModel) return;
-  el.style.display='block';
-  const scs=planModel.scenarios||[];
-  const total=scs.reduce((a,s)=>a+(s.weight||0),0)||1;
-  // peak users + duration from the load profile
-  const stages=(planModel.load_profile&&planModel.load_profile.stages)||[];
-  const peak=stages.reduce((m,s)=>Math.max(m,s.target_users||0),0);
-  const dur=stages.reduce((a,s)=>a+(s.duration_seconds||0),0);
-  // journeys
-  const journeys=scs.map(s=>{
-    const pct=Math.round((s.weight/total)*100);
-    const steps=(s.steps||[]).map(st=>st.path).join(' → ');
-    return `<li><b>${pct}%</b> will do <b>${esc(s.name)}</b> <span class="muted">(${esc(steps)})</span></li>`;
-  }).join('');
-  // thresholds in plain words
-  const thr=(planModel.thresholds||[]).map(t=>{
-    const m={p95_ms:'95% of responses',p99_ms:'99% of responses',p50_ms:'half of responses',
-             avg_ms:'average response',error_rate:'error rate'}[t.metric]||t.metric;
-    if(t.metric==='error_rate'){ const pct=Number((t.value*100).toPrecision(15));
-      return `the ${m} stays ${t.op.includes('<')?'under':'over'} ${pct}%`; }
-    return `${m} ${t.op.includes('<')?'stay under':'exceed'} ${t.value} ms`;
+let reviewDraftInputs=null;
+function reviewLoadChart(profile, stages, duration, peak){
+  if(!duration) return '';
+  const arrival=profile?.arrival_rate;
+  const maximum=Math.max(1,arrival||peak,arrival?0:profile?.start_users||0);
+  let elapsed=0;
+  const point=(time,level)=>time/duration*100+'% '+(100-level/maximum*100)+'%';
+  const start=point(0,arrival||profile?.start_users||0);
+  const targets=arrival?[point(duration,arrival)]:stages.map(stage=>{
+    elapsed+=stage.duration_seconds;
+    return point(elapsed,stage.target_users);
   });
-  const thrText = thr.length ? ('It <b>passes</b> if '+thr.join(' and ')+'.') :
-    'No pass/fail thresholds are set yet — add some below so the result can be judged.';
-  // auth note
-  const hasAuth = Object.keys(planModel.headers||{}).some(k=>k.toLowerCase()==='authorization');
-  const authNote = hasAuth ? ' It logs in first and carries the login token through the protected steps automatically.' : '';
-  el.innerHTML =
-    `<h4>📋 What this test will do</h4>`+
-    `<p>It simulates up to <b>${peak||'?'} users</b> over <b>${dur||'?'} seconds</b> doing ${scs.length} ${scs.length===1?'journey':'journeys'}:${authNote}</p>`+
-    `<ul>${journeys}</ul>`+
-    `<p>${thrText}</p>`+
-    (planRationale ? `<div class="why"><b>Why the AI planned it this way:</b> ${esc(planRationale)}</div>` : '');
+  const area=['0% 100%',start,...targets,'100% 100%'].join(',');
+  const unit=arrival?(profile.target_request_rate?'req/s':'iterations/s'):'VUs';
+  return '<figure class="review-load-chart" aria-label="Planned load over time">'+
+    '<div class="review-load-axis" aria-hidden="true"><span>'+esc(maximum+' '+unit)+'</span><span>0</span></div>'+
+    '<div class="review-load-plot" aria-hidden="true"><div style="clip-path:polygon('+area+')"></div></div>'+
+    '<figcaption><span>0 s</span><span>'+esc(duration)+' s</span></figcaption></figure>';
+}
+
+function renderSummary(){
+  const summary=document.getElementById('planSummary');
+  if(!summary||!planModel) return;
+
+  const scenarios=planModel.scenarios||[];
+  const totalWeight=scenarios.reduce((sum,scenario)=>sum+(scenario.weight||0),0)||1;
+  const requestCount=scenarios.reduce((sum,scenario)=>sum+scenario.steps.length,0);
+  const profile=planModel.load_profile;
+  const {type,duration,stages}=loadOfProfile(profile);
+  const peak=stages.reduce((max,stage)=>Math.max(max,stage.target_users),0);
+  const typeLabel={ramp:'Load',stress:'Stress',spike:'Spike',soak:'Soak'}[type]||type;
+  const arrival=profile?.arrival_rate;
+  const requestRate=profile?.target_request_rate;
+  const inputs=reviewDraftInputs?.planId===currentPlanId?reviewDraftInputs:null;
+  const sourceLabel=(text)=>'<small class="review-source">'+esc(text)+'</small>';
+  const stageNames={
+    ramp:['Ramp up','Steady state','Ramp down'], soak:['Ramp up','Steady hold','Ramp down'],
+    spike:['Baseline','Spike up','Peak hold','Drop','Recovery'],
+  }[type];
+  const stageRows=stages.map((stage,index)=>'<li><span>'+esc(stageNames?.[index]||'Stage '+(index+1))+
+    '</span><strong>'+esc(stage.target_users)+' VUs · '+esc(stage.duration_seconds)+' s</strong></li>').join('');
+  const rules=(planModel.thresholds||[]).map(rule=>{
+    const labels={p50_ms:'p50',p90_ms:'p90',p95_ms:'p95',p99_ms:'p99',avg_ms:'Average latency',median_ms:'Median latency',
+      max_ms:'Maximum latency',error_rate:'Error rate'};
+    const value=rule.metric==='error_rate'?Number((rule.value*100).toPrecision(15))+'%':rule.value+' ms';
+    return '<li><span>'+esc(labels[rule.metric]||rule.metric)+'</span><strong>'+esc(rule.op+' '+value)+'</strong></li>';
+  }).join('');
+  summary.innerHTML='<h3>What will run</h3><p>'+esc(requestCount)+' '+(requestCount===1?'request':'requests')+' across '+
+    esc(scenarios.length)+' '+(scenarios.length===1?'journey':'journeys')+'</p><div class="review-summary-load"><strong>'+
+    esc(requestRate?requestRate+' requests/s':arrival?arrival+' iterations/s':peak+' peak VUs')+'</strong><span>'+esc(requestRate?'Constant request rate':typeLabel)+' · '+esc(duration)+' s</span></div>'+
+    (inputs?sourceLabel(JSON.stringify(profile)===inputs.profile?inputs.loadSource:'Edited in Review'):'')+
+    reviewLoadChart(profile,stages,duration,peak)+
+    (arrival?'<p>'+esc(profile.pre_allocated_vus)+' preallocated VUs</p>'+(requestRate?'<p>One request per iteration. At least '+esc(requestRate*duration)+' HTTP requests and zero dropped iterations.</p>':'<p>Each iteration runs one journey and can send multiple requests.</p>'):stageRows?'<ol class="review-summary-list" aria-label="Load stages">'+stageRows+'</ol>':'')+
+    '<h4>Pass rules</h4>'+(inputs?sourceLabel(JSON.stringify(planModel.thresholds)===inputs.rules?inputs.ruleSource:'Edited in Review'):'')+
+    (rules?'<ul class="review-summary-list">'+rules+'</ul>':'<p>No thresholds configured.</p>');
+
+  const headers=Object.entries(readHeaders()).filter(([,value])=>value);
+  const headerCount=headers.length;
+  const usesAuth=headers.some(([name])=>/^(authorization|x-api-key|api-key|cookie)$/i.test(name));
+  document.getElementById('reviewTargetOverview').innerHTML='<p class="review-url">'+esc(planModel.target_base_url||'Enter a target URL')+
+    '</p><p class="hint">'+esc(planModel.environment||'No environment label')+' · '+
+    esc(headerCount?headerCount+(headerCount===1?' custom header':' custom headers'):'No custom headers')+
+    (usesAuth?' · Authentication configured':'')+
+    (planModel.insecure_tls?' · TLS verification off':'')+'</p>'+
+    (inputs?sourceLabel(planModel.target_base_url===inputs.target&&(planModel.environment||'')===inputs.environment?'From Describe':'Edited in Review'):'');
+
+  const columns=new Set(dataColumns);
+  const allCaptures=capturedVars();
+  const findings=[];
+  const requests=document.getElementById('reviewRequestsOverview');
+  requests.innerHTML=scenarios.map((scenario,si)=>{
+    const capturedHere=new Set();
+    const rows=scenario.steps.map((step,sti)=>{
+      const requestInputs=[step.path,...headers.map(([,value])=>value),...flattenBody(step.body||{}).map(field=>field.value)];
+      const sources=new Set();
+      const unavailable=new Set();
+      for(const input of requestInputs){
+        if(typeof input!=='string') continue;
+        for(const match of input.matchAll(/\$\{([^}]+)\}/g)){
+          const token=match[1].trim();
+          if(GEN_NAMES.has(token.split('(')[0])) sources.add('Generated · '+token.split('(')[0]);
+          else if(capturedHere.has(token)) sources.add('Earlier response · '+token);
+          else if(allCaptures.has(token)) unavailable.add('Check capture order · '+token);
+          else if(columns.has(token)) sources.add('Dataset · '+token);
+          else unavailable.add('Unresolved · '+token);
+        }
+      }
+      if(unavailable.size) findings.push({si,sti,label:step.name||step.path||'Request',messages:[...unavailable]});
+      const captures=[];
+      for(const capture of step.extract||[]){
+        if(capture.var){
+          capturedHere.add(capture.var);
+          captures.push('Captures '+capture.var+(capture.path?' from '+capture.path:''));
+        }
+      }
+      const group=(label,values)=>values.length?'<div><strong>'+label+'</strong> '+values.map(esc).join(' · ')+'</div>':'';
+      const checks=(step.assertions||[]).map(checkLabel);
+      const described=inputs?.endpoints.has((step.method||'GET')+' '+step.path);
+      return '<li class="review-request"><span class="review-method">'+esc(step.method||'GET')+'</span>'+
+        '<div class="review-request-path"><code>'+esc(step.path||'Path required')+'</code>'+
+        '<button type="button" class="btn ghost sm" data-review-step="'+si+':'+sti+
+        '" aria-label="Edit '+esc((step.method||'GET')+' '+(step.path||'request'))+'">Edit</button></div>'+
+        '<div class="review-request-tags">'+(described?sourceLabel('Endpoint from Describe'):'')+
+        group('Checks',checks.length?checks:['Default HTTP status check'])+
+        group('Changing inputs',[...sources,...unavailable])+group('Response values',captures)+'</div></li>';
+    }).join('');
+    return '<div class="review-journey"><div class="review-journey-title"><strong>'+esc(scenario.name||'Journey')+
+      '</strong><span>'+Math.round((scenario.weight||0)/totalWeight*100)+'% of traffic</span></div><ol>'+rows+'</ol></div>';
+  }).join('')||'<p class="hint">Add a journey to define the requests.</p>';
+  const reviewFindings=document.getElementById('reviewFindings');
+  if(reviewFindings){
+    reviewFindings.innerHTML=findings.map(({si,sti,label,messages})=>'<li><button type="button" class="btn ghost sm" data-review-step="'+si+':'+sti+
+      '">Review '+esc(label)+'</button> '+messages.map(esc).join(' · ')+'</li>').join('');
+    reviewFindings.hidden=!findings.length;
+  }
+  for(const container of [requests,reviewFindings]){
+    container?.querySelectorAll('[data-review-step]').forEach(button=>{
+      button.onclick=()=>{
+        const key=button.dataset.reviewStep;
+        const editor=document.getElementById('scenarios').closest('details');
+        if(editor) editor.open=true;
+        openSteps.add(key);
+        renderPlanForm();
+        document.getElementById('review-step-'+key)?.focus();
+      };
+    });
+  }
+
+  const modes={random:'Random rows',sequential:'Read in order',unique:'Use each row once'};
+  document.getElementById('reviewDataOverview').textContent=dataFileInfo
+    ? dataFileInfo.filename+' · '+dataFileInfo.row_count+' rows · '+(modes[dataRowMode]||modes.random)
+    : 'No dataset attached.';
+  document.getElementById('reviewRationale').textContent=planRationale;
+  const explanation=document.getElementById('reviewDraftExplanation');
+  if(explanation){
+    explanation.hidden=!planRationale;
+    explanation.textContent=planRationale?'Why this plan was drafted — '+planRationale:'';
+  }
 }
 
 /* ---------- editable plan form (review step) ----------
@@ -665,6 +802,7 @@ function resetReviewState(){
   document.getElementById('headersList').innerHTML='';
   Object.entries(planModel.headers||{}).forEach(([k,v])=>addHeader(k,v));
   document.getElementById('connDetails').open=false;
+  document.querySelectorAll('.review-editor, .review-advanced').forEach(editor=>{editor.open=false;});
 }
 
 function renderPlanForm(){
@@ -718,8 +856,8 @@ async function updateLoad(){
     const r=await fetch('/api/load-profile',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({type:document.getElementById('pfType').value,max_users:users,duration_seconds:duration})});
     const j=await r.json(); if(!r.ok) throw new Error('that load size is not valid');
-    const arrival=planModel.load_profile.arrival_rate, vus=planModel.load_profile.pre_allocated_vus;
-    planModel.load_profile={...j.load_profile,arrival_rate:arrival,pre_allocated_vus:vus||10};
+    const {arrival_rate:arrival, pre_allocated_vus:vus, target_request_rate:requestRate}=planModel.load_profile;
+    planModel.load_profile={...j.load_profile,arrival_rate:arrival,target_request_rate:requestRate,pre_allocated_vus:vus||10};
     _loadAsked={users,duration};                 // what was asked for, not the rounded total
     status.className='statusline'; status.textContent='';
     renderLoad(); renderSummary();
@@ -731,6 +869,7 @@ function renderConnCount(){
   if(planModel.environment) bits.push(planModel.environment);
   if(planModel.insecure_tls) bits.push('TLS check off');
   document.getElementById('connCount').textContent = bits.length ? '· '+bits.join(' · ') : '';
+  renderSummary();
 }
 
 /* ----- 2 · test data file ----- */
@@ -742,7 +881,7 @@ const ROW_MODES=[
 function renderDataCard(){
   const card=document.getElementById('dataCard'), dz=document.getElementById('dz');
   if(!dataFileInfo){ card.style.display='none'; dz.style.display='block';
-    dz.innerHTML='📁 Click to upload a CSV / TSV / TXT / JSON file'; return; }
+    dz.textContent='Upload CSV, TSV, TXT, JSON, JSONL, or NDJSON'; return; }
   dz.style.display='none'; card.style.display='block';
   const cols=dataColumns||[], rows=dataFileInfo.sample_rows||[];
   let table='';
@@ -760,7 +899,7 @@ function renderDataCard(){
     '<button class="btn ghost sm" onclick="document.getElementById(\'dataFile\').click()">Replace</button>'+
     '<button class="btn danger sm" onclick="removeDataFile()">Remove</button></div>'+table+
     '<div class="dfile-mode"><label for="rowMode" style="margin:0">Use the rows</label>'+
-    '<select id="rowMode" onchange="dataRowMode=this.value;renderDataCard()">'+
+    '<select id="rowMode" onchange="dataRowMode=this.value;renderDataCard();renderSummary()">'+
       ROW_MODES.map(m=>'<option value="'+m[0]+'" '+(m[0]===dataRowMode?'selected':'')+'>'+m[1]+'</option>').join('')+'</select></div>'+
     (dataRowMode==='unique' ? '<div class="muted" style="font-size:11.5px;margin-top:6px">With more than one journey, each journey gets its own share of the rows. '+(dataFileInfo.row_count||0).toLocaleString()+' rows allow that many journey runs in total.</div>' : '')+
     (tool && tool!=='k6' ? '<div class="note warn" style="margin-top:8px">Data files are only built into k6 scripts. A '+esc(tool)+' script will not read this file.</div>' : '')+
@@ -845,6 +984,7 @@ function stepRow(si,sti,st){
   const ex=(st.extract&&st.extract[0])||null; if(ex&&ex.var) tags.push(`<span class="stp-tag">captures ${esc(ex.var)}</span>`);
   if(st.graphql_query) tags.push('<span class="stp-tag">GraphQL</span>');
   const head=document.createElement('div'); head.className='stp-head';
+  head.id='review-step-'+k;
   head.setAttribute('role','button'); head.setAttribute('tabindex','0'); head.setAttribute('aria-expanded',open?'true':'false');
   head.onclick=()=>toggleStep(si,sti);
   head.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggleStep(si,sti); } };
@@ -880,7 +1020,7 @@ function stepRow(si,sti,st){
     h+=`<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted)">🔗 Capture
         <input style="width:110px;margin:0;padding:5px 8px" value="${esc(ex.var)}" placeholder="name" oninput="setExtract(${si},${sti},'var',this.value)" onchange="renderPlanForm()"/> from the
         <select style="width:auto;margin:0;padding:5px 8px" onchange="setExtract(${si},${sti},'source',this.value);renderPlanForm()">${srcOpts}</select>
-        <input style="width:170px;margin:0;padding:5px 8px" value="${esc(ex.path)}" placeholder="${ph}" oninput="setExtract(${si},${sti},'path',this.value)"/>
+        <input style="width:170px;margin:0;padding:5px 8px" value="${esc(ex.path)}" placeholder="${ph}" oninput="setExtract(${si},${sti},'path',this.value)" onchange="renderSummary()"/>
         then use it in later steps as <code class="k">\${${esc(ex.var||'name')}}</code>
         <button class="iconbtn" onclick="removeExtract(${si},${sti})" style="padding:2px 7px">×</button></div>`;
   } else {
@@ -937,6 +1077,7 @@ function classifyValue(v){
   if(!m) return {source:/\$\{[^}]+\}/.test(v)?'mixed':'fixed',token:''};
   const token=m[1].trim(), base=token.split('(')[0];
   if(GEN_NAMES.has(base)) return {source:'generated',token,base,args:(token.match(/\((.*)\)$/)||[,''])[1]};
+  if(capturedVars().has(token)) return {source:'captured',token};
   if((dataColumns||[]).includes(token)) return {source:'file',token};
   return {source:'captured',token};
 }
@@ -978,8 +1119,10 @@ function requestDataHtml(si,sti,st){
 }
 function fieldRowHtml(fi,f){
   const c=classifyValue(f.value);
+  const {si,sti}=_rdPaths[fi];
+  const earlier=earlierResponseValues(si,sti);
   const opts=[['fixed','Fixed value'],['file','From data file'],['generated','Generated']];
-  if(c.source==='captured') opts.push(['captured','From an earlier step']);
+  if(earlier.length||c.source==='captured') opts.push(['captured','From an earlier response']);
   if(c.source==='mixed') opts.push(['mixed','Text with values in it']);
   const srcSel=`<select aria-label="Where ${esc(pathLabel(f.path))} comes from" onchange="setFieldSource(${fi},this.value)">`+
     opts.map(o=>`<option value="${o[0]}" ${o[0]===c.source?'selected':''}>${o[1]}</option>`).join('')+'</select>';
@@ -1001,12 +1144,10 @@ function fieldRowHtml(fi,f){
         GEN_KINDS.map(g=>`<option value="${g[0]}" ${g[0]===c.base?'selected':''}>${g[1]}</option>`).join('')+
         (known?'':`<option selected value="${esc(c.base)}">${esc(c.token)}</option>`)+'</select>'+genArgsHtml(fi,c)+'</div>';
   } else if(c.source==='captured'){
-    const have=capturedVars().has(c.token);
-    val=`<div class="rd-val"><code class="k">${esc(c.token)}</code>`+(have
-        ? '<span class="muted" style="font-size:12px">captured from an earlier response</span>'
-        : (dataFileInfo
-            ? '<span style="font-size:12px;color:var(--amber)">⚠ not a column of the data file and not captured — it would be sent empty</span>'
-            : '<span style="font-size:12px;color:var(--amber)">⚠ no source yet — upload a data file with this column, or choose another source</span>'))+'</div>';
+    const unavailable=earlier.includes(c.token)?'':`<option value="" selected disabled>${esc(c.token)} (unavailable)</option>`;
+    val=`<div class="rd-val"><select aria-label="Captured response value" onchange="setFieldToken(${fi},this.value)">`+
+        unavailable+earlier.map(name=>`<option value="${esc(name)}" ${name===c.token?'selected':''}>${esc(name)}</option>`).join('')+
+        '</select></div>';
   } else {
     val=`<div class="rd-val"><input value="${esc(f.value)}" aria-label="Text" oninput="setFieldRaw(${fi},this.value)"/></div>`;
   }
@@ -1022,14 +1163,24 @@ function genArgsHtml(fi,c){
   return '';
 }
 function rdTarget(fi){ const t=_rdPaths[fi]; return {t, body:planModel.scenarios[t.si].steps[t.sti].body}; }
+function earlierResponseValues(si,sti){
+  return [...new Set(planModel.scenarios[si].steps.slice(0,sti)
+    .flatMap(step=>(step.extract||[]).map(capture=>capture.var)).filter(Boolean))];
+}
 function rdSet(fi,value,rerender){ const {t,body}=rdTarget(fi); setAt(body,t.path,value); if(rerender) renderPlanForm(); }
 function setFieldSource(fi,src){
   const {t,body}=rdTarget(fi); const cur=getAt(body,t.path);
   if(src==='fixed') return rdSet(fi, typeof cur==='string'&&/\$\{/.test(cur)?'':cur, true);
   if(src==='generated') return rdSet(fi,'${uuid}',true);
+  if(src==='captured'){
+    const [name]=earlierResponseValues(t.si,t.sti);
+    if(name) return setFieldToken(fi,name);
+  }
   if(src==='file'){
     if(!(dataColumns||[]).length){
       const sec=document.getElementById('dz'); renderPlanForm();
+      const editor=sec.closest('details');
+      if(editor) editor.open=true;
       const n=document.getElementById('dataInfo'); n.style.display='flex'; n.className='note warn';
       n.textContent='Upload a data file first — then its columns can be chosen for a field.';
       sec.scrollIntoView({behavior:'smooth',block:'center'}); return;
@@ -1277,6 +1428,21 @@ async function doGenerate(){
     try{ planModel=JSON.parse(document.getElementById('planJson').value); }
     catch(e){ status.className='statusline err'; status.textContent='Raw JSON invalid: '+e.message; return; }
   }
+  const filename=planModel.script_filename||'';
+  const extension={k6:'.js',locust:'.py',jmeter:'.jmx',gatling:'.scala'}[document.getElementById('tool').value];
+  if(filename&&(!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(filename)||filename.includes('..')||filename.length>120||
+      (extension&&!filename.endsWith(extension)))){
+    status.className='statusline err';
+    status.textContent='Use a script filename of up to 120 characters, without folders, spaces, or ".."'+
+      (extension?', ending in '+extension+'.':'.');
+    const field=document.getElementById('pfScriptFilename');
+    if(!document.getElementById('rawToggle').checked&&field){
+      const editor=field.closest('details');
+      if(editor) editor.open=true;
+      field.focus();
+    }
+    return;
+  }
   // Accuracy guard: a ${name} with no source would be sent as an empty value.
   try{
     const pv=await fetchPreview();
@@ -1296,14 +1462,14 @@ async function doGenerate(){
     const r=await fetch(`/api/plan/${currentPlanId}/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'generate failed');
     currentScriptId=j.script_id; _scriptEdited=false;
-    document.getElementById('preflightResult').style.display='none';
+    if(!j.reused) document.getElementById('preflightResult').style.display='none';
     document.getElementById('scriptOut').textContent=j.content;
     document.getElementById('dlBtn').disabled=false;
     document.getElementById('runBtn').disabled=(j.tool!=='k6');
     document.getElementById('preflightBtn').disabled=false;
     document.getElementById('validateBtn').disabled=false;
     setGitExport(j.tool==='k6', '');
-    document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) — from plan ${j.plan_id.slice(0,8)}`;
+    document.getElementById('scriptMeta').textContent=`${j.filename} (${j.tool}) · ${j.reused?'Latest version reused — no changes':'Latest script version'}`;
     const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
     if(j.tool!=='k6'){ const h=document.getElementById('runHint'); h.style.display='flex'; h.textContent='Live run is implemented for k6; download and run this '+j.tool+' script yourself.'; }
     status.textContent='';
@@ -1468,7 +1634,7 @@ function renderJenkinsResults(results){
       <div class="tile"><div class="v">${fmt(r.max_ms,' ms')}</div><div class="l">Max</div></div>
     </div>
     ${r.thresholds.length?'<table><thead><tr><th>Metric</th><th>Threshold</th><th>Result</th></tr></thead><tbody>'+
-      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed?'pass':'fail'}">${t.passed?'passed':'failed'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
+      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed===true?'pass':t.passed===false?'fail':'na'}">${t.passed===true?'passed':t.passed===false?'failed':'unavailable'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
   el.style.display='block';
 }
 async function jenkinsStop(){
@@ -1734,6 +1900,10 @@ async function ensureScriptId(){
   output.textContent=content;
   if(scriptEditorSourceId===currentScriptId) scriptEditorSourceId=j.script_id;
   currentScriptId=j.script_id; _scriptEdited=false;
+  if(j.script_edited){
+    document.getElementById('scriptMeta').textContent='Edited script · Latest version';
+    loadScriptHistory();
+  }
   return currentScriptId;
 }
 
@@ -1766,8 +1936,8 @@ async function pollRun(){
     const s=j.snapshot||{}; const lat=s.latency||{}; window._lastSnap=s; window._lastElapsed=j.elapsed_s;
     document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
     document.getElementById('mReqs').textContent=s.requests??0;
-    document.getElementById('mRps').textContent=s.rps??0;
     const planned=j.planned_load||{};
+    document.getElementById('mRps').textContent=(s.rps??0)+(planned.requests_per_second?' / '+planned.requests_per_second:'');
     document.getElementById('mActiveVus').textContent=(s.active_vus??'—')+' / '+(planned.peak_users??'—');
     document.getElementById('mIterationRate').textContent=(s.iterations_per_second??'—')+' / '+(planned.iterations_per_second??'—');
     document.getElementById('mDroppedIterations').textContent=s.dropped_iterations??'—';
@@ -1810,32 +1980,91 @@ async function loadReport(){
 
 
 /* ---------- report charts: time-series + trend ---------- */
-function _lineChart(canvas, series, opts){
-  // series: [{data:[{x,y}], color, label}], opts:{yLabel}
+function _lineChart(canvas, series, opts={}){
   const c=canvas; if(!c) return;
   const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=150;
   c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
   const pad=30;
-  series=series.map(s=>({...s,data:s.data.filter(p=>p.y!=null&&Number.isFinite(Number(p.y)))}));
-  const allY=series.flatMap(s=>s.data.map(p=>p.y));
-  const allX=series.flatMap(s=>s.data.map(p=>p.x));
-  if(allY.length<1){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('no data yet',10,20); return; }
-  const maxY=Math.max(1,...allY), minX=Math.min(...allX), maxX=Math.max(...allX);
+  const valid=p=>p.y!=null&&Number.isFinite(Number(p.y));
+  const points=series.flatMap(s=>s.data.filter(valid));
+  if(!points.length){ x.fillStyle='#5f6876'; x.font='11px system-ui'; x.fillText('No measurements recorded',10,20); return; }
+  const allY=points.map(p=>p.y), allX=points.map(p=>p.x);
+  const maxY=Math.max(...allY)||1;
+  const [minX,maxX]=opts.domain||[Math.min(...allX),Math.max(...allX)];
   const sx=v=>pad+((v-minX)/((maxX-minX)||1))*(W-pad*1.4);
   const sy=v=>H-pad-(v/maxY)*(H-pad*1.5);
-  // axes
-  x.strokeStyle='#e7e9e5'; x.lineWidth=1; x.beginPath(); x.moveTo(pad,8); x.lineTo(pad,H-pad); x.lineTo(W-6,H-pad); x.stroke();
-  x.fillStyle='#9aa'; x.font='10px system-ui'; x.fillText(maxY.toFixed(maxY<10?1:0),4,14);
+  x.font='10px system-ui';
+  for(let index=0;index<=3;index++){
+    const value=maxY*index/3, y=sy(value);
+    x.strokeStyle='#e5e9f1'; x.lineWidth=1; x.beginPath(); x.moveTo(pad,y); x.lineTo(W-6,y); x.stroke();
+    x.fillStyle='#566174'; x.textAlign='right';
+    x.fillText(new Intl.NumberFormat(undefined,{notation:'compact',maximumSignificantDigits:2}).format(value),pad-5,y+3);
+    x.textAlign='left';
+  }
+  if(opts.domain){
+    x.save(); x.setLineDash([4,3]); x.strokeStyle='#9586bb';
+    for(const boundary of opts.boundaries||[]){
+      if(boundary<=minX||boundary>=maxX) continue;
+      x.beginPath(); x.moveTo(sx(boundary),8); x.lineTo(sx(boundary),H-pad); x.stroke();
+    }
+    x.restore();
+    const labels=opts.axisLabels||[minX+' s',maxX+' s'];
+    x.fillText(labels[0],pad,H-10);
+    x.textAlign='right'; x.fillText(labels[1],W-6,H-10); x.textAlign='left';
+    x.strokeStyle='#777185'; x.beginPath(); x.moveTo(sx(opts.selected),8); x.lineTo(sx(opts.selected),H-pad); x.stroke();
+  }
   series.forEach(s=>{
     if(s.data.length<1) return;
     x.beginPath(); x.strokeStyle=s.color; x.lineWidth=2;
-    s.data.forEach((p,i)=>{ const px=sx(p.x),py=sy(p.y); i?x.lineTo(px,py):x.moveTo(px,py); });
+    let drawing=false;
+    s.data.forEach(p=>{
+      if(!valid(p)){drawing=false;return;}
+      const px=sx(p.x),py=sy(p.y); drawing?x.lineTo(px,py):x.moveTo(px,py); drawing=true;
+    });
     x.stroke();
     // dots for trend (few points)
-    if(s.data.length<=12){ x.fillStyle=s.color; s.data.forEach(p=>{ x.beginPath(); x.arc(sx(p.x),sy(p.y),2.5,0,7); x.fill(); }); }
+    x.fillStyle=s.color;
+    s.data.filter(p=>valid(p)&&(s.data.length<=12||p.x===opts.selected)).forEach(p=>{
+      x.beginPath(); x.arc(sx(p.x),sy(p.y),2.5,0,7); x.fill();
+    });
   });
 }
-function drawTsChart(samples){
+function drawTsChart(samples, phases=[]){
+  const panel=document.getElementById('reportTimelineCharts');
+  if(panel){
+    const timeline=samples.filter(sample=>Number.isFinite(sample.t)).sort((a,b)=>a.t-b.t);
+    panel.hidden=!timeline.length;
+    if(!timeline.length) return;
+    const phaseNote=document.getElementById('reportPlannedPhases');
+    phaseNote.hidden=!phases.length;
+    phaseNote.textContent=phases.length?'Planned phases · '+phases.map(phase=>
+      phase.label+' '+phase.start_s+'–'+phase.end_s+' s').join(' · '):'';
+    const boundaries=phases.map(phase=>phase.end_s);
+    const input=document.getElementById('reportSampleIndex');
+    input.max=String(timeline.length-1);
+    input.value=input.max;
+    input.disabled=timeline.length===1;
+    const domain=[0,timeline.at(-1).t];
+    const readout=document.getElementById('reportSampleReadout');
+    const format=(value,unit)=>Number.isFinite(value)?Number(value.toPrecision(4))+' '+unit:'Unavailable';
+    const draw=()=>{
+      const sample=timeline[Number(input.value)];
+      readout.textContent=sample.t+' s · Throughput '+format(sample.rps,'req/s')+
+        ' · p95 '+format(sample.p95,'ms')+' · Errors '+format(sample.err,'%');
+      input.setAttribute('aria-valuetext',sample.t+' seconds');
+      for(const [id,key,color] of [
+        ['reportLoadChart','rps','#0f7a5f'],
+        ['reportLatencyChart','p95','#6250bd'],
+        ['reportErrorsChart','err','#b4342b'],
+      ]){
+        _lineChart(document.getElementById(id),[{data:timeline.map(item=>({x:item.t,y:item[key]})),color}],
+          {domain,selected:sample.t,boundaries});
+      }
+    };
+    input.oninput=draw;
+    draw();
+    return;
+  }
   const c=document.getElementById('tsChart'); if(!c)return;
   const chartData=samples||[];
   if(!chartData.length){_lineChart(c,[]);return;}
@@ -1868,6 +2097,7 @@ async function loadTrend(planId){
 function renderReport(j){
   reportContext={planId:j.plan_id||null,scriptId:j.script_id||null,runId:j.run_id||null,savedId:j.saved_result_id||j.run_id||null,testName:j.execution?.test_name||'',workloadVersion:j.execution?.workload_version||'',mode:j.execution?.mode||'full'};
   renderReportDetails(j);
+  renderReportEvidenceSummary(j);
   document.getElementById('rerunBtn').disabled=!reportContext.planId;
   document.getElementById('rerunNote').textContent=reportContext.scriptId?'Uses the script saved with this report.':reportContext.planId?'Older report: opens the saved plan for review before running.':'This report has no saved plan to rerun.';
   try{
@@ -1881,11 +2111,13 @@ function renderReport(j){
     setK('kRequests', s.requests==null?'Unavailable':s.requests.toLocaleString());
     const er=s.error_rate==null?null:s.error_rate*100; const erEl=document.getElementById('kErr');
     if(erEl){ erEl.textContent=er==null?'Unavailable':er.toFixed(2)+'%'; erEl.classList.toggle('bad', er>0); }
-    setK('kRps', s.rps==null?'Unavailable':s.rps.toFixed(2)+'/s');
-    setK('kP95', lat.p95_ms==null?'Unavailable':lat.p95_ms+' ms');
+    const targetRps=j.evidence?.metrics.target_rps??(j.execution?.script_edited?null:j.execution?.target_request_rate);
+    setK('kRps', s.rps==null?'Unavailable':s.rps.toFixed(2)+(targetRps!=null?' / '+targetRps:'')+' req/s');
+    const p95Rule=(j.verdict.checks||[]).find(check=>check.metric==='p95_ms'&&check.target!=null);
+    setK('kP95',lat.p95_ms==null?'Unavailable':lat.p95_ms+' ms'+(p95Rule?' / '+p95Rule.op+' '+p95Rule.target+' ms':''));
     setK('kP99', lat.p99_ms==null?'Unavailable':lat.p99_ms+' ms');
     setK('kAvg', lat.avg_ms==null?'Unavailable':lat.avg_ms+' ms');
-    drawTsChart(j.samples||[]); loadTrend(reportContext.planId);
+    drawTsChart(j.samples||[],j.execution?.planned_phases||[]); loadTrend(reportContext.planId);
 
     // run logs panel (persisted with the report)
     window._reportLogs = j.logs || (j.snapshot&&j.snapshot.logs) || [];
@@ -1913,10 +2145,27 @@ function renderReport(j){
         }).join('')+'</tbody></table>';
     } else if(cc){ cc.style.display='none'; }
 
-    document.getElementById('verdictHeadline').textContent=v===true?'PASS — all thresholds met':v===false?'FAIL — a threshold was breached':'INCONCLUSIVE — a threshold could not be evaluated';
-    const n=j.narrative;
-    document.getElementById('verdictSub').textContent=n.headline||'';
-    document.getElementById('reportSummary').textContent=n.summary||'';
+    const outcomeLabel=j.status==='stopped'?'STOPPED — partial results':j.status==='error'?'ERROR — partial results':
+      v===true?'PASS — all thresholds met':v===false?'FAIL — a threshold was breached':'INCONCLUSIVE — no final verdict';
+    document.getElementById('verdictHeadline').textContent=outcomeLabel;
+    const n=j.narrative||{};
+    const checks=j.verdict.checks||[];
+    const total=j.evidence?.total_thresholds??checks.length;
+    const passed=j.evidence?.passed_count??checks.filter(check=>check.passed===true).length;
+    document.getElementById('verdictSub').textContent=total?passed+' of '+total+' thresholds passed':n.headline||'';
+    document.getElementById('reportSummary').textContent=n.summary||'No explanation was recorded for this run.';
+    const partial=document.getElementById('reportPartial');
+    partial.hidden=!(j.evidence?.partial??(j.status&&j.status!=='finished'));
+    partial.textContent=partial.hidden?'':'The run ended early. Measurements are partial.';
+    const samples=j.samples||[];
+    document.getElementById('reportSampleNote').textContent=samples.length
+      ? samples.length+' recorded samples. Values summarize traffic observed up to each sample.'
+      : 'Timeline samples are unavailable for this run.';
+    document.getElementById('reportTimelineData').hidden=!samples.length;
+    document.getElementById('reportSampleTable').innerHTML=samples.length?
+      '<table><thead><tr><th scope="col">Elapsed (s)</th><th scope="col">p95 (ms)</th><th scope="col">Requests/s</th><th scope="col">Errors (%)</th></tr></thead><tbody>'+
+      samples.map(sample=>'<tr>'+[sample.t,sample.p95,sample.rps,sample.err].map(value=>'<td>'+esc(value??'—')+'</td>').join('')+'</tr>').join('')+
+      '</tbody></table>':'';
     document.getElementById('reportObs').innerHTML=(n.observations&&n.observations.length)?'<div class="mini">Observations</div><ul>'+n.observations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
     document.getElementById('reportRecs').innerHTML=(n.recommendations&&n.recommendations.length)?'<div class="mini">Recommendations</div><ul>'+n.recommendations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
     // baseline / regression
@@ -2030,7 +2279,7 @@ function sdFmt(k,v){
   if(v===null||v===undefined) return '';
   if(k==='created_at') return new Date(v).toLocaleString();
   if(k==='error_rate') return (v*100).toFixed(2)+'%';
-  if(k==='p95_ms'||k==='p99_ms'||k==='avg_ms') return (+v).toFixed(2)+' ms';
+  if(k.endsWith('_ms')) return (+v).toFixed(2)+' ms';
   if(k==='rps') return (+v).toFixed(2)+'/s';
   if(k==='run_id') return String(v).slice(0,8);
   return v;
@@ -2039,6 +2288,153 @@ function sdVerdict(v){
   const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
   return '<span class="pill '+m[0]+'">'+m[1]+'</span>';
 }
+let dashboardTrend=[], dashboardOutcomeDay='';
+const trendMetrics={
+  p50_ms:{label:'p50 latency',unit:'ms',color:'#0f6e56'},
+  p95_ms:{label:'p95 latency',unit:'ms',color:'#5545bb'},
+  p99_ms:{label:'p99 latency',unit:'ms',color:'#9a6412'},
+  error_rate:{label:'Error rate',unit:'%',color:'#b4342b'},
+  rps:{label:'Throughput',unit:'req/s',color:'#0f6e56'},
+  target_rps:{label:'Target throughput',unit:'req/s',color:'#5545bb'},
+};
+
+function dashboardTrendPoints(){
+  const metric=document.getElementById('sdTrendMetric').value;
+  const seriesGroup=dashboardTrend.at(-1)?.series_group;
+  const comparable=document.getElementById('sdInspectRun')
+    ? dashboardTrend.filter(run=>run.series_group===seriesGroup):dashboardTrend;
+  const points=comparable.flatMap((run,index)=>{
+    if(run[metric]==null||!Number.isFinite(Number(run[metric]))) return [];
+    return [{x:index,y:Number(run[metric])*(metric==='error_rate'?100:1),run}];
+  });
+  return {points,count:comparable.length,...trendMetrics[metric]};
+}
+
+function renderDashboardHistoryCharts(overview, role){
+  const picker=document.getElementById('sdInspectRun');
+  if(!picker) return;
+  const latest=dashboardTrend.at(-1);
+  const comparable=dashboardTrend.filter(row=>row.series_group===latest?.series_group);
+  const p95Limit=latest?.p95_limit;
+  const sharedLimit=Number.isFinite(p95Limit)&&comparable.every(row=>row.p95_limit===p95Limit);
+  document.getElementById('sdLatencyLegend').textContent=(role==='viewer'?'p95 purple':'p50 teal · p95 purple · p99 amber')+
+    (sharedLimit?' · p95 limit '+p95Limit+' ms (gray)':'');
+  document.getElementById('sdWorkloadScope').textContent=latest
+    ? comparable.length+' comparable runs · '+(latest.test_name||'Latest matching workload')
+    : 'No matching workload measurements.';
+  picker.max=String(Math.max(0,comparable.length-1));
+  picker.value=picker.max;
+  picker.disabled=comparable.length<2;
+  picker.oninput=()=>{
+    const index=Number(picker.value), run=comparable[index];
+    const note=document.getElementById('sdInspectRunNote');
+    const open=document.getElementById('sdInspectReport');
+    open.disabled=!run?.run_id||run.has_report===false;
+    open.onclick=()=>openSavedReport(run.run_id);
+    const values=[['p50_ms','p50'],['p95_ms','p95'],['p99_ms','p99'],['rps','Throughput'],['target_rps','Target'],['error_rate','Errors']];
+    note.textContent=run?[run.t?new Date(run.t).toLocaleString():null,...values.map(([key,label])=>
+      run[key]==null?null:label+' '+sdFmt(key==='target_rps'?'rps':key,run[key]))].filter(Boolean).join(' · '):'';
+    picker.setAttribute('aria-valuetext',run?.t?new Date(run.t).toLocaleString():'No runs');
+    for(const [id,metrics] of [
+      ['sdLatency',[['p50_ms','#0f6e56'],['p95_ms','#5545bb'],['p99_ms','#9a6412'],
+        ...(sharedLimit?[['p95_limit','#575d68']]:[])]],
+      ['sdThroughput',[['rps','#0f6e56'],['target_rps','#5545bb']]],
+      ['sdErrors',[['error_rate','#b4342b']]],
+    ]){
+      const canvas=document.getElementById(id);
+      canvas.closest('figure').hidden=role==='viewer'&&id!=='sdLatency';
+      _lineChart(canvas,metrics.map(([key,color])=>({
+        color,data:comparable.map((item,x)=>({x,y:item[key]==null?null:item[key]*(key==='error_rate'?100:1)})),
+      })),{domain:[0,Math.max(0,comparable.length-1)],selected:index,axisLabels:['Oldest','Latest']});
+    }
+  };
+  picker.oninput();
+  const outcomes=overview?.outcomes||[];
+  const chart=document.getElementById('sdOutcomes');
+  const keys=['pass','fail','inconclusive'];
+  const dayTotal=day=>keys.reduce((sum,key)=>sum+day[key],0);
+  const max=Math.max(1,...outcomes.map(dayTotal));
+  chart.innerHTML=outcomes.length?'<p class="hint">Pass · Fail · Inconclusive. Select a day to filter the history.</p><div class="dashboard-outcome-scroll">'+
+    outcomes.map(day=>'<button type="button" class="dashboard-outcome-bar" data-outcome-day="'+esc(day.day)+
+      '" aria-label="'+esc(day.day+': '+keys.map(key=>day[key]+' '+key).join(', '))+'"><span class="dashboard-outcome-stack">'+
+      keys.map(key=>'<span class="'+key+'" style="height:'+day[key]/max*100+'%"></span>').join('')+
+      '</span><span>'+esc(day.day.slice(5))+'</span></button>').join('')+'</div>':'<p class="hint">No outcomes in this history.</p>';
+  chart.querySelectorAll('[data-outcome-day]').forEach(button=>{
+    button.onclick=()=>{
+      dashboardOutcomeDay=button.dataset.outcomeDay;
+      document.getElementById('sdFrom').value=dashboardOutcomeDay;
+      document.getElementById('sdTo').value=dashboardOutcomeDay;
+      loadStakeholder();
+    };
+  });
+}
+
+export function refreshDashboardTrend(){
+  const {points,count,label,unit,color}=dashboardTrendPoints();
+  const canvas=document.getElementById('sdTrend');
+  const caption=document.getElementById('sdTrendCaption');
+  canvas.setAttribute('aria-label',label+' across matching runs');
+  _lineChart(canvas,[{data:points,color}]);
+  const isoDate=value=>value?new Date(value).toLocaleDateString():null;
+  const first=isoDate(points[0]?.run.t), last=isoDate(points.at(-1)?.run.t);
+  caption.textContent=points.length
+    ? points.length+' of '+count+' recent runs with measurements'+(first&&last?' · '+first+' to '+last:'')
+    : 'No measurements are available for this metric in the selected history.';
+  document.getElementById('sdTrendData').innerHTML=points.length?'<table><thead><tr><th scope="col">Run date</th><th scope="col">'+esc(label)+' ('+esc(unit)+')</th><th scope="col">Report</th></tr></thead><tbody>'+
+    points.map(({run,y})=>'<tr><td>'+esc(run.t?new Date(run.t).toLocaleString():'Unavailable')+'</td><td>'+esc(Number(y.toFixed(2)))+'</td><td>'+
+      (run.has_report===false||!run.run_id?'Unavailable':'<button class="btn ghost sm" data-trend-run="'+esc(run.run_id)+'">Open report</button>')+'</td></tr>').join('')+
+    '</tbody></table>':'<p class="hint">No trend data available.</p>';
+  document.querySelectorAll('[data-trend-run]').forEach(button=>{
+    button.onclick=()=>openSavedReport(button.dataset.trendRun);
+  });
+}
+
+export function openDashboardTrendPoint(clientX){
+  const {points}=dashboardTrendPoints();
+  if(!points.length) return;
+  const chart=document.getElementById('sdTrend').getBoundingClientRect();
+  const offset=Math.max(0,Math.min(1,(clientX-chart.left-30)/Math.max(1,chart.width-42)));
+  const target=points[0].x+(points.at(-1).x-points[0].x)*offset;
+  const point=points.reduce((closest,current)=>Math.abs(current.x-target)<Math.abs(closest.x-target)?current:closest);
+  if(point.run.run_id&&point.run.has_report!==false) openSavedReport(point.run.run_id);
+}
+
+function renderDashboardAttention(overview){
+  renderDashboardRegression(overview?.regression);
+  const panel=document.getElementById('sdAttention');
+  const run=overview?.attention||overview?.latest;
+  if(!run){
+    panel.innerHTML='<h3>Run to review</h3><p class="muted">No matching saved runs.</p>';
+    return;
+  }
+  const name=run.test_name||run.script_name||'Saved run';
+  const measured=[run.p95_ms!=null?'p95 '+sdFmt('p95_ms',run.p95_ms):null,
+    run.rps!=null?sdFmt('rps',run.rps):null, run.error_rate!=null?'Errors '+sdFmt('error_rate',run.error_rate):null]
+    .filter(Boolean).join(' · ');
+  panel.innerHTML='<div><h3>'+(overview.attention?'Needs attention':'Latest matching run')+'</h3><p class="dashboard-attention-title">'+
+    esc(name)+' '+sdVerdict(run.verdict)+'</p>'+(measured?'<p class="muted">'+esc(measured)+'</p>':'')+'</div>'+
+    (run.has_report===false?'':'<button class="btn ghost sm">Open report</button>');
+  const button=panel.querySelector('button');
+  if(button) button.onclick=()=>openSavedReport(run.run_id);
+}
+
+function renderDashboardRegression(regression){
+  const panel=document.getElementById('sdRegression');
+  panel.hidden=!regression;
+  panel.innerHTML='';
+  if(!regression) return;
+  const {run, baseline_id, changes}=regression;
+  const name=run.test_name||run.script_name||'Saved run';
+  panel.innerHTML='<div><h3>Regression from baseline</h3><p class="dashboard-attention-title">'+
+    esc(name)+' '+sdVerdict(run.verdict)+'</p><ul>'+changes.map(change=>
+      '<li>'+esc(change.label)+' '+esc(change.previous_fmt)+' → '+esc(change.current_fmt)+'</li>'
+    ).join('')+'</ul></div><div class="btnrow"><button class="btn ghost sm">Open regressed run</button>'+
+    '<button class="btn ghost sm">Open baseline</button></div>';
+  const [current, baseline]=panel.querySelectorAll('button');
+  current.onclick=()=>openSavedReport(run.run_id);
+  baseline.onclick=()=>openSavedReport(baseline_id);
+}
+
 async function loadStakeholder(offset=0){
   const request=++dashboardRequest;
   const role=document.getElementById('sdRole').value;
@@ -2046,8 +2442,14 @@ async function loadStakeholder(offset=0){
   const body=document.querySelector('#sdTable tbody');
   const empty=document.getElementById('sdEmpty');
   const tiles=document.getElementById('sdTiles');
-  let runs=[];
+  let runs=[], overview=null;
   const targetField=document.getElementById('sdTarget');
+  const metadataFilters=[['environment',document.getElementById('sdEnvironment')],['release_label',document.getElementById('sdRelease')]];
+  for(const [,field] of metadataFilters){
+    if(!field) continue;
+    field.disabled=role==='viewer';
+    if(field.disabled) field.value='';
+  }
   targetField.disabled=role==='viewer';
   if(targetField.disabled) targetField.value='';
   const from=document.getElementById('sdFrom').value,to=document.getElementById('sdTo').value;
@@ -2055,25 +2457,30 @@ async function loadStakeholder(offset=0){
   dashboardOffset=offset;
   document.getElementById('sdPage').textContent='Loading runs...';
   try{
-    const query=new URLSearchParams({role,limit:'50',offset:String(offset),project_id:currentProject.project_id});
+    const query=new URLSearchParams({role,limit:'50',offset:String(offset),project_id:currentProject.project_id,include_overview:'true'});
     if(document.getElementById('sdTest').value)query.set('plan_id',document.getElementById('sdTest').value);
     if(targetField.value.trim())query.set('target',targetField.value.trim());
     if(document.getElementById('sdVerdict').value)query.set('verdict',document.getElementById('sdVerdict').value);
-    if(from)query.set('since',new Date(from+'T00:00:00').toISOString());
-    if(to){const end=new Date(to+'T00:00:00');end.setDate(end.getDate()+1);query.set('until',end.toISOString());}
+    for(const [key,field] of metadataFilters) if(field?.value.trim()) query.set(key,field.value.trim());
+    const utc=Boolean(from&&from===to&&from===dashboardOutcomeDay);
+    if(from)query.set('since',new Date(from+'T00:00:00'+(utc?'Z':'')).toISOString());
+    if(to){const end=new Date(to+'T00:00:00'+(utc?'Z':''));if(utc)end.setUTCDate(end.getUTCDate()+1);else end.setDate(end.getDate()+1);query.set('until',end.toISOString());}
     const response=await fetch('/api/reporting/runs?'+query);
     if(!response.ok) throw new Error('Runs could not be loaded. Please refresh to try again.');
     const j=await response.json();
     if(request!==dashboardRequest)return;
     runs=j.runs||[];
+    overview=j.overview||null;
     const total=j.total??runs.length;
     document.getElementById('sdPage').textContent=total?(offset+1)+' - '+(offset+runs.length)+' of '+total+' runs':'No matching runs';
     document.getElementById('sdPrev').disabled=offset===0;
     document.getElementById('sdNext').disabled=offset+runs.length>=total;
-  }catch(e){ if(request!==dashboardRequest)return; document.getElementById('sdPage').textContent='Could not load runs'; tiles.innerHTML=''; document.getElementById('sdComparison').textContent='Comparison unavailable. Refresh to retry.'; dashboardRuns=[]; empty.style.display='none'; ['sdTrend','sdErrTrend','sdDonut','sdBars'].forEach(id=>_lineChart(document.getElementById(id),[])); document.getElementById('sdPrev').disabled=true;document.getElementById('sdNext').disabled=true; body.innerHTML='<tr><td class="muted">Could not load: '+esc(e.message)+'</td></tr>'; return; }
+  }catch(e){ if(request!==dashboardRequest)return; document.getElementById('sdPage').textContent='Could not load runs'; tiles.innerHTML=''; document.getElementById('sdComparison').textContent='Comparison unavailable. Refresh to retry.'; dashboardRuns=[]; empty.style.display='none'; dashboardTrend=[]; renderDashboardHistoryCharts(null,role); refreshDashboardTrend(); renderDashboardAttention(null); document.getElementById('sdPrev').disabled=true;document.getElementById('sdNext').disabled=true; body.innerHTML='<tr><td class="muted">Could not load: '+esc(e.message)+'</td></tr>'; return; }
 
   if(request!==dashboardRequest) return;
-  document.getElementById('sdFilterNote').textContent='Filters search all saved runs. Summaries and charts show this page.';
+  document.getElementById('sdFilterNote').textContent=overview
+    ? 'Totals include all matching saved runs. Trends show up to 120 recent matches.'
+    : 'History is paginated. Full-history summary is unavailable.';
   dashboardRuns=runs;
   populateRunComparison();
   const present = runs.length ? new Set(Object.keys(runs[0])) : new Set();
@@ -2095,44 +2502,42 @@ async function loadStakeholder(offset=0){
     });
   }
 
-  const total=runs.length;
-  const passes=runs.filter(r=>r.verdict==='pass').length;
-  const p95s=runs.map(r=>r.p95_ms).filter(v=>v!=null);
-  const worst=p95s.length?Math.max(...p95s):null;
+  const total=overview?.total??0;
+  const passes=overview?.passed??0;
+  const worst=overview?.worst_p95_ms;
   tiles.innerHTML=
-    '<div class="tile"><div class="v">'+total+'</div><div class="l">Runs</div></div>'+
-    '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total):0)+'%</div><div class="l">Pass rate</div></div>'+
+    '<div class="tile"><div class="v">'+(overview?total.toLocaleString():'—')+'</div><div class="l">Matching runs</div></div>'+
+    '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total)+'%':'—')+'</div><div class="l">Pass rate</div></div>'+
+    '<div class="tile"><div class="v">'+(overview?overview.requests.toLocaleString():'—')+'</div><div class="l">Total requests</div></div>'+
     '<div class="tile"><div class="v">'+(worst!=null?worst.toFixed(2)+' ms':'—')+'</div><div class="l">Worst p95</div></div>';
 
-  // extra charts
-  const passes2=runs.filter(r=>r.verdict==='pass').length;
-  const fails=runs.filter(r=>r.verdict==='fail').length;
-  const inconc=runs.filter(r=>r.verdict==='inconclusive').length;
-  _donut(document.getElementById('sdDonut'),[
-    {l:'Pass',v:passes2,c:'#0f7a5f'},{l:'Fail',v:fails,c:'#b4342b'},{l:'Inconc.',v:inconc,c:'#9a6412'}]);
-  // latency bars from the most recent run (first row, since newest-first)
-  const latest=runs[0]||{};
-  _bars(document.getElementById('sdBars'),[
-    {l:'p50',v:latest.p50_ms!=null?latest.p50_ms:null,c:'#2f7d5b'},
-    {l:'p95',v:latest.p95_ms!=null?latest.p95_ms:null,c:'#9a6412'},
-    {l:'p99',v:latest.p99_ms!=null?latest.p99_ms:null,c:'#b4342b'}]);
-  const chronological=[...runs].reverse();
-  _lineChart(document.getElementById('sdTrend'),[{data:chronological.map((r,i)=>({x:i,y:r.p95_ms})),color:'#9a6412'}]);
-  _lineChart(document.getElementById('sdErrTrend'),[{data:chronological.map((r,i)=>({x:i,y:r.error_rate==null?null:r.error_rate*100})),color:'#b4342b'}]);
+  renderDashboardAttention(overview);
+  const testFilter=document.getElementById('sdTest');
+  const verdictFilter=document.getElementById('sdVerdict');
+  document.getElementById('sdActiveScope').textContent=[
+    testFilter.value?testFilter.selectedOptions[0].textContent:'All tests',
+    from&&from===to&&from===dashboardOutcomeDay?from+' (UTC)':from||to?(from||'Any start')+' to '+(to||'Today'):'All saved dates',
+    verdictFilter.value?verdictFilter.selectedOptions[0].textContent:null,
+    targetField.value.trim()||null,
+    ...metadataFilters.map(([,field])=>field?.value.trim()),
+  ].filter(Boolean).join(' · ');
+  dashboardTrend=overview?.trend||[];
+  renderDashboardHistoryCharts(overview,role);
+  const metricPicker=document.getElementById('sdTrendMetric');
+  for(const option of metricPicker.options){
+    option.disabled=role==='viewer'&&option.value!=='p95_ms';
+  }
+  if(metricPicker.selectedOptions[0]?.disabled) metricPicker.value='p95_ms';
+  refreshDashboardTrend();
 }
-async function sdDrawTrend(){
-  const c=document.getElementById('sdTrend');
-  let p95=[], err=[];
-  try{ const j=await (await fetch('/api/reporting/trend?metric=p95_ms&limit=30')).json(); p95=j.points||[]; }catch(e){}
-  try{ const j=await (await fetch('/api/reporting/trend?metric=error_rate&limit=30')).json(); err=j.points||[]; }catch(e){}
-  if(c) _lineChart(c,[{data:p95.map((p,i)=>({x:i,y:p.value})),color:'#9a6412'}]);
-  const ce=document.getElementById('sdErrTrend');
-  if(ce) _lineChart(ce,[{data:err.map((p,i)=>({x:i,y:(p.value||0)*100})),color:'#b4342b'}]);
-}
-
+async function sdDrawTrend(){ refreshDashboardTrend(); }
 
 function resetDashboardFilters(){
-  ['sdTest','sdTarget','sdVerdict','sdFrom','sdTo'].forEach(id=>document.getElementById(id).value='');
+  dashboardOutcomeDay='';
+  ['sdTest','sdTarget','sdVerdict','sdFrom','sdTo','sdEnvironment','sdRelease'].forEach(id=>{
+    const field=document.getElementById(id);
+    if(field) field.value='';
+  });
   loadStakeholder();
 }
 function populateRunComparison(){
@@ -2149,10 +2554,12 @@ function renderRunComparison(){
   const b=dashboardRuns.find(r=>r.run_id===document.getElementById('sdCompareB').value);
   if(!a||!b||a.run_id===b.run_id){host.textContent='Select two different runs to compare.';return;}
   const metrics=[['requests','Requests'],['error_rate','Errors'],['p95_ms','p95 latency'],['p99_ms','p99 latency'],['avg_ms','Average latency'],['rps','Throughput']].filter(([k])=>k in a&&k in b);
-  host.innerHTML=(a.workload_version&&b.workload_version&&a.workload_version!==b.workload_version?'<p class="note warn">Different workload versions: these runs may use different loads, thresholds or data.</p>':'')+(a.target&&b.target&&a.target!==b.target?'<p class="note warn">These runs use different targets.</p>':'')+'<table><thead><tr><th>Metric</th><th>Baseline</th><th>Comparison</th><th>Change</th></tr></thead><tbody>'+metrics.map(([k,label])=>{
+  host.innerHTML=(a.workload_version&&b.workload_version&&a.workload_version!==b.workload_version?'<p class="note warn">Different workload versions: these runs may use different loads, thresholds or data.</p>':'')+(a.target&&b.target&&a.target!==b.target?'<p class="note warn">These runs use different targets.</p>':'')+(a.environment&&b.environment&&a.environment!==b.environment?'<p class="note warn">These runs use different environments.</p>':'')+'<table><thead><tr><th>Metric</th><th>Baseline</th><th>Comparison</th><th>Change</th></tr></thead><tbody>'+metrics.map(([k,label])=>{
     let change='Unavailable';
     if(a[k]!=null&&b[k]!=null){const delta=Number(b[k])-Number(a[k]);change=(delta>0?'+':'')+(k==='error_rate'?(delta*100).toFixed(2)+' percentage points':delta.toFixed(2)+(k.endsWith('_ms')?' ms':k==='rps'?'/s':''));}
-    return '<tr><td>'+label+'</td><td>'+esc(sdFmt(k,a[k]))+'</td><td>'+esc(sdFmt(k,b[k]))+'</td><td>'+change+'</td></tr>';
+    const relative=a[k]&&b[k]!=null?(Number(b[k])-Number(a[k]))/Math.abs(a[k])*100:null;
+    return '<tr><td>'+label+'</td><td>'+esc(sdFmt(k,a[k]))+'</td><td>'+esc(sdFmt(k,b[k]))+'</td><td>'+change+
+      (relative==null?'':' ('+(relative>0?'+':'')+relative.toFixed(1)+'%)')+'</td></tr>';
   }).join('')+'</tbody></table><p class="muted">Lower latency and errors are better; higher throughput is better. Compare similar load profiles.</p>';
 }
 async function rerunReport(){
@@ -2174,11 +2581,15 @@ async function rerunReport(){
 
 /* ---------- runs & reports history ---------- */
 async function loadRuns(){
+  const projectId=currentProject?.project_id;
+  const table=document.querySelector('#runsTable tbody');
+  table.replaceChildren();
   try{
     const response=await fetch('/api/runs?limit=50'+projectQuery()); if(!response.ok)throw Error('Request failed ('+response.status+')'); const j=await response.json();
+    if(currentProject?.project_id!==projectId)return;
     const badge=(v)=>{const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
       return '<span class="pill '+m[0]+'">'+m[1]+'</span>';};
-    document.querySelector('#runsTable tbody').innerHTML=(j.runs||[]).map(r=>
+    table.innerHTML=(j.runs||[]).map(r=>
       `<tr><td>${new Date(r.created_at).toLocaleString()}</td>`+
       `<td>${badge(r.verdict)}</td>`+
       `<td>${esc(r.target||'')}</td><td><b>${esc(r.test_name||r.goal||'Unnamed test')}</b><br>${esc(r.script_name||'Not recorded')}<br><span class="muted">${esc(r.mode||'full')} | ${esc(r.endpoint_summary||'')}</span></td>`+
@@ -2187,7 +2598,7 @@ async function loadRuns(){
       `<td>${(r.p95_ms||0)} ms</td>`+
       `<td>${r.has_report?`<button class="btn sec sm" onclick="openSavedReport('${r.run_id}')">Open report</button>`:''}</td></tr>`
     ).join('') || '<tr><td colspan="8" class="muted">No runs yet — run a test to see it here.</td></tr>';
-  }catch(e){showError('Run history could not be loaded: '+e.message);}
+  }catch(e){if(currentProject?.project_id===projectId)showError('Run history could not be loaded: '+e.message);}
 }
 async function openSavedReport(id){
   try{
@@ -2199,15 +2610,90 @@ async function openSavedReport(id){
 }
 
 async function loadPlans(){
+  const project=currentProject;
+  const status=document.getElementById('projectTestListStatus');
   try{
-  if(!currentProject)return;
-  const response=await fetch('/api/plans?project_id='+encodeURIComponent(currentProject.project_id));if(!response.ok)throw Error('Plans could not be loaded.');
+  if(!project)return;
+  if(status){
+    status.textContent='Loading project tests…';
+    document.querySelector('#plansTable tbody').replaceChildren();
+    renderProjectFramework(project,[]);
+  }
+  const response=await fetch('/api/plans?project_id='+encodeURIComponent(project.project_id));if(!response.ok)throw Error('Plans could not be loaded.');
   const j=await response.json();
+  if(currentProject?.project_id!==project.project_id) return;
+  if(status){
+    renderProjectTests(j.plans||[]);
+    renderProjectFramework(project,j.plans||[]);
+    return;
+  }
   document.querySelector('#plansTable tbody').innerHTML=j.plans.map(p=>
     `<tr class="histrow"><td>${new Date(p.created_at).toLocaleString()}</td><td>${esc(p.target)}</td>
      <td>${esc(p.goal||'')}</td><td>${p.script_count}</td>
      <td><button class="btn ghost sm" onclick="openPlan('${p.plan_id}')">Open</button></td></tr>`).join('');
-  }catch(e){showError(e.message);}
+  }catch(e){
+    if(currentProject?.project_id!==project?.project_id)return;
+    if(status) status.textContent=e.message;
+    else showError(e.message);
+  }
+}
+
+function renderProjectTests(plans){
+  const search=document.getElementById('projectTestSearch');
+  const status=document.getElementById('projectTestListStatus');
+  const body=document.querySelector('#plansTable tbody');
+  const render=()=>{
+    const query=search.value.trim().toLowerCase();
+    const matches=plans.filter(plan=>[plan.test_name,plan.goal,plan.target]
+      .some(value=>String(value||'').toLowerCase().includes(query)));
+    status.textContent=!plans.length?'No saved tests yet. Create a test or import from Git.':
+      matches.length+' of '+plans.length+' saved tests';
+    body.innerHTML=matches.map(plan=>'<tr><td><strong>'+esc(plan.test_name||plan.goal||'Saved test')+
+      '</strong><span class="project-test-target">'+esc(plan.target||'')+'</span>'+
+      (plan.goal&&plan.goal!==plan.test_name?'<small>'+esc(plan.goal)+'</small>':'')+
+      '</td><td>'+(plan.script_count?'<button class="btn ghost sm" data-version-test="'+esc(plan.plan_id)+'">View history</button>':'—')+'</td><td><button class="btn ghost sm" data-open-test="'+
+      esc(plan.plan_id)+'">Open</button></td></tr>').join('');
+    body.querySelectorAll('[data-open-test]').forEach(button=>button.onclick=()=>openPlan(button.dataset.openTest));
+    body.querySelectorAll('[data-version-test]').forEach(button=>{
+      button.onclick=async()=>{
+        await openPlan(button.dataset.versionTest);
+        if(currentPlanId===button.dataset.versionTest&&currentScriptId){
+          const history=document.getElementById('scriptVersionHistory');
+          history.open=true;
+          history.querySelector('summary').focus();
+        }
+      };
+    });
+  };
+  search.oninput=render;
+  render();
+}
+
+function frameworkTestFolder(name){
+  return (name||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+}
+
+function renderProjectFramework(project,plans){
+  document.getElementById('libraryProjectName').textContent=project.name;
+  document.getElementById('libraryProjectDescription').textContent=project.description||'';
+  const config=[['Repository',project.repo_url||'Set a repository in Project settings'],
+    ['Branch',project.branch||'main'],['Framework folder',project.framework_name||'Configure in Project settings']];
+  document.getElementById('libraryFrameworkConfig').innerHTML=config.map(([label,value])=>
+    '<div><dt>'+label+'</dt><dd>'+esc(value)+'</dd></div>').join('');
+  const folder=project.framework_name||'perfagent-tests';
+  const tests=plans.map(plan=>{
+    const test=frameworkTestFolder(plan.test_name||plan.goal).slice(0,60).replace(/-$/,'');
+    return test?'<li><details><summary>'+esc(test)+'/</summary><ul><li>loadtest.js</li><li>plan.json</li><li>test.json</li></ul></details></li>':'';
+  }).join('');
+  const ciFiles={jenkins:'Jenkinsfile',azure:'azure-pipelines.yml',gitlab:'gitlab-ci.yml'};
+  const chosen=project.ci||['jenkins'];
+  const ci=chosen.filter(key=>ciFiles[key]).map(key=>'<li>'+ciFiles[key]+'</li>').join('');
+  document.getElementById('libraryFrameworkTree').innerHTML='<details open><summary>'+esc(folder)+
+    '/</summary><ul><li><details open><summary>tests/</summary><ul>'+(tests||'<li>No saved tests</li>')+
+    '</ul></details></li><li><details><summary>scripts/</summary><ul><li>run-tests.sh</li><li>run-tests.ps1</li></ul></details></li>'+
+    (ci?'<li><details><summary>ci/</summary><ul>'+ci+'</ul></details></li>':'')+
+    '<li>results/</li><li>perfagent.json</li><li>README.md</li></ul></details>'+
+    (chosen.includes('github')?'<p>Repository workflow · .github/workflows/perf-'+esc(folder)+'.yml</p>':'');
 }
 async function openPlan(id){
   document.getElementById('importNote').style.display='none';
@@ -2217,7 +2703,7 @@ async function openPlan(id){
   document.getElementById('guardrailBadge').style.display='none';
   document.getElementById('planEval').style.display='none';
   document.getElementById('planMeta').style.display='inline-flex';
-  document.getElementById('planMeta').textContent='loaded · '+j.scripts.length+' script(s)';
+  document.getElementById('planMeta').textContent='Saved plan';
 
   // If this plan already has a generated script, load the latest one so the user can
   // go straight to the Script / Run steps without regenerating.
@@ -2234,12 +2720,67 @@ async function openPlan(id){
       document.getElementById('validateBtn').disabled=false;
       document.getElementById('preflightBtn').disabled=false;
       setGitExport(latest.tool==='k6' && !String(j.goal||'').startsWith('Uploaded script'), String(j.goal||'').startsWith('Uploaded script')?'Uploaded scripts can\'t be saved to Git yet — only scripts generated from a plan.':'');
-      document.getElementById('scriptMeta').textContent=`${latest.filename} (${latest.tool}) — from saved plan ${id.slice(0,8)}`;
+      document.getElementById('scriptMeta').textContent=`${latest.filename} (${latest.tool}) · Latest script version`;
       const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=latest.tool;
     }catch(e){ /* fall back to review step */ }
   }
   // land on the Script step if a script is ready, else the Review step
   goStep(currentScriptId ? 3 : 2);
+}
+
+let scriptHistoryRequest=0;
+function loadScriptHistory(){
+  const panel=document.getElementById('scriptVersionHistory');
+  if(!panel) return;
+  const list=document.getElementById('scriptVersionList');
+  const preview=document.getElementById('scriptVersionPreview');
+  const planId=currentPlanId;
+  if(panel.dataset.planId!==planId){
+    panel.open=false;
+    panel.dataset.planId=planId||'';
+  }
+  scriptHistoryRequest++;
+  const load=async()=>{
+    const request=++scriptHistoryRequest;
+    list.textContent='Loading versions…';
+    preview.hidden=true;
+    preview.textContent='';
+    try{
+      const plan=planId?await requestJson('/api/plans/'+encodeURIComponent(planId)):null;
+      if(planId!==currentPlanId||request!==scriptHistoryRequest)return;
+      const versions=plan?.scripts||[];
+      const full=versions.filter(script=>script.mode!=='smoke');
+      const latest=full.at(-1)?.script_id;
+      const render=(entries,smoke)=>entries.map((script,index)=>{
+        const url='/api/scripts/'+encodeURIComponent(script.script_id)+'/download';
+        const kind={generated:'Generated',edited:'Edited',imported:'Imported',saved:'Saved'}[script.source]||'Saved';
+        const label=smoke?'Smoke run artifact':'Version '+(entries.length-index)+(script.script_id===latest?' · Latest':'');
+        const date=script.created_at?new Date(script.created_at).toLocaleString():'Date unavailable';
+        return '<li><div><strong>'+esc(label)+'</strong><span>'+esc([script.filename,kind,date].join(' · '))+
+          '</span></div><div class="btnrow"><button type="button" class="btn ghost sm" data-preview-script="'+esc(url)+
+          '">View script</button><a class="btn ghost sm" href="'+esc(url)+'" download>Download</a></div></li>';
+      }).join('');
+      list.innerHTML=full.length?'<ol class="script-versions">'+render([...full].reverse(),false)+'</ol>':'<p>No saved script versions.</p>';
+      const smoke=versions.filter(script=>script.mode==='smoke');
+      if(smoke.length) list.innerHTML+='<details><summary>Smoke run artifacts ('+smoke.length+
+        ')</summary><ul class="script-versions">'+render(smoke.reverse(),true)+'</ul></details>';
+      list.querySelectorAll('[data-preview-script]').forEach(button=>button.onclick=async()=>{
+        const selection=++scriptHistoryRequest;
+        preview.hidden=false;
+        preview.textContent='Loading script…';
+        try{
+          const response=await fetch(button.dataset.previewScript);
+          if(!response.ok) throw Error('This script could not be loaded.');
+          const content=await response.text();
+          if(planId===currentPlanId&&selection===scriptHistoryRequest) preview.textContent=content;
+        }catch(e){
+          if(planId===currentPlanId&&selection===scriptHistoryRequest) preview.textContent=e.message;
+        }
+      });
+    }catch(e){if(planId===currentPlanId&&request===scriptHistoryRequest) list.textContent=e.message;}
+  };
+  panel.ontoggle=()=>{if(panel.open) load();};
+  if(panel.open) load();
 }
 
 
@@ -2270,9 +2811,11 @@ async function importEndpoints(){
 /* ---------- custom headers ---------- */
 function addHeader(k="",v=""){
   const d=document.createElement('div'); d.className='endpoint'; d.style.gridTemplateColumns='1fr 1.3fr 34px';
-  d.innerHTML=`<input placeholder="Header name e.g. Authorization" value="${esc(k)}"/>
-    <input placeholder="Value e.g. Bearer xxx" value="${esc(v)}"/>
+  d.innerHTML=`<input aria-label="Header name" placeholder="Header name e.g. Authorization" value="${esc(k)}"/>
+    <input aria-label="Header value" type="password" placeholder="Header value" value="${esc(v)}"/>
     <button class="iconbtn" onclick="this.parentElement.remove();renderConnCount()">×</button>`;
+  d.addEventListener('change',renderConnCount);
+  d.addEventListener('input',renderSummary);
   document.getElementById('headersList').appendChild(d);
   if(planModel) renderConnCount();
 }
@@ -2447,7 +2990,7 @@ const VIEW_META={
   admin:['Administrator overview','Run and workload summaries across every project'],
   create:['Test workspace','Describe, review, verify, and run your workload.'],
   dashboard:['Performance dashboard','Review workload trends, verdicts, and run comparisons.'],
-  history:['Test library','Open saved tests and finished runs.'],
+  history:['Project workspace','Manage this project’s tests, Git framework, and reports.'],
   monitoring:['Monitoring','Your Grafana, Datadog and other dashboards in one place'],
   activity:['Activity','Audit log and AI call traces'],
 };
@@ -2567,7 +3110,7 @@ function _bars(canvas, bars){
 
 function projectQuery(){return currentProject?'&project_id='+encodeURIComponent(currentProject.project_id):'';}
 function projectGitDefaults(){
-  return currentProject?{repo_url:currentProject.repo_url||'',branch:currentProject.branch||'main',framework:currentProject.framework_name||'',ci:currentProject.ci||['jenkins'],test:(planModel?.test_name||newTestName||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}:{};
+  return currentProject?{repo_url:currentProject.repo_url||'',branch:currentProject.branch||'main',framework:currentProject.framework_name||'',ci:currentProject.ci||['jenkins'],test:frameworkTestFolder(planModel?.test_name||newTestName)}:{};
 }
 async function projectApi(url,options){
   return requestJson(url,options);
@@ -2602,9 +3145,9 @@ function selectProject(id){
   document.getElementById('projectPicker').value=currentProject?.project_id||'';
   currentPlanId=null;currentScriptId=null;planModel=null;newTestName='';
   document.getElementById('newTestForm').style.display='none';
-  renderProjectContext();showView('projects');
-
-publishRoute(currentProject ? '/projects/' + encodeURIComponent(currentProject.project_id) : '/projects');
+  const search=document.getElementById('projectTestSearch');
+  if(search) search.value='';
+  renderProjectContext();showView(currentProject&&search?'history':'projects');
 }
 function editProject(project=null){
   editingProjectId=project?.project_id||null;showView('projects');
@@ -2645,6 +3188,8 @@ function startNamedTest(){
   document.getElementById('target').value=currentProject.target_url||'';
   document.getElementById('draftP95').value='';
   document.getElementById('draftErrorRate').value='';
+  document.getElementById('draftSchedule').value='users';
+  for(const id of ['draftRequestRate','draftRampUp','draftHold','draftRampDown']) document.getElementById(id).value='';
   document.getElementById('endpoints').replaceChildren();
   addEndpoint();
   document.getElementById('goal').value=document.getElementById('newTestPurpose').value.trim();
@@ -2665,9 +3210,8 @@ function startProjectImport(mode){
 
 publishRoute('/projects/' + encodeURIComponent(currentProject.project_id) + '/import/' + mode);
 }
-async function attachCurrentTest(id){
-  try{await projectApi('/api/plans/'+id+'/project',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:currentProject.project_id,test_name:planModel?.test_name||newTestName})});}
-  catch(e){showError(e.message);}
+async function attachCurrentTest(id,projectId,name){
+  return projectApi('/api/plans/'+id+'/project',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId,test_name:name})});
 }
 async function loadProjectSummary(){
   if(!currentProject)return;
@@ -2730,8 +3274,9 @@ function setTrafficRate(){
   if(!planModel)return;
   const raw=document.getElementById('pfArrival').value,rate=Number(raw),vus=Number(document.getElementById('pfArrivalVus').value);
   if((raw&&(!Number.isInteger(rate)||rate<1||rate>1000000))||!Number.isInteger(vus)||vus<1||vus>1000000){showError('Use positive whole numbers up to 1,000,000 for iteration rate and preallocated users.');return;}
+  if(planModel.load_profile.target_request_rate!=null) planModel.load_profile.target_request_rate=raw?rate:null;
   planModel.load_profile.arrival_rate=raw?rate:null;
-  planModel.load_profile.pre_allocated_vus=vus;renderRawFromModel();
+  planModel.load_profile.pre_allocated_vus=vus;renderRawFromModel();renderSummary();
 }
 function environmentPresets(){try{return JSON.parse(localStorage.getItem('perfagent.environments')||'{}');}catch(e){return {};}}
 function renderEnvironmentPresets(){
@@ -2769,11 +3314,14 @@ function renderReportDetails(j){
     if(metric.endsWith('_ms')) return value+' ms';
     return value;
   };
-  const rules=(j.verdict?.checks||[]).map(c=>'<tr><td>'+esc(c.metric)+'</td><td>'+esc(c.target==null?'':c.op+' '+formatThreshold(c.metric,c.target))+'</td><td>'+esc(formatThreshold(c.metric,c.actual))+'</td><td>'+(c.passed===true?'Pass':c.passed===false?'Fail':'Inconclusive')+'</td></tr>').join('');
+  const thresholdList=j.evidence?.thresholds||[...(j.verdict?.checks||[])].sort((a,b)=>
+    (a.passed===false?0:a.passed==null?1:2)-(b.passed===false?0:b.passed==null?1:2));
+  const rules=thresholdList.map(c=>'<tr><td>'+esc(c.metric)+'</td><td>'+esc(c.target==null?'':c.op+' '+formatThreshold(c.metric,c.target))+'</td><td>'+esc(formatThreshold(c.metric,c.actual))+'</td><td>'+(c.passed===true?'Pass':c.passed===false?'Fail':'Inconclusive')+'</td></tr>').join('');
   const measurements=[
     [lat.samples,'latency samples'], [snap.iterations,'completed iterations'],
     [snap.iterations_per_second,'achieved iterations/s'], [snap.dropped_iterations,'dropped iterations'],
-    [x.arrival_rate,'requested iterations/s'], [snap.observed_peak_vus,'observed peak VUs'],
+    [x.target_request_rate,'target requests/s'], [x.target_request_rate?null:x.arrival_rate,'requested iterations/s'],
+    [snap.observed_peak_vus,'observed peak VUs'], [snap.bytes_sent,'bytes sent'], [snap.bytes_received,'bytes received'],
   ].filter(([value])=>value!=null).map(([value,label])=>esc(value)+' '+label).join(' · ');
   const journeyRows=(snap.per_journey||[]).map(journey=>'<tr>'+
     [journey.name,journey.requests,journey.failed,journey.iterations,journey.dropped_iterations,journey.checks_failed]
@@ -2781,23 +3329,81 @@ function renderReportDetails(j){
   const journeyTable=journeyRows?'<h3>Journey results</h3><div class="table-scroll"><table><thead><tr><th scope="col">Journey</th><th scope="col">Requests</th><th scope="col">HTTP failures</th><th scope="col">Iterations</th><th scope="col">Dropped iterations</th><th scope="col">Failed checks</th></tr></thead><tbody>'+journeyRows+'</tbody></table></div>':'';
   const endpointRows=endpoints.slice(0,10).map(endpoint=>{
     const statuses=Object.entries(endpoint.status_codes||{}).map(([status,count])=>status+' × '+count).join(', ');
-    return '<tr>'+[endpoint.name,endpoint.requests,endpoint.failed,statuses||'Unavailable',endpoint.p95_ms+' ms']
+    return '<tr>'+[endpoint.name,endpoint.requests,endpoint.failed,endpoint.checks_failed??'Unavailable',statuses||'Unavailable',formatThreshold('p95_ms',endpoint.p95_ms)]
       .map(value=>'<td>'+esc(value)+'</td>').join('')+'</tr>';
   }).join('');
-  const partial=j.status&&j.status!=='finished'?'<p class="note warn">The run ended early. This report shows partial measurements.</p>':'';
-  document.getElementById('reportDetails').innerHTML=`
-    <h2>Measured workload</h2>
-    <p>${measurements||'No workload measurements are available for this run.'}</p>${partial}
-    <h3>Threshold results</h3>
+  const phaseRows=(snap.per_endpoint||[]).flatMap(endpoint=>Object.entries(endpoint.timing_phases||{}).map(([phase,values])=>
+    '<tr>'+[endpoint.name,phase.replaceAll('_',' '),values.avg_ms,values.p95_ms]
+      .map(value=>'<td>'+esc(value??'Unavailable')+'</td>').join('')+'</tr>'
+  )).join('');
+  const timing=phaseRows?`<details class="report-timings"><summary>HTTP timing phases</summary>
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">Endpoint</th><th scope="col">Phase</th><th scope="col">Average (ms)</th><th scope="col">p95 (ms)</th></tr></thead>
+      <tbody>${phaseRows}</tbody>
+    </table></div></details>`:'';
+  document.getElementById('reportHighlights').innerHTML=`
+    <h2>${thresholdList.some(check=>check.passed===false)?'Thresholds that need attention':'Threshold results'}</h2>
     <div class="table-scroll"><table>
       <thead><tr><th scope="col">Metric</th><th scope="col">Rule</th><th scope="col">Measured</th><th scope="col">Result</th></tr></thead>
       <tbody>${rules||'<tr><td colspan="4">No evaluated thresholds were recorded for this run.</td></tr>'}</tbody>
-    </table></div>
-    <h3>Slowest endpoints</h3>
+    </table></div>`;
+  document.getElementById('reportDetails').innerHTML=`
+    <h3>Measured workload</h3>
+    <p>${measurements||'No workload measurements are available for this run.'}</p>
+    <h3>Endpoint ranking</h3>
+    ${endpoints.length?'<label for="reportEndpointMetric">Rank by</label> <select id="reportEndpointMetric"><option value="p95_ms">p95 latency</option><option value="failed">HTTP failures</option><option value="checks_failed">Failed response checks</option></select><ol id="reportEndpointRanking" class="report-endpoint-ranking"></ol>':''}
+    <h3>Endpoint measurements</h3>
     <div class="table-scroll"><table>
-      <thead><tr><th scope="col">Endpoint</th><th scope="col">Requests</th><th scope="col">HTTP failures</th><th scope="col">HTTP status counts</th><th scope="col">p95</th></tr></thead>
-      <tbody>${endpointRows||'<tr><td colspan="5">No endpoint measurements were recorded.</td></tr>'}</tbody>
-    </table></div>${journeyTable}`;
+      <thead><tr><th scope="col">Endpoint</th><th scope="col">Requests</th><th scope="col">HTTP failures</th><th scope="col">Failed response checks</th><th scope="col">HTTP status counts</th><th scope="col">p95</th></tr></thead>
+      <tbody>${endpointRows||'<tr><td colspan="6">No endpoint measurements were recorded.</td></tr>'}</tbody>
+    </table></div>${journeyTable}${timing}`;
+  const selector=document.getElementById('reportEndpointMetric');
+  if(selector){
+    const ranking=document.getElementById('reportEndpointRanking');
+    const renderRanking=()=>{
+      const key=selector.value;
+      const ranked=endpoints.filter(endpoint=>Number.isFinite(endpoint[key]))
+        .sort((a,b)=>b[key]-a[key]).slice(0,10);
+      const maximum=ranked[0]?.[key]||1;
+      ranking.innerHTML=ranked.map(endpoint=>'<li><div><span>'+esc(endpoint.name)+'</span><strong>'+
+        esc(endpoint[key]+(key==='p95_ms'?' ms':''))+'</strong></div><meter aria-label="'+esc(endpoint.name)+
+        '" min="0" max="'+maximum+'" value="'+endpoint[key]+'"></meter></li>').join('')||
+        '<li>No endpoint measurements for this metric.</li>';
+    };
+    selector.onchange=renderRanking;
+    renderRanking();
+  }
+}
+
+function renderReportEvidenceSummary(report){
+  const panel=document.getElementById('reportEvidenceSummary');
+  if(!panel) return;
+  const checks=report.evidence?.thresholds||report.verdict?.checks||[];
+  const failures=checks.filter(check=>check.passed===false);
+  const baseline=report.baseline?.deltas?.find(delta=>delta.direction==='worse'&&delta.previous_fmt&&delta.current_fmt);
+  const endpoint=[...(report.snapshot?.per_endpoint||[])].filter(item=>item.failed>0).sort((a,b)=>b.failed-a.failed)[0];
+  const items=[];
+  if(failures.length) items.push({
+    title:failures.length+' breached '+(failures.length===1?'threshold':'thresholds'),
+    text:failures.map(check=>check.metric==='p95_ms'?'p95 latency':check.metric==='error_rate'?'Error rate':check.metric).join(', '),
+    destination:'reportHighlights',
+  });
+  if(baseline) items.push({title:'Worse than baseline',text:baseline.label+' '+baseline.previous_fmt+' → '+baseline.current_fmt,destination:'reportDiagnosisDetails'});
+  if(endpoint) items.push({title:'Most HTTP failures',text:endpoint.name+' · '+endpoint.failed,destination:'reportEndpointDetails'});
+  if(!items.length&&checks.length&&checks.every(check=>check.passed===true)){
+    items.push({title:checks.length+' of '+checks.length+' thresholds passed',text:'View the measured values and their limits',destination:'reportHighlights'});
+  }
+  panel.hidden=!items.length;
+  panel.innerHTML=items.length?'<h3>Key evidence</h3>'+items.map(({title,text,destination})=>
+    '<button type="button" data-report-evidence="'+destination+'"><strong>'+esc(title)+'</strong><span>'+esc(text)+'</span></button>').join(''):'';
+  panel.querySelectorAll('[data-report-evidence]').forEach(button=>{
+    button.onclick=()=>{
+      const destination=document.getElementById(button.dataset.reportEvidence);
+      if(destination instanceof HTMLDetailsElement) destination.open=true;
+      destination.tabIndex=-1;
+      destination.focus();
+    };
+  });
 }
 
 /* ---------- init ---------- */
@@ -3203,7 +3809,7 @@ export async function applyRoute(path){
     switch(route.kind){
       case 'projects':showView('projects');break;
       case 'new-project':editProject();break;
-      case 'project':showView('projects');break;
+      case 'project':showView('history');break;
       case 'settings':editProject(currentProject);break;
       case 'new-test':{
         showNewTestForm();

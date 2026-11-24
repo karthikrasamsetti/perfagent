@@ -23,6 +23,8 @@ const errorRate = new Rate('errors');
 {{ header_decls }}
 {% endif %}
 export const options = {
+{% if request_rate %}  maxRedirects: 0,
+{% endif %}
   scenarios: {
 {% for scenario in scenarios %}
     {{ scenario.key }}: {

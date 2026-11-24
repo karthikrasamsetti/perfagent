@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from math import isfinite
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from perfagent.contracts.load_model import Assertion, HttpMethod, LoadProfileType, Threshold
+from perfagent.contracts.load_model import Assertion, HttpMethod, LoadProfileType, Stage, Threshold
 
 
 class EndpointSpec(BaseModel):
@@ -40,6 +40,23 @@ class PlanRequest(BaseModel):
     environment: str = ""
     insecure_tls: bool = False
     thresholds: list[Threshold] | None = None
+
+    target_request_rate: int | None = Field(default=None, ge=1, le=1_000_000)
+    stages: list[Stage] | None = Field(default=None, min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_workload(self) -> "PlanRequest":
+        if self.target_request_rate is not None:
+            if len(self.endpoints) != 1:
+                raise ValueError("A request-rate target requires exactly one endpoint.")
+            if self.stages is not None or self.profile_type != LoadProfileType.RAMP:
+                raise ValueError("A constant request-rate target uses a duration instead of VU stages.")
+        if self.stages is not None:
+            if sum(stage.duration_seconds for stage in self.stages) != self.duration_seconds:
+                raise ValueError("Stage durations must add up to the total duration.")
+            if max(stage.target_users for stage in self.stages) != self.max_users:
+                raise ValueError("The largest stage target must equal the requested peak users.")
+        return self
 
     @field_validator("thresholds")
     @classmethod

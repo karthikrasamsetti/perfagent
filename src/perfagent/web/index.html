@@ -2711,7 +2711,7 @@ function renderJenkinsResults(results){
       <div class="tile"><div class="v">${fmt(r.max_ms,' ms')}</div><div class="l">Max</div></div>
     </div>
     ${r.thresholds.length?'<table><thead><tr><th>Metric</th><th>Threshold</th><th>Result</th></tr></thead><tbody>'+
-      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed?'pass':'fail'}">${t.passed?'passed':'failed'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
+      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed===true?'pass':t.passed===false?'fail':'na'}">${t.passed===true?'passed':t.passed===false?'failed':'unavailable'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
   el.style.display='block';
 }
 async function jenkinsStop(){
@@ -3290,7 +3290,7 @@ async function loadStakeholder(offset=0){
   const body=document.querySelector('#sdTable tbody');
   const empty=document.getElementById('sdEmpty');
   const tiles=document.getElementById('sdTiles');
-  let runs=[];
+  let runs=[], overview=null;
   const targetField=document.getElementById('sdTarget');
   targetField.disabled=role==='viewer';
   if(targetField.disabled) targetField.value='';
@@ -3299,7 +3299,7 @@ async function loadStakeholder(offset=0){
   dashboardOffset=offset;
   document.getElementById('sdPage').textContent='Loading runs...';
   try{
-    const query=new URLSearchParams({role,limit:'50',offset:String(offset),project_id:currentProject.project_id});
+    const query=new URLSearchParams({role,limit:'50',offset:String(offset),project_id:currentProject.project_id,include_overview:'true'});
     if(document.getElementById('sdTest').value)query.set('plan_id',document.getElementById('sdTest').value);
     if(targetField.value.trim())query.set('target',targetField.value.trim());
     if(document.getElementById('sdVerdict').value)query.set('verdict',document.getElementById('sdVerdict').value);
@@ -3310,6 +3310,7 @@ async function loadStakeholder(offset=0){
     const j=await response.json();
     if(request!==dashboardRequest)return;
     runs=j.runs||[];
+    overview=j.overview||null;
     const total=j.total??runs.length;
     document.getElementById('sdPage').textContent=total?(offset+1)+' - '+(offset+runs.length)+' of '+total+' runs':'No matching runs';
     document.getElementById('sdPrev').disabled=offset===0;
@@ -3317,7 +3318,9 @@ async function loadStakeholder(offset=0){
   }catch(e){ if(request!==dashboardRequest)return; document.getElementById('sdPage').textContent='Could not load runs'; tiles.innerHTML=''; document.getElementById('sdComparison').textContent='Comparison unavailable. Refresh to retry.'; dashboardRuns=[]; empty.style.display='none'; ['sdTrend','sdErrTrend','sdDonut','sdBars'].forEach(id=>_lineChart(document.getElementById(id),[])); document.getElementById('sdPrev').disabled=true;document.getElementById('sdNext').disabled=true; body.innerHTML='<tr><td class="muted">Could not load: '+esc(e.message)+'</td></tr>'; return; }
 
   if(request!==dashboardRequest) return;
-  document.getElementById('sdFilterNote').textContent='Filters search all saved runs. Summaries and charts show this page.';
+  document.getElementById('sdFilterNote').textContent=overview
+    ? 'Totals include all matching saved runs. Trends show up to 120 recent matches.'
+    : 'History is paginated. Full-history summary is unavailable.';
   dashboardRuns=runs;
   populateRunComparison();
   const present = runs.length ? new Set(Object.keys(runs[0])) : new Set();
@@ -3339,28 +3342,26 @@ async function loadStakeholder(offset=0){
     });
   }
 
-  const total=runs.length;
-  const passes=runs.filter(r=>r.verdict==='pass').length;
-  const p95s=runs.map(r=>r.p95_ms).filter(v=>v!=null);
-  const worst=p95s.length?Math.max(...p95s):null;
+  const total=overview?.total??0;
+  const passes=overview?.passed??0;
+  const worst=overview?.worst_p95_ms;
   tiles.innerHTML=
-    '<div class="tile"><div class="v">'+total+'</div><div class="l">Runs</div></div>'+
-    '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total):0)+'%</div><div class="l">Pass rate</div></div>'+
+    '<div class="tile"><div class="v">'+(overview?total.toLocaleString():'—')+'</div><div class="l">Matching runs</div></div>'+
+    '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total)+'%':'—')+'</div><div class="l">Pass rate</div></div>'+
+    '<div class="tile"><div class="v">'+(overview?overview.requests.toLocaleString():'—')+'</div><div class="l">Total requests</div></div>'+
     '<div class="tile"><div class="v">'+(worst!=null?worst.toFixed(2)+' ms':'—')+'</div><div class="l">Worst p95</div></div>';
 
-  // extra charts
-  const passes2=runs.filter(r=>r.verdict==='pass').length;
-  const fails=runs.filter(r=>r.verdict==='fail').length;
-  const inconc=runs.filter(r=>r.verdict==='inconclusive').length;
+  const fails=overview?.failed??0;
+  const inconc=overview?.inconclusive??0;
   _donut(document.getElementById('sdDonut'),[
-    {l:'Pass',v:passes2,c:'#0f7a5f'},{l:'Fail',v:fails,c:'#b4342b'},{l:'Inconc.',v:inconc,c:'#9a6412'}]);
+    {l:'Pass',v:passes,c:'#0f7a5f'},{l:'Fail',v:fails,c:'#b4342b'},{l:'Inconc.',v:inconc,c:'#9a6412'}]);
   // latency bars from the most recent run (first row, since newest-first)
-  const latest=runs[0]||{};
+  const latest=overview?.latest||{};
   _bars(document.getElementById('sdBars'),[
     {l:'p50',v:latest.p50_ms!=null?latest.p50_ms:null,c:'#2f7d5b'},
     {l:'p95',v:latest.p95_ms!=null?latest.p95_ms:null,c:'#9a6412'},
     {l:'p99',v:latest.p99_ms!=null?latest.p99_ms:null,c:'#b4342b'}]);
-  const chronological=[...runs].reverse();
+  const chronological=overview?.trend||[];
   _lineChart(document.getElementById('sdTrend'),[{data:chronological.map((r,i)=>({x:i,y:r.p95_ms})),color:'#9a6412'}]);
   _lineChart(document.getElementById('sdErrTrend'),[{data:chronological.map((r,i)=>({x:i,y:r.error_rate==null?null:r.error_rate*100})),color:'#b4342b'}]);
 }

@@ -162,3 +162,23 @@ def test_explicit_checks_and_thresholds_survive_conversation_and_k6_generation()
     script = render_k6(model)
     assert "p(95)<=500" in script and "rate<0.01" in script
     assert 'r.json("order.id")' in script
+
+
+def test_exact_stages_and_request_rate_are_owned_by_the_planner():
+    model = LoadModel(
+        target_base_url="https://fixture.test",
+        scenarios=[Scenario(name="Browse", steps=[Step(name="Home", path="/")])],
+        load_profile=_profile(),
+    )
+    args = {"target_base_url": "https://fixture.test", "endpoints": [EndpointSpec(path="/")],
+            "max_users": 15, "duration_seconds": 60}
+    stages = [Stage(duration_seconds=10, target_users=15),
+              Stage(duration_seconds=30, target_users=15),
+              Stage(duration_seconds=20, target_users=0)]
+
+    custom = draft_plan(PlanRequest(**args, stages=stages), _Fake(model.model_copy(deep=True)))
+    assert custom.load_model.load_profile.stages == stages
+    rate = draft_plan(PlanRequest(**args, target_request_rate=15), _Fake(model))
+    assert rate.load_model.load_profile.arrival_rate == 15
+    assert rate.load_model.load_profile.target_request_rate == 15
+    assert rate.load_model.load_profile.total_seconds == 60

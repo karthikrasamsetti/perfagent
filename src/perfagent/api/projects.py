@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import case, func
+from sqlalchemy import case, func, text
 
 from perfagent.api.docs import doc
 from perfagent.config import get_settings
@@ -78,6 +78,33 @@ def require_project(session, project_id):
     return project.id
 
 
+def begin_name_write(session):
+    if session.get_bind().dialect.name == "sqlite":
+        session.execute(text("BEGIN IMMEDIATE"))
+
+
+def check_test_name(session, project_id, name, *, plan_id=None):
+    """Reserve a project-scoped name until the caller commits the plan."""
+    key = name.strip().casefold()
+    if not project_id or not key:
+        return
+    session.query(ProjectRow).filter_by(id=project_id).with_for_update().one()
+    for row in session.query(PlanRow).filter_by(project_id=project_id):
+        if row.id == plan_id:
+            continue
+        existing = json.loads(row.load_model_json).get("test_name") or row.goal
+        if existing and existing.strip().casefold() == key:
+            raise HTTPException(409, "A test with that name already exists in this project. Choose a different test name.")
+
+
+def check_project_name(session, name, *, project_id=None):
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(text("LOCK TABLE projects IN SHARE ROW EXCLUSIVE MODE"))
+    if any(row.id != project_id and row.name.strip().casefold() == name.casefold()
+           for row in session.query(ProjectRow)):
+        raise HTTPException(409, "A project with that name already exists. Choose a different project name.")
+
+
 def summary(session, project_id=None):
     query = session.query(func.count(RunResultRow.id), func.coalesce(func.sum(RunResultRow.requests), 0),
                           func.coalesce(func.sum(case((RunResultRow.verdict == "pass", 1), else_=0)), 0))
@@ -112,6 +139,8 @@ def create_project(body: ProjectBody):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     with get_session() as s:
+        begin_name_write(s)
+        check_project_name(s, body.name)
         row = ProjectRow(name=body.name, description=body.description, settings_json=json.dumps(settings))
         s.add(row)
         s.commit()
@@ -121,8 +150,11 @@ def create_project(body: ProjectBody):
 @router.put("/api/projects/{project_id}", **doc("PUT", "/api/projects/{project_id}"))
 def update_project(project_id: str, body: ProjectBody):
     with get_session() as s:
+        begin_name_write(s)
         require_project(s, project_id)
         row = s.get(ProjectRow, project_id)
+        if row.name.casefold() != body.name.casefold():
+            check_project_name(s, body.name, project_id=project_id)
         settings = body.model_dump(exclude={"name", "description"})
         try:
             settings["framework_name"] = slugify(body.framework_name or body.name, "framework name")
@@ -155,16 +187,21 @@ class AttachBody(BaseModel):
 @router.put("/api/plans/{plan_id}/project", **doc("PUT", "/api/plans/{plan_id}/project"))
 def attach_test(plan_id: str, body: AttachBody):
     with get_session() as s:
+        begin_name_write(s)
         project_id = require_project(s, body.project_id)
         plan = s.get(PlanRow, plan_id)
         if plan is None:
             raise HTTPException(404, "Test not found")
         if plan.project_id not in (None, "legacy", project_id):
             raise HTTPException(409, "This test already belongs to another project. Open it there.")
+        model = json.loads(plan.load_model_json)
+        name = body.test_name.strip() or model.get("test_name") or plan.goal
+        old_name = model.get("test_name") or plan.goal
+        if plan.project_id != project_id or old_name.strip().casefold() != name.strip().casefold():
+            check_test_name(s, project_id, name, plan_id=plan_id)
         plan.project_id = project_id
         if body.test_name.strip():
-            model = json.loads(plan.load_model_json)
-            model["test_name"] = body.test_name.strip()
+            model["test_name"] = name
             plan.load_model_json = json.dumps(model)
         s.commit()
         return {"plan_id": plan_id, "project_id": project_id}

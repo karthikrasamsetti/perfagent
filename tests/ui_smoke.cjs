@@ -12,6 +12,7 @@ const runs=[
 const report={run_id:'original-a',plan_id:'plan-a',script_id:'script-a',target:'https://example.test',execution:{test_name:'Product browsing',script_name:'products.smoke.js',endpoint_summary:'GET /products'},verdict:{overall_passed:true,checks:[]},narrative:{headline:'Fixture passed',summary:'Fixture report',observations:[],recommendations:[]},snapshot:{requests:100,error_rate:.01,rps:20,latency:{p95_ms:120}},logs:['fixture log']};
 const profiles={};let lastPlanRequest,browser,ws,server,send;const checks=[],errors=[],downloads=[],validationCalls=[],preflightCalls=[],pending=new Map();let sequence=0;
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
+let showScriptHistoryFixture=false;
 async function main(){
  server=http.createServer(async(req,res)=>{
   const pathname=new URL(req.url,'http://localhost').pathname;
@@ -30,7 +31,7 @@ async function main(){
    else data={summary:{tests:4,runs:4,requests:550},projects:projects.map(project=>({...project,runs:project.tests,requests:100,pass_rate:100}))};
   }else if(p.startsWith('/api/projects/')&&p.endsWith('/dashboard'))data={project:projects[0],summary:{tests:3,runs:3,requests:450,pass_rate:67}};
   else if(p==='/api/plan'){
-   lastPlanRequest=body;data={plan_id:'named-plan',provider:'fixture',load_model:{test_name:body.test_name,target_base_url:body.target_base_url,scenarios:[{name:'Browse',weight:1,steps:[{name:'Products',method:'GET',path:'/products'}],think_time:{min_seconds:1,max_seconds:2}}],load_profile:{type:'ramp',stages:[{duration_seconds:30,target_users:3}]},thresholds:[]}};
+   lastPlanRequest=body;data={plan_id:'named-plan',provider:'fixture',load_model:{test_name:body.test_name,target_base_url:body.target_base_url,scenarios:[{name:'Browse',weight:1,steps:[{name:'Products',method:'GET',path:'/products'}],think_time:{min_seconds:1,max_seconds:2}}],load_profile:body.target_request_rate?{type:'ramp',arrival_rate:body.target_request_rate,target_request_rate:body.target_request_rate,pre_allocated_vus:body.max_users,stages:[{duration_seconds:body.duration_seconds,target_users:body.max_users}]}:{type:'ramp',stages:[{duration_seconds:30,target_users:3}]},thresholds:[]}};
   }else if(p.endsWith('/workloads')){
    if(req.method==='POST'){data={...body,workload_id:'profile-one'};profiles[p]=[data];}else data={workloads:profiles[p]||[]};
   }else if(p.endsWith('/project'))data={plan_id:'named-plan',project_id:body.project_id};
@@ -39,10 +40,27 @@ async function main(){
    const planId=p.split('/')[3],run=runs.find(r=>r.plan_id===planId);
    if(run)data={plan_id:planId,project_id:run.project_id,target:run.target,goal:run.test_name,scripts:[],load_model:{test_name:run.test_name,target_base_url:run.target,scenarios:[{name:'Browse',weight:1,steps:[{name:'Products',method:'GET',path:'/products'}],think_time:{min_seconds:1,max_seconds:2}}],load_profile:{type:'ramp',stages:[{duration_seconds:30,target_users:3}]},thresholds:[]}};
    else{res.statusCode=404;data={detail:'Test not found'};}
+   if(run&&planId==='plan-a'&&showScriptHistoryFixture) data.scripts=[
+    {script_id:'version-first',filename:'products.js',tool:'k6',source:'generated',created_at:'2026-11-17T10:00:00'},
+    {script_id:'version-latest',filename:'products.js',tool:'k6',source:'edited',created_at:'2026-11-18T10:00:00'},
+   ];
   }else if(p==='/api/plans')data={plans:runs.filter(r=>!url.searchParams.get('project_id')||r.project_id===url.searchParams.get('project_id')).map(r=>({plan_id:r.plan_id,test_name:r.test_name,target:r.target,script_count:1,created_at:r.created_at}))};
   else if(p==='/api/reporting/runs'||p==='/api/runs'){
    const visible=runs.filter(r=>(!url.searchParams.get('project_id')||r.project_id===url.searchParams.get('project_id'))&&(!url.searchParams.get('plan_id')||r.plan_id===url.searchParams.get('plan_id'))&&(!url.searchParams.get('target')||r.target.includes(url.searchParams.get('target'))));
    data={runs:visible.map(r=>url.searchParams.get('role')==='viewer'?{run_id:r.run_id,created_at:r.created_at,verdict:r.verdict,p95_ms:r.p95_ms,requests:r.requests,test_name:r.test_name,script_name:r.script_name,mode:r.mode}:{...r,has_report:true}),total:visible.length};
+   if(url.searchParams.get('include_overview')==='true'){
+    const passed=visible.filter(run=>run.verdict==='pass').length;
+    const failed=visible.filter(run=>run.verdict==='fail').length;
+    data.overview={total:visible.length,passed,failed,inconclusive:visible.length-passed-failed,
+      requests:visible.reduce((total,run)=>total+run.requests,0),
+      worst_p95_ms:visible.length?Math.max(...visible.map(run=>run.p95_ms)):null,
+      latest:data.runs[0],attention:data.runs.find(run=>run.verdict==='fail'),
+      regression:visible.length>1?{run:data.runs[0],baseline_id:data.runs[1].run_id,changes:[{label:'p95 latency',previous_fmt:'100 ms',current_fmt:'140 ms'}]}:null,
+      trend:[...data.runs].reverse().map(run=>({...run,t:run.created_at})),
+      outcomes:visible.length?[{day:'2026-11-19',pass:passed,fail:failed,inconclusive:visible.length-passed-failed}]:[]};
+   }
+  }else if(/^\/api\/scripts\/version-(first|latest)\/download$/.test(p)){
+   res.setHeader('Content-Type','text/plain');res.end('// '+p.split('/')[3]);return;
   }else if(p==='/api/scripts/script-a/validate'){validationCalls.push(req.method);data={ok:true};}
   else if(p==='/api/preflight'){preflightCalls.push({method:req.method,body});data={all_ok:true,ok:1,total:1,results:[{method:'GET',path:'/products',status:200,ok:true}]};}
   else if(p.endsWith('/readiness'))data={checks:[{name:'Engine',ok:true,detail:'Ready'}],execution:{duration_seconds:30,peak_users:3},smoke_supported:true};
@@ -75,8 +93,70 @@ async function main(){
  await check('Test is named before planning',"newTestName==='Named checkout'&&document.getElementById('modeScriptBtn').style.display==='none'");
  await evaluate("document.getElementById('planBtn').click()");await pause(250);
  checks.push({name:'Planning receives project and test identity',result:lastPlanRequest?.project_id==='project-new'&&lastPlanRequest?.test_name==='Named checkout'});
+ if(spaMode){
+ await check('Review loads with every editor collapsed', "document.querySelectorAll('.review-editor[open],.review-advanced[open]').length===0");
+ await evaluate("planModel.thresholds=[{metric:'p95_ms',op:'<=',value:500},{metric:'error_rate',op:'<',value:.01}]; renderPlanForm(); addHeader('Authorization','Bearer fixture-review-secret')");
+ await check('Review shows exact target, requests, load, and pass rules', "document.getElementById('reviewTargetOverview').textContent.includes('http://fixture.test')&&document.getElementById('reviewRequestsOverview').textContent.includes('/products')&&document.getElementById('planSummary').textContent.includes('3 peak VUs')&&document.getElementById('planSummary').textContent.includes('< 1%')");
+ await check('Review masks header values', "document.getElementById('reviewTargetOverview').textContent.includes('Authentication configured')&&!document.querySelector('.review-layout').textContent.includes('fixture-review-secret')&&document.querySelector('#headersList input[type=password]').value.includes('fixture-review-secret')");
+ await check('Review plots planned traffic and keeps stage values readable', "document.querySelector('.review-load-plot > div').style.clipPath.startsWith('polygon(')&&document.querySelector('[aria-label=\"Load stages\"]').textContent.includes('3 VUs')");
+ await check('Review explains dataset and response values in journey order', `(()=>{
+   const steps=planModel.scenarios[0].steps;
+   const original=[...steps], columns=dataColumns;
+   try {
+     dataColumns=['account_id'];
+     steps.splice(0,steps.length,
+       {method:'POST',path:'/orders',body:{account:'\${account_id}'},extract:[{var:'order_id'}]},
+       {method:'POST',path:'/orders/\${order_id}',body:{reference:'fixed'},assertions:[{kind:'json_path',path:'order.status',op:'exists'}]});
+     renderSummary();
+     const rows=document.querySelectorAll('.review-request');
+     const correct=rows.length===2&&rows[0].textContent.includes('Dataset · account_id')&&rows[0].textContent.includes('Captures order_id')&&rows[1].textContent.includes('Earlier response · order_id')&&rows[1].textContent.includes('order.status exists');
+     rows[1].querySelector('button').click();
+     const source=document.querySelector('[aria-label="Where reference comes from"]');
+     source.value='captured';
+     source.dispatchEvent(new Event('change'));
+     return correct&&steps[1].body.reference==='\${order_id}'&&document.querySelector('[aria-label="Captured response value"]').value==='order_id';
+   } finally {
+     steps.splice(0,steps.length,...original);
+     dataColumns=columns;
+     openSteps.clear();
+     document.getElementById('scenarios').closest('details').open=false;
+     renderPlanForm();
+   }
+ })()`);
+ await check('Review links missing values to the request editor', `(()=>{
+   const step=planModel.scenarios[0].steps[0];
+   const path=step.path;
+   try {
+     step.path='/products/\${missing_fixture}';
+     renderSummary();
+     const findings=document.getElementById('reviewFindings');
+     const found=!findings.hidden&&findings.textContent.includes('missing_fixture');
+     findings.querySelector('button').click();
+     return found&&document.activeElement.id==='review-step-0:0'&&document.activeElement.getAttribute('aria-expanded')==='true';
+   } finally {
+     step.path=path;
+     openSteps.clear();
+     document.getElementById('scenarios').closest('details').open=false;
+     renderPlanForm();
+   }
+ })()`);
+ await evaluate("document.querySelector('.review-editor summary').click()");
+ await check('Editing target opens only its section', "document.querySelectorAll('.review-editor[open]').length===1&&document.getElementById('pfTarget').offsetWidth>0");
+ await evaluate("document.querySelector('.review-editor summary').click()");
+ fs.writeFileSync(path.join(os.tmpdir(),'perfagent-ui-review.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+ await check('Compact review fits mobile and puts summary first', "document.documentElement.scrollWidth<=390&&document.getElementById('planSummary').getBoundingClientRect().top<document.getElementById('planForm').getBoundingClientRect().top");
+ await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+ }
  await evaluate("document.getElementById('workloadName').value='Average';saveWorkloadProfile()");
  await check('Workload profile saved',"document.getElementById('savedWorkload').textContent.includes('Average')");
+ if(spaMode){
+ await evaluate("document.getElementById('newTestName').value='Request rate';startNamedTest();document.getElementById('target').value='http://fixture.test/products';document.getElementById('draftSchedule').value='rate';document.getElementById('draftRequestRate').value='15'");
+ await check('Describe shows a request-rate goal', "document.getElementById('draftRequestRate').offsetWidth>0&&document.getElementById('profileType').offsetWidth===0");
+ await evaluate("document.getElementById('planBtn').click()");await pause(250);
+ checks.push({name:'Describe preserves the request-rate goal and page path',result:lastPlanRequest?.target_request_rate===15&&lastPlanRequest?.endpoints[0]?.path==='/products'});
+ await check('Review shows the request rate and request count', "document.getElementById('planSummary').textContent.includes('15 requests/s')&&document.getElementById('planSummary').textContent.includes('900 HTTP requests')");
+ }
  await evaluate("selectProject('project-a');startProjectImport('script')");
  await check('Script import is separate',"document.getElementById('modeScript').style.display==='block'&&document.querySelector('#panel1 .modeswitch').style.display==='none'");
  await evaluate("startProjectImport('git')");await check('Git inherits project repository',"document.getElementById('impRepo').value==='https://github.com/org/shop.git'");
@@ -84,8 +164,30 @@ async function main(){
  await evaluate("document.getElementById('adminToken').value='fixture-admin';loadAdminOverview()");await check('Admin sees other projects',"document.getElementById('adminOverview').textContent.includes('Payments')");
  await evaluate("showView('projects');toggleSidebar()");await check('Collapsed toggle remains inside sidebar',"(()=>{const a=document.querySelector('.sb-toggle').getBoundingClientRect(),b=document.querySelector('.sidebar').getBoundingClientRect();return a.width>0&&a.left>=b.left&&a.right<=b.right})()");
  await send('Page.reload');await pause(500);await check('Sidebar state survives reload',"document.getElementById('sidebar').classList.contains('collapsed')");
+ if(spaMode){
+   await evaluate("document.querySelector('#projectCards [data-project-id=\"project-a\"]').click()");await pause(250);
+   await check('Open project lands in its workspace',"location.pathname==='/projects/project-a/tests'&&document.getElementById('view-history').classList.contains('show')");
+   await check('Workspace shows scoped tests and framework folders',"document.querySelectorAll('#plansTable [data-open-test]').length===3&&document.querySelector('#plansTable').textContent.includes('Product browsing')&&document.getElementById('libraryFrameworkTree').textContent.includes('product-browsing/')&&!document.querySelector('#plansTable').textContent.includes('Hidden payment test')");
+   showScriptHistoryFixture=true;
+   await evaluate("document.querySelector('[data-version-test=\"plan-a\"]').click()");await pause(220);
+   await check('Latest script selected and older versions are listed on demand',"currentScriptId==='version-latest'&&document.getElementById('scriptVersionHistory').open&&document.getElementById('scriptVersionList').textContent.includes('Version 2 · Latest')");
+   await evaluate("document.querySelector('[data-preview-script*=\"version-first\"]').click()");await pause(100);
+   await check('Viewing an older script preserves the latest execution version',"document.getElementById('scriptVersionPreview').textContent==='// version-first'&&currentScriptId==='version-latest'");
+   showScriptHistoryFixture=false;
+   await evaluate("showView('history')");await pause(150);
+   await evaluate("document.getElementById('projectTestSearch').value='checkout';document.getElementById('projectTestSearch').dispatchEvent(new Event('input'))");
+   await check('Workspace test search narrows the list',"document.querySelectorAll('#plansTable [data-open-test]').length===1&&document.querySelector('#plansTable tbody').textContent.includes('Checkout flow')");
+ }
  await evaluate("selectProject('project-a');toggleSidebar();showView('dashboard')");await pause(250);
  await check('Recent reports available',"document.querySelectorAll('#sdTable [data-report-id]').length===3");
+ if(spaMode) await check('Dashboard totals come from saved history', "document.getElementById('sdTiles').textContent.includes('450Total requests')&&document.getElementById('sdFilterNote').textContent.includes('all matching saved runs')");
+ if(spaMode){
+ await check('Dashboard prioritizes a failed run', "document.getElementById('sdAttention').textContent.includes('Needs attention')&&document.getElementById('sdAttention').textContent.includes('Checkout flow')");
+ await check('Baseline regression displays measured change and both reports', "!document.getElementById('sdRegression').hidden&&document.getElementById('sdRegression').textContent.includes('100 ms → 140 ms')&&document.querySelectorAll('#sdRegression button').length===2");
+ await check('Trend has a keyboard-accessible data table', "document.querySelectorAll('#sdTrendData tbody tr').length===3&&document.querySelector('#sdTrendData button')!==null");
+ await check('Dashboard shows all four historical charts', "document.querySelectorAll('.dashboard-chart-grid figure').length===4&&document.querySelector('#sdOutcomes button').getAttribute('aria-label').includes('1 fail')");
+ await check('Dashboard selected run has a report action', "!document.getElementById('sdInspectReport').disabled&&Boolean(document.getElementById('sdInspectRunNote').textContent)");
+ }
  await check('Dashboard scoped to project',"!document.querySelector('#sdTable tbody').textContent.includes('Hidden payment test')");
  await check('Names distinguish same-target tests',"document.querySelector('#sdTable tbody').textContent.includes('Product browsing')&&document.querySelector('#sdTable tbody').textContent.includes('Login flow')");
  await check('Requests visible in default view',"document.getElementById('sdHead').textContent.includes('Requests')");
@@ -94,6 +196,53 @@ async function main(){
  await evaluate("document.getElementById('sdTarget').value='second';loadStakeholder()");await check('Target filter',"document.querySelectorAll('#sdTable tbody tr').length===1");
  await evaluate('resetDashboardFilters()');await pause(150);await evaluate("document.querySelector('#sdTable [data-report-id]').click()");await pause(150);
  await check('Saved report opens',"document.getElementById('panel5').classList.contains('show')&&document.getElementById('reportSummary').textContent==='Fixture report'");
+ if(spaMode){
+ await check('Report explains the result before threshold details', "document.querySelector('.report-story h2').textContent==='What happened'&&Boolean(document.querySelector('.report-story').compareDocumentPosition(document.getElementById('reportHighlights'))&Node.DOCUMENT_POSITION_FOLLOWING)");
+ await check('Report key evidence links to the endpoint details', `(()=>{
+   const fixture=${JSON.stringify(report)};
+   fixture.saved_result_id=reportContext.savedId;
+   try {
+     renderReport({...fixture,snapshot:{...fixture.snapshot,per_endpoint:[{name:'Checkout',requests:20,failed:3,p95_ms:120}]}});
+     const evidence=document.getElementById('reportEvidenceSummary');
+     evidence.querySelector('button').click();
+     return !evidence.hidden&&evidence.textContent.includes('Checkout · 3')&&document.activeElement.id==='reportEndpointDetails'&&document.activeElement.open;
+   } finally {
+     document.getElementById('reportEndpointDetails').open=false;
+     renderReport(fixture);
+   }
+ })()`);
+ await check('Older reports disclose missing samples', "document.getElementById('reportSampleNote').textContent.includes('unavailable')");
+ await check('Report charts share a selected sample and preserve missing values', `(()=>{
+   drawTsChart([{t:10,rps:12,p95:135},{t:30,rps:15,p95:210,err:0}],[{label:'Ramp up',start_s:0,end_s:15}]);
+   try {
+     const picker=document.getElementById('reportSampleIndex');
+     picker.value='0';
+     picker.dispatchEvent(new Event('input'));
+     return document.querySelectorAll('.report-metric-charts canvas').length===3
+       && picker.getAttribute('aria-valuetext')==='10 seconds'
+       && document.getElementById('reportPlannedPhases').textContent.includes('Ramp up 0–15 s')
+       && document.getElementById('reportSampleReadout').textContent.includes('Errors Unavailable');
+   } finally { drawTsChart([]); }
+ })()`);
+ await check('Report ranks endpoints by the selected metric', `(()=>{
+   const report=${JSON.stringify(report)};
+   try {
+     renderReportDetails({...report,snapshot:{per_endpoint:[
+       {name:'Browse',p95_ms:300,requests:10,failed:0,checks_failed:4},
+       {name:'Checkout',p95_ms:150,requests:10,failed:3,checks_failed:1}
+     ]}});
+     const ranking=document.getElementById('reportEndpointRanking');
+     const startsWithBrowse=ranking.firstElementChild.textContent.includes('Browse');
+     const selector=document.getElementById('reportEndpointMetric');
+     selector.value='failed';
+     selector.dispatchEvent(new Event('change'));
+     const failuresStartWithCheckout=ranking.firstElementChild.textContent.includes('Checkout');
+     selector.value='checks_failed';
+     selector.dispatchEvent(new Event('change'));
+     return startsWithBrowse&&failuresStartWithCheckout&&ranking.firstElementChild.textContent.includes('Browse');
+   } finally { renderReportDetails(report); }
+ })()`);
+ }
  await check('Report has own identity',"reportContext.savedId==='saved-a'&&currentRunId===null");await send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:os.tmpdir()});await evaluate('downloadReport()');await pause(200);checks.push({name:'Download uses displayed report',result:downloads.includes('/api/runs/saved-a/report/download')});
  await evaluate('selectReportBaseline()');await check('Baseline saved',"getSelectedBaseline()==='saved-a'");await evaluate('clearSelectedBaseline()');await check('Baseline cleared','getSelectedBaseline()===null');
  await evaluate("currentScriptId='script-a';checkReadiness()");await check('Readiness checklist shown',"document.getElementById('readinessResult').textContent.includes('Before you run')");

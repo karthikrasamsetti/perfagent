@@ -69,7 +69,9 @@ def compare(current: dict, previous: dict) -> dict:
     deltas = []
     worse = []
     for m in ("error_rate", "p95_ms", "p99_ms", "avg_ms", "rps"):
-        d = _classify(m, float(current.get(m, 0) or 0), float(previous.get(m, 0) or 0))
+        if current.get(m) is None or previous.get(m) is None:
+            continue
+        d = _classify(m, float(current[m]), float(previous[m]))
         deltas.append(d)
         if d.direction == "worse":
             worse.append(d)

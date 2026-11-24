@@ -137,7 +137,8 @@ return <>
 <label htmlFor={"newTestName"}>
 {"Test name"}
 </label>
-<input id={"newTestName"} maxLength={120} placeholder={"Checkout journey"} />
+<input id={"newTestName"} maxLength={120} placeholder={"Checkout journey"} aria-describedby="newTestNameHint" />
+<p className="hint" id="newTestNameHint">Use a unique name within this project.</p>
 </div>
 <div className={"field"}>
 <label htmlFor={"newTestPurpose"}>

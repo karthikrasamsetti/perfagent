@@ -10,6 +10,21 @@ from perfagent.db.models import ScriptSnapshotRow
 from perfagent.api.test_identity import model_identity
 
 
+def planned_phases(model: LoadModel) -> list[dict]:
+    profile = model.load_profile
+    if profile.arrival_rate:
+        return [{"label": "Constant arrival rate", "start_s": 0, "end_s": profile.total_seconds}]
+    phases = []
+    elapsed, users = 0, profile.start_users
+    for stage in profile.stages:
+        end = elapsed + stage.duration_seconds
+        label = ("Ramp up" if stage.target_users > users
+                 else "Ramp down" if stage.target_users < users else "Steady state")
+        phases.append({"label": label, "start_s": elapsed, "end_s": end})
+        elapsed, users = end, stage.target_users
+    return phases
+
+
 def script_workload_version(content: str, model_json: str, data_content: str) -> str:
     return hashlib.sha256((content + model_json + data_content).encode()).hexdigest()
 
@@ -38,6 +53,7 @@ def freeze_script(session, script, model: LoadModel, *, generated=False):
         "duration_seconds": model.load_profile.total_seconds,
         "peak_users": model.load_profile.peak_users,
         "arrival_rate": model.load_profile.arrival_rate,
+        "target_request_rate": model.load_profile.target_request_rate,
         "generated": generated,
     }
     saved = ScriptSnapshotRow(script_id=script.id, load_model_json=model_json,

@@ -406,7 +406,7 @@ export interface paths {
         };
         /**
          * Run history for a stakeholder role
-         * @description Past runs, newest first, with each run's fields limited to what the given role may see (executive, qa_lead, engineer, viewer). Optionally filtered by target or verdict. Reads stored data only; no AI.
+         * @description Past runs, newest first, with each run's fields limited to what the given role may see (executive, qa_lead, engineer, viewer). Optionally filtered by target or verdict. The optional overview aggregates all matching runs independently of pagination and includes up to 120 recent trend points. Reads stored data only.
          *
          *     **Access level:** `read` — only reads stored data.
          */
@@ -1693,6 +1693,11 @@ export interface components {
              */
             arrival_rate?: number | null;
             /**
+             * Target Request Rate
+             * @description HTTP requests per second for a single-request k6 test.
+             */
+            target_request_rate?: number | null;
+            /**
              * Pre Allocated Vus
              * @default 10
              */
@@ -1767,6 +1772,10 @@ export interface components {
             insecure_tls?: boolean;
             /** Thresholds */
             thresholds?: components["schemas"]["Threshold"][] | null;
+            /** Target Request Rate */
+            target_request_rate?: number | null;
+            /** Stages */
+            stages?: components["schemas"]["Stage"][] | null;
         };
         /** PreflightBody */
         PreflightBody: {
@@ -2124,7 +2133,7 @@ export interface components {
             test_name?: string;
             /**
              * Filename
-             * @default loadtest.js
+             * @default
              */
             filename?: string;
             /** Content */
@@ -2839,6 +2848,9 @@ export interface operations {
                 until?: string | null;
                 plan_id?: string | null;
                 project_id?: string | null;
+                environment?: string | null;
+                release_label?: string | null;
+                include_overview?: boolean;
             };
             header?: never;
             path?: never;
@@ -2846,7 +2858,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description `role`, `count`, `runs`. */
+            /** @description `role`, `count`, `total`, `runs` and optional `overview`. */
             200: {
                 headers: {
                     [name: string]: unknown;

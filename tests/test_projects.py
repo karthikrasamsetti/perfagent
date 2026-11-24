@@ -40,6 +40,21 @@ def test_project_library_and_dashboard_are_scoped(setup):
     assert client.put('/api/plans/plan/project', json={'project_id': b['project_id']}).status_code == 409
 
 
+def test_names_are_case_insensitively_unique_within_their_scope(setup):
+    client, _, _, _, _ = setup
+    first, second = project(client, "Commerce"), project(client, "Payments")
+    assert client.post("/api/projects", json={"name": " commerce "}).status_code == 409
+    script = {"test_name": "Checkout", "filename": "checkout.js",
+              "content": "export default function(){}"}
+    assert client.post("/api/scripts/upload", json={**script, "project_id": first["project_id"]}).status_code == 200
+    assert client.post("/api/scripts/upload", json={**script, "project_id": first["project_id"],
+                                                    "test_name": " checkout "}).status_code == 409
+    assert client.post("/api/scripts/upload", json={**script, "project_id": second["project_id"]}).status_code == 200
+    assert client.put("/api/plans/plan/project", json={"project_id": first["project_id"],
+                                                      "test_name": "Checkout"}).status_code == 409
+    assert client.post("/api/scripts/upload", json={**script, "filename": "../checkout.js"}).status_code == 400
+
+
 def test_admin_dashboard_requires_server_token(setup, monkeypatch):
     from perfagent.api import projects
     client, _, _, _, _ = setup

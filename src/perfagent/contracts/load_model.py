@@ -159,6 +159,8 @@ class LoadProfile(BaseModel):
     stages: list[Stage] = Field(..., min_length=1)
     arrival_rate: int | None = Field(default=None, ge=1, le=1_000_000,
                                     description="Journey iterations per second; k6 only.")
+    target_request_rate: int | None = Field(default=None, ge=1, le=1_000_000,
+                                            description="HTTP requests per second for a single-request k6 test.")
     pre_allocated_vus: int = Field(default=10, ge=1, le=1_000_000)
     graceful_stop_seconds: int = Field(default=30, ge=0, le=3600)
     start_users: int = Field(default=0, ge=0, le=1_000_000)

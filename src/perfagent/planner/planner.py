@@ -15,7 +15,7 @@ Flow:
 from __future__ import annotations
 
 from perfagent.contracts.artifacts import PlanArtifact
-from perfagent.contracts.load_model import LoadModel, Threshold
+from perfagent.contracts.load_model import LoadModel, LoadProfile, Stage, Threshold
 from perfagent.planner.profile import build_profile
 from perfagent.planner.prompts import SYSTEM_PROMPT, build_user_prompt
 from perfagent.planner.spec import PlanRequest
@@ -126,6 +126,20 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
         total_seconds=request.duration_seconds,
     )
 
+    if request.target_request_rate is not None:
+        # A k6 iteration is exactly one HTTP request for this workload.
+        journey = model.scenarios[0]
+        journey.steps = journey.steps[:1]
+        model.scenarios = [journey]
+        model.load_profile = LoadProfile(
+            stages=[Stage(duration_seconds=request.duration_seconds, target_users=request.max_users)],
+            arrival_rate=request.target_request_rate,
+            target_request_rate=request.target_request_rate,
+            pre_allocated_vus=request.max_users,
+        )
+    elif request.stages is not None:
+        model.load_profile.stages = request.stages
+
     # 3. Collapse duplicate/near-identical scenarios (no fake journeys from thin input).
     model = _collapse_duplicate_scenarios(model)
 
@@ -139,7 +153,7 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
     caps = _captured_vars(model)
     auth_var = next((v for v in ("token", "access_token", "jwt", "auth_token", "accessToken")
                      if v in caps), None)
-    if auth_var:
+    if auth_var and request.target_request_rate is None:
         headers = dict(model.headers or {})
         if not any(k.lower() == "authorization" for k in headers):
             headers["Authorization"] = "Bearer ${" + auth_var + "}"

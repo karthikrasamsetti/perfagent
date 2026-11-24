@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 
+from perfagent.analyzer.k6_summary import metric_values, threshold_result
 from perfagent.contracts.load_model import LoadModel
 
 # The metrics the verdict knows how to read from a snapshot.
@@ -115,11 +116,14 @@ def evaluate_k6_summary(metrics: dict) -> dict:
     """Read the exact threshold expressions and outcomes from k6's summary export."""
     checks = []
     for metric, summary in metrics.items():
-        for expression, failed in summary.get("thresholds", {}).items():
+        values = metric_values(summary)
+        for expression, outcome in (summary.get("thresholds") or {}).items():
+            passed = threshold_result(outcome)
+            reason = "k6 did not provide the threshold outcome" if passed is None else ""
             match = re.fullmatch(r"(.+?)\s*(<=|>=|==|!=|<|>)\s*([-+0-9.eE]+)", expression)
             if not match:
                 checks.append({"metric": f"{metric}: {expression}", "op": "", "target": None,
-                               "actual": None, "passed": not failed, "reason": ""})
+                               "actual": None, "passed": passed, "reason": reason})
                 continue
             aggregation, op, value = match.groups()
             aggregation = aggregation.strip()
@@ -130,12 +134,18 @@ def evaluate_k6_summary(metrics: dict) -> dict:
                          "max": "max_ms"}.get(aggregation, label)
             elif metric in {"errors", "http_req_failed"} and aggregation == "rate":
                 label = "error_rate"
-            actual = summary.get("value" if aggregation == "rate" and "passes" in summary
-                                 else aggregation)
+            elif aggregation == "count" and metric in {"http_reqs", "dropped_iterations"}:
+                label = {"http_reqs": "HTTP requests", "dropped_iterations": "Dropped iterations"}[metric]
+            actual = values.get(aggregation)
+            if actual is None and aggregation == "rate" and "passes" in values:
+                actual = values.get("value")
             checks.append({"metric": label, "op": op, "target": float(value), "actual": actual,
-                           "passed": not failed, "reason": ""})
-    return {"checks": checks, "has_unevaluable": False,
-            "overall_passed": all(check["passed"] for check in checks) if checks else None}
+                           "passed": passed, "reason": reason})
+    unevaluable = any(check["passed"] is None for check in checks)
+    overall = False if any(check["passed"] is False for check in checks) else (
+        True if checks and not unevaluable else None
+    )
+    return {"checks": checks, "has_unevaluable": unevaluable, "overall_passed": overall}
 
 
 

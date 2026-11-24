@@ -6,7 +6,7 @@ const sections = [
     items: [
       { label: 'Projects', icon: '▦', view: 'projects', onClick: handlers.h97 },
       { label: 'Create test', icon: '+', view: 'create', onClick: handlers.h98 },
-      { label: 'Test library', icon: '▤', view: 'history', onClick: handlers.h102 },
+      { label: 'Project workspace', icon: '▤', view: 'history', onClick: handlers.h102 },
     ],
   },
   {

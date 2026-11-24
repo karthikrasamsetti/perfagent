@@ -179,57 +179,63 @@ return <>
 <p className={"hint"}>
 {"Enter a URL for a page test, or add endpoints for an API or journey. Review the suggested workload before sending traffic."}
 </p>
-<div className={"grid2"}>
-<div className={"field"}>
-<label htmlFor="target">
-{"Target base URL"}
-</label>
-<input id={"target"} defaultValue={"http://127.0.0.1:8000"} />
+<div className="describe-section">
+  <h3>Target</h3>
+  <div className="grid2">
+    <div className="field">
+      <label htmlFor="target">Target URL</label>
+      <input id="target" type="url" placeholder="https://staging.example.com/products" />
+    </div>
+    <div className="field">
+      <label htmlFor="goal">What should this test measure? <span className="muted">(optional)</span></label>
+      <input id="goal" placeholder="e.g. Check product search during normal traffic" />
+    </div>
+  </div>
 </div>
-<div className={"field"}>
-<label htmlFor="goal">
-{"Goal (plain language)"}
-</label>
-<input id={"goal"} defaultValue={"Realistic load test of browsing and checkout"} />
-</div>
-</div>
-<div className={"grid2"}>
-<div className={"field"}>
-<label htmlFor="maxUsers">
-{"Max users"}
-</label>
-<input id={"maxUsers"} type={"number"} defaultValue={"50"} />
-</div>
-<div className={"field"}>
-<label htmlFor="duration">
-{"Duration (seconds)"}
-</label>
-<input id={"duration"} type={"number"} defaultValue={"60"} />
-</div>
-</div>
-<div className={"field"}>
-<div className={"lblrow"}>
-<label htmlFor="profileType">
-{"Test type"}
-</label>
-<i className={"infohint"} data-tip={"Ramp = gradual up/steady/down. Spike = sudden burst. Soak = long steady load (find leaks). Stress = step past the limit to find the breaking point."}>
-{"i"}
-</i>
-</div>
-<select id={"profileType"}>
-<option value={"ramp"}>
-{"Ramp — up, steady, down (balanced, default)"}
-</option>
-<option value={"spike"}>
-{"Spike — sudden sharp burst to peak"}
-</option>
-<option value={"soak"}>
-{"Soak — long steady hold (endurance)"}
-</option>
-<option value={"stress"}>
-{"Stress — step up past the target to find limits"}
-</option>
-</select>
+<div className="describe-section describe-load">
+  <h3>Traffic and duration</h3>
+  <div className="grid2">
+    <div className="field">
+      <label htmlFor="draftSchedule">How should traffic be scheduled?</label>
+      <select id="draftSchedule" defaultValue="users">
+        <option value="users">Virtual users with stages</option>
+        <option value="rate">Requests per second</option>
+      </select>
+    </div>
+    <div className="field">
+      <label htmlFor="duration">Duration (seconds)</label>
+      <input id="duration" type="number" min={1} step={1} defaultValue={60} required />
+    </div>
+  </div>
+  <div className="grid2 describe-vu-only">
+    <div className="field">
+      <label htmlFor="profileType">Load profile</label>
+      <select id="profileType" defaultValue="ramp">
+        <option value="ramp">Load · ramp up, steady state, ramp down</option>
+        <option value="stress">Stress · increase load in steps</option>
+        <option value="spike">Spike · burst and recovery</option>
+        <option value="soak">Soak · sustained traffic</option>
+      </select>
+    </div>
+  </div>
+  <div className="field describe-rate-only">
+    <label htmlFor="draftRequestRate">Target requests per second</label>
+    <input id="draftRequestRate" type="number" min={1} max={1000000} step={1} placeholder="15" />
+    <p className="hint">Use one URL or one endpoint. The report shows how many requests k6 sent and whether any were dropped.</p>
+  </div>
+  <details className="field describe-ramp-only">
+    <summary>Set exact ramp stages</summary>
+    <div className="grid3">
+      <div className="field"><label htmlFor="draftRampUp">Ramp up (seconds)</label><input id="draftRampUp" type="number" min={1} step={1} placeholder="12" /></div>
+      <div className="field"><label htmlFor="draftHold">Steady state (seconds)</label><input id="draftHold" type="number" min={1} step={1} placeholder="36" /></div>
+      <div className="field"><label htmlFor="draftRampDown">Ramp down (seconds)</label><input id="draftRampDown" type="number" min={1} step={1} placeholder="12" /></div>
+    </div>
+    <p className="hint">Enter all three durations. They must add up to the test duration.</p>
+  </details>
+  <div className="field describe-capacity">
+    <label htmlFor="maxUsers"><span className="describe-vu-only">Virtual users</span><span className="describe-rate-only">Preallocated virtual users</span></label>
+    <input id="maxUsers" type="number" min={1} max={1000000} step={1} defaultValue={50} required />
+  </div>
 </div>
 <details className="field">
   <summary>Pass rules (optional)</summary>
@@ -278,13 +284,13 @@ return <>
 </button>
 <div className={"btnrow"}>
 <button className={"btn"} id={"planBtn"} onClick={handlers.h25}>
-{"✨ Draft plan with AI"}
+{"Draft test"}
 </button>
 <span className={"hint"} style={{"margin": "0"} as CSSProperties}>
 {"Calls your configured LLM (key in .env)"}
 </span>
 </div>
-<div className={"statusline"} id={"planStatus"}>
+<div className={"statusline"} id={"planStatus"} role="status">
 
 </div>
 </div>
@@ -413,55 +419,31 @@ return <>
 </div>
 </div>
 </div>
-<div className={"panel"} id={"panel2"}>
-<div className={"card rv"}>
-<div style={{"display": "flex", "alignItems": "center", "gap": "10px", "marginBottom": "4px", "flexWrap": "wrap"} as CSSProperties}>
-<h2 style={{"margin": "0"} as CSSProperties}>
-{"Review & approve the plan"}
-</h2>
-<span className={"pill ghost"} id={"planMeta"} style={{"display": "none"} as CSSProperties}>
-
-</span>
-</div>
-<p className={"hint"}>
-{"Read the summary. Open a section only if you want to change it. Nothing is sent to the target on this page."}
-</p>
-<div className={"note"} id={"importNote"} style={{"display": "none"} as CSSProperties}>
-
-</div>
-<div id={"planSummary"} style={{"display": "none", "background": "#f1f8f5", "border": "1px solid #cbe8dc", "borderRadius": "12px", "padding": "14px 16px", "margin": "10px 0 6px"} as CSSProperties}>
-
-</div>
-<div className={"rv-trust"}>
-<span className={"rv-chip"} id={"guardrailBadge"} style={{"display": "none"} as CSSProperties}>
-
-</span>
-<span className={"rv-chip"} id={"planEval"} style={{"display": "none"} as CSSProperties}>
-
-</span>
-<span className={"rv-chip"} id={"usagePill"} style={{"display": "none"} as CSSProperties}>
-
-</span>
-</div>
-<div id={"planForm"}>
-<section className={"rv-sec"}>
-<h3>
-<span className={"rv-n"}>
-{"1"}
-</span>
-{"Target & load"}
-</h3>
-<div className={"btnrow"}>
-<select id={"savedWorkload"} aria-label={"Saved workload"} style={{"width": "auto"} as CSSProperties} onChange={handlers.h31}>
-<option value={""}>
-{"Saved workload profiles"}
-</option>
-</select>
-<input id={"workloadName"} aria-label={"Workload profile name"} placeholder={"Average load / stress / soak"} style={{"width": "220px"} as CSSProperties} />
-<button className={"btn ghost sm"} onClick={handlers.h32}>
-{"Save workload"}
-</button>
-</div>
+<div className="panel" id="panel2">
+  <div className="card rv review-card">
+    <header className="section-header review-heading">
+      <div>
+        <h2>Review test plan</h2>
+        <p className="hint">Confirm the target, requests, and load before approving. Review sends no traffic.</p>
+      </div>
+      <span className="pill ghost" id="planMeta" style={{display: 'none'}} />
+    </header>
+    <div className="note" id="importNote" style={{display: 'none'}} />
+    <section className="review-guide" aria-labelledby="reviewGuideTitle">
+      <h3 id="reviewGuideTitle">Before you approve</h3>
+      <p id="reviewDraftExplanation" hidden />
+      <p>Confirm the target and load, then open each request to check what it sends and what a successful response looks like.</p>
+      <ul id="reviewFindings" />
+    </section>
+    <div className="review-layout">
+      <aside id="planSummary" className="review-summary" aria-label="What will run" />
+      <div id="planForm" className="review-sections">
+        <section className="review-section" aria-labelledby="reviewTargetTitle">
+          <h3 id="reviewTargetTitle">Target</h3>
+          <div id="reviewTargetOverview" />
+          <details className="review-editor" name="review-editors">
+            <summary>Edit target and connection</summary>
+            <div className="review-editor-content">
 <div className={"grid2"}>
 <div className={"field"}>
 <label htmlFor={"pfTestName"}>
@@ -473,16 +455,123 @@ return <>
 <label htmlFor={"pfScriptFilename"}>
 {"Script filename"}
 </label>
-<input id={"pfScriptFilename"} maxLength={120} placeholder={"e.g. checkout-flow.js"} onInput={handlers.h35} />
+<input id={"pfScriptFilename"} maxLength={120} placeholder={"e.g. checkout-flow.js"} aria-describedby="pfFilenameHint" onInput={handlers.h35} />
+<p className="hint" id="pfFilenameHint">Use a filename without spaces or folders. For k6, end it in .js.</p>
 </div>
 </div>
-<div className={"rv-grid"}>
 <div className={"field"} style={{"gridColumn": "span 2"} as CSSProperties}>
 <label htmlFor={"pfTarget"}>
 {"Target base URL"}
 </label>
 <input id={"pfTarget"} onInput={handlers.h36} />
 </div>
+<div className={"btnrow"}>
+<select id={"environmentPreset"} aria-label={"Saved environment"} style={{"width": "auto"} as CSSProperties} onChange={handlers.h43}>
+<option value={""}>
+{"Saved environments"}
+</option>
+</select>
+<button className={"btn ghost sm"} onClick={handlers.h44}>
+{"Save current environment"}
+</button>
+</div>
+<details className={"rv-more"} id={"connDetails"}>
+<summary>
+{"Connection options — headers, environment, TLS "}
+<span className={"muted"} id={"connCount"}>
+
+</span>
+</summary>
+<div className={"rv-grid"} style={{"marginTop": "10px"} as CSSProperties}>
+<div className={"field"} style={{"gridColumn": "span 2"} as CSSProperties}>
+<label htmlFor={"environment"}>
+{"Environment "}
+<span className={"muted"} style={{"fontWeight": "400"} as CSSProperties}>
+{"(optional label)"}
+</span>
+</label>
+<input id={"environment"} placeholder={"dev / staging / prod"} onInput={handlers.h45} />
+</div>
+<div className={"field"} style={{"gridColumn": "span 2", "alignSelf": "end"} as CSSProperties}>
+<label style={{"display": "inline-flex", "alignItems": "center", "gap": "7px", "cursor": "pointer", "fontSize": "13px", "marginBottom": "9px"} as CSSProperties}>
+<input type={"checkbox"} id={"insecureTls"} style={{"width": "auto"} as CSSProperties} onChange={handlers.h46} />
+{" Skip TLS certificate verification"}
+<i className={"infohint"} data-tip={"For test or dev hosts whose HTTPS certificate does not match the hostname. Never use against production."}>
+{"i"}
+</i>
+</label>
+</div>
+</div>
+<div className={"lblrow"}>
+<label>
+{"Custom headers"}
+</label>
+<i className={"infohint"} data-tip={"Headers added to every request, e.g. Authorization: Bearer TOKEN or an API key. Values can reference a captured token as ${token}."}>
+{"i"}
+</i>
+</div>
+<div id={"headersList"}>
+
+</div>
+<button className={"btn ghost sm"} onClick={handlers.h47}>
+{"+ Add header"}
+</button>
+</details>
+            </div>
+          </details>
+        </section>
+        <section className="review-section" aria-labelledby="reviewRequestsTitle">
+          <h3 id="reviewRequestsTitle">Journeys &amp; response checks</h3>
+          <details className="review-help">
+            <summary>How do checks and changing values work?</summary>
+            <dl>
+              <dt>Response check</dt>
+              <dd>Open a request and choose Add check. For JSON, select JSON field compares and enter a path such as <code>order.id</code>. Use a sample response if you need help choosing a check.</dd>
+              <dt>Dataset value</dt>
+              <dd>Upload a file under Test data. In the request body, choose From data file and select a column. In a path, use a placeholder such as <code>{'/accounts/${account_id}'}</code>.</dd>
+              <dt>Generated value</dt>
+              <dd>In the request body, choose Generated for a value the script should create at runtime, such as a random ID.</dd>
+              <dt>Value from an earlier response</dt>
+              <dd>Open the request that returns the value and add a capture, such as <code>order.id</code> saved as <code>order_id</code>. In a later request in the same journey, choose From an earlier response for a body field or use <code>{'${order_id}'}</code> in its path.</dd>
+            </dl>
+          </details>
+          <div id="reviewRequestsOverview" />
+          <details className="review-editor" name="review-editors">
+            <summary>Edit journeys and requests</summary>
+            <div className="review-editor-content">
+<div id={"scenarios"}>
+
+</div>
+<div className={"btnrow"} style={{"marginTop": "4px"} as CSSProperties}>
+<button className={"btn ghost sm"} onClick={handlers.h50}>
+{"+ Add journey"}
+</button>
+</div>
+            </div>
+          </details>
+          <div className="btnrow">
+            <button className="btn ghost sm" id="previewBtn" onClick={handlers.h51}>Preview sample requests</button>
+            <span className="hint">See what will be sent. Verify runs the requests and evaluates the checks.</span>
+          </div>
+          <div id="previewBox" style={{display: 'none'}} />
+        </section>
+        <section className="review-section" aria-labelledby="reviewWorkloadTitle">
+          <h3 id="reviewWorkloadTitle">Load &amp; pass rules</h3>
+          <details className="review-editor" name="review-editors">
+            <summary>Edit load and pass rules</summary>
+            <div className="review-editor-content">
+<div className={"btnrow"}>
+<select id={"savedWorkload"} aria-label={"Saved workload"} style={{"width": "auto"} as CSSProperties} onChange={handlers.h31}>
+<option value={""}>
+{"Saved workload profiles"}
+</option>
+</select>
+<input id={"workloadName"} aria-label={"Workload profile name"} placeholder={"Average load / stress / soak"} style={{"width": "220px"} as CSSProperties} />
+<button className={"btn ghost sm"} onClick={handlers.h32}>
+{"Save workload"}
+</button>
+</div>
+<div className="rv-grid">
 <div className={"field"}>
 <label htmlFor={"pfUsers"}>
 {"Peak users"}
@@ -548,121 +637,6 @@ return <>
 <p className={"hint"}>
 {"An iteration runs one journey and may send several requests. Rate mode uses the total duration above; ramp stages apply to user-based mode."}
 </p>
-<div className={"btnrow"}>
-<select id={"environmentPreset"} aria-label={"Saved environment"} style={{"width": "auto"} as CSSProperties} onChange={handlers.h43}>
-<option value={""}>
-{"Saved environments"}
-</option>
-</select>
-<button className={"btn ghost sm"} onClick={handlers.h44}>
-{"Save current environment"}
-</button>
-</div>
-<details className={"rv-more"} id={"connDetails"}>
-<summary>
-{"Connection options — headers, environment, TLS "}
-<span className={"muted"} id={"connCount"}>
-
-</span>
-</summary>
-<div className={"rv-grid"} style={{"marginTop": "10px"} as CSSProperties}>
-<div className={"field"} style={{"gridColumn": "span 2"} as CSSProperties}>
-<label htmlFor={"environment"}>
-{"Environment "}
-<span className={"muted"} style={{"fontWeight": "400"} as CSSProperties}>
-{"(optional label)"}
-</span>
-</label>
-<input id={"environment"} placeholder={"dev / staging / prod"} onInput={handlers.h45} />
-</div>
-<div className={"field"} style={{"gridColumn": "span 2", "alignSelf": "end"} as CSSProperties}>
-<label style={{"display": "inline-flex", "alignItems": "center", "gap": "7px", "cursor": "pointer", "fontSize": "13px", "marginBottom": "9px"} as CSSProperties}>
-<input type={"checkbox"} id={"insecureTls"} style={{"width": "auto"} as CSSProperties} onChange={handlers.h46} />
-{" Skip TLS certificate verification"}
-<i className={"infohint"} data-tip={"For test or dev hosts whose HTTPS certificate does not match the hostname. Never use against production."}>
-{"i"}
-</i>
-</label>
-</div>
-</div>
-<div className={"lblrow"}>
-<label>
-{"Custom headers"}
-</label>
-<i className={"infohint"} data-tip={"Headers added to every request, e.g. Authorization: Bearer TOKEN or an API key. Values can reference a captured token as ${token}."}>
-{"i"}
-</i>
-</div>
-<div id={"headersList"}>
-
-</div>
-<button className={"btn ghost sm"} onClick={handlers.h47}>
-{"+ Add header"}
-</button>
-</details>
-</section>
-<section className={"rv-sec"}>
-<h3>
-<span className={"rv-n"}>
-{"2"}
-</span>
-{"Test data file "}
-<span className={"rv-opt"}>
-{"optional"}
-</span>
-</h3>
-<p className={"hint"} style={{"margin": "0 0 8px"} as CSSProperties}>
-{"Real values your API expects, such as user names or branch codes. Each column can then be used in a request below."}
-</p>
-<div className={"dz"} id={"dz"} onClick={handlers.h48}>
-{"📁 Click to upload a CSV / TSV / TXT / JSON file"}
-</div>
-<input type={"file"} id={"dataFile"} accept={".csv,.tsv,.txt,.json,.jsonl"} style={{"display": "none"} as CSSProperties} onChange={handlers.h49} />
-<div className={"note err"} id={"dataInfo"} style={{"display": "none"} as CSSProperties}>
-
-</div>
-<div id={"dataCard"} style={{"display": "none"} as CSSProperties}>
-
-</div>
-</section>
-<section className={"rv-sec"}>
-<h3>
-<span className={"rv-n"}>
-{"3"}
-</span>
-{"Journeys "}
-<span className={"rv-opt"}>
-{"what each virtual user does"}
-</span>
-</h3>
-<div id={"scenarios"}>
-
-</div>
-<div className={"btnrow"} style={{"marginTop": "4px"} as CSSProperties}>
-<button className={"btn ghost sm"} onClick={handlers.h50}>
-{"+ Add journey"}
-</button>
-<div className={"spacer"}>
-
-</div>
-<button className={"btn ghost sm"} id={"previewBtn"} onClick={handlers.h51}>
-{"🔍 Preview the requests"}
-</button>
-</div>
-<div id={"previewBox"} style={{"display": "none"} as CSSProperties}>
-
-</div>
-</section>
-<section className={"rv-sec"}>
-<h3>
-<span className={"rv-n"}>
-{"4"}
-</span>
-{"Pass / fail rules"}
-</h3>
-<p className={"hint"} style={{"margin": "0 0 8px"} as CSSProperties}>
-{"The test passes only if every rule holds."}
-</p>
 <div id={"thresholds"}>
 
 </div>
@@ -688,8 +662,48 @@ return <>
 {"Save these…"}
 </button>
 </div>
-</section>
+            </div>
+          </details>
+        </section>
+        <section className="review-section" aria-labelledby="reviewDataTitle">
+          <h3 id="reviewDataTitle">Test data</h3>
+          <p id="reviewDataOverview" className="hint" />
+          <details className="review-editor" name="review-editors">
+            <summary>Manage dataset</summary>
+            <div className="review-editor-content">
+<p className={"hint"} style={{"margin": "0 0 8px"} as CSSProperties}>
+{"Real values your API expects, such as user names or branch codes. Each column can then be used in a request below."}
+</p>
+<button type="button" className="dz" id="dz" onClick={handlers.h48}>
+{"Upload CSV, TSV, TXT, JSON, JSONL, or NDJSON"}
+</button>
+<input type={"file"} id={"dataFile"} accept={".csv,.tsv,.txt,.json,.jsonl,.ndjson"} style={{"display": "none"} as CSSProperties} onChange={handlers.h49} />
+<div className={"note err"} id={"dataInfo"} style={{"display": "none"} as CSSProperties}>
+
 </div>
+<div id={"dataCard"} style={{"display": "none"} as CSSProperties}>
+
+</div>
+            </div>
+          </details>
+        </section>
+      </div>
+    </div>
+    <details className="review-advanced">
+      <summary>Advanced plan details</summary>
+      <div className="review-editor-content">
+<div className={"rv-trust"}>
+<span className={"rv-chip"} id={"guardrailBadge"} style={{"display": "none"} as CSSProperties}>
+
+</span>
+<span className={"rv-chip"} id={"planEval"} style={{"display": "none"} as CSSProperties}>
+
+</span>
+<span className={"rv-chip"} id={"usagePill"} style={{"display": "none"} as CSSProperties}>
+
+</span>
+</div>
+        <p id="reviewRationale" className="hint" />
 <textarea id={"planJson"} style={{"display": "none", "minHeight": "340px", "fontFamily": "ui-monospace,Menlo,monospace", "fontSize": "12.5px"} as CSSProperties}>
 
 </textarea>
@@ -697,6 +711,8 @@ return <>
 <input type={"checkbox"} id={"rawToggle"} style={{"width": "auto"} as CSSProperties} onChange={handlers.h55} />
 {" Advanced: edit the whole plan as raw JSON\n      "}
 </label>
+      </div>
+    </details>
 <div className={"rv-actions"}>
 <div className={"statusline"} id={"genStatus"}>
 
@@ -709,7 +725,7 @@ return <>
 
 </div>
 <button className={"btn amber"} id={"genBtn"} onClick={handlers.h57}>
-{"Approve and continue"}
+{"Approve & continue to Verify"}
 </button>
 </div>
 </div>
@@ -756,6 +772,12 @@ return <>
     <pre id="scriptOut">The generated script appears here.</pre>
     <textarea id="scriptEdit" aria-label="Edit generated script" style={{display: 'none'}} />
     <div className="note info" id="editNote" style={{display: 'none'}}>Edits create a new script version when you verify, validate, or run.</div>
+  </details>
+  <details className="card script-version-history" id="scriptVersionHistory">
+    <summary>Script history</summary>
+    <p className="hint">Versions preserve the script and inputs used for each run. Open an older version here to inspect or download it.</p>
+    <div id="scriptVersionList" />
+    <pre id="scriptVersionPreview" hidden />
   </details>
 <div className={"card"} id={"gitCard"}>
 <div style={{"display": "flex", "alignItems": "center", "gap": "10px", "flexWrap": "wrap"} as CSSProperties}>
@@ -1101,7 +1123,7 @@ return <>
 </div>
 </div>
 <div className={"panel"} id={"panel5"}>
-<div className={"card"} style={{"padding": "0", "overflow": "hidden"} as CSSProperties}>
+<div className="card report-result" style={{"padding": "0", "overflow": "hidden"} as CSSProperties}>
 <div className={"rpt-hero na"} id={"verdictHero"}>
 <div className={"rpt-hero-emoji"} id={"verdictEmoji"}>
 {"⏳"}
@@ -1118,6 +1140,15 @@ return <>
 {"⬇ Download report"}
 </button>
 </div>
+<div id="reportContext" className="report-identity" />
+<div className="report-overview">
+<section className="report-story" aria-labelledby="reportStoryTitle">
+  <h2 id="reportStoryTitle">What happened</h2>
+  <p id="reportSummary" />
+  <p id="reportPartial" className="note warn" hidden />
+</section>
+<aside className="report-evidence-summary" id="reportEvidenceSummary" aria-label="Key evidence" hidden />
+</div>
 <div className={"btnrow"} style={{"margin": "16px 0"} as CSSProperties}>
 <button className={"btn"} id={"rerunBtn"} onClick={handlers.h75} ref={initializeDisabled}>
 {"Run again"}
@@ -1126,7 +1157,7 @@ return <>
 
 </span>
 </div>
-<div className={"btnrow"}>
+<details className="report-baseline-actions"><summary>Baseline options</summary><div className={"btnrow"}>
 <button className={"btn ghost sm"} onClick={handlers.h76}>
 {"Use as baseline"}
 </button>
@@ -1136,10 +1167,7 @@ return <>
 <span className={"muted"} id={"baselineSelection"} role={"status"}>
 
 </span>
-</div>
-<div id={"reportContext"} className={"note info"}>
-
-</div>
+</div></details>
 <div className={"kpi-grid"} id={"kpiGrid"}>
 <div className={"kpi"}>
 <div className={"kpi-v"} id={"kRequests"}>
@@ -1191,21 +1219,24 @@ return <>
 </div>
 </div>
 </div>
-<div id={"reportDetails"} className={"card"}>
-
-</div>
-<div className={"rpt-cols"}>
-<div className={"card"}>
-<div className={"rpt-section-h"}>
-{"📉 During this run"}
-</div>
-<canvas id={"tsChart"} height={"150"} style={{"width": "100%", "marginTop": "10px"} as CSSProperties}>
-
-</canvas>
-<div className={"muted"} style={{"fontSize": "11.5px", "marginTop": "4px"} as CSSProperties}>
-{"RPS (teal) · p95 ms (amber) · error % (red) over time"}
-</div>
-</div>
+<section id="reportHighlights" className="card" aria-label="Threshold results" />
+<details className="card report-drilldown" open>
+  <summary>Timeline &amp; trends</summary>
+  <p className="hint" id="reportSampleNote" />
+  <div id="reportTimelineCharts" hidden>
+    <p className="hint" id="reportPlannedPhases" hidden />
+    <div className="report-sample-picker">
+      <label htmlFor="reportSampleIndex">Inspect a recorded sample</label>
+      <input type="range" id="reportSampleIndex" min="0" step="1" />
+      <output id="reportSampleReadout" htmlFor="reportSampleIndex" />
+    </div>
+    <div className="report-metric-charts">
+      <figure><figcaption>Throughput (requests/s)</figcaption><canvas id="reportLoadChart" role="img" aria-label="Throughput by elapsed time" /></figure>
+      <figure><figcaption>p95 latency (ms)</figcaption><canvas id="reportLatencyChart" role="img" aria-label="p95 latency by elapsed time" /></figure>
+      <figure><figcaption>Error rate (%)</figcaption><canvas id="reportErrorsChart" role="img" aria-label="Error rate by elapsed time" /></figure>
+    </div>
+  </div>
+  <details id="reportTimelineData"><summary>View recorded samples</summary><div id="reportSampleTable" className="table-scroll" /></details>
 <div className={"card"}>
 <div className={"rpt-section-h"}>
 {"📊 Trend across runs"}
@@ -1217,18 +1248,18 @@ return <>
 {"p95 latency across recent runs of this plan"}
 </div>
 </div>
-</div>
-<div className={"card"}>
-<div className={"rpt-section-h"}>
-{"📝 Executive summary "}
-<span className={"note ok"} id={"reportEval"} style={{"display": "none", "margin": "0", "padding": "3px 9px", "fontSize": "11px"} as CSSProperties}>
-
-</span>
-</div>
-<p id={"reportSummary"} style={{"fontSize": "14px", "lineHeight": "1.6", "margin": "8px 0 0"} as CSSProperties}>
-
-</p>
-</div>
+</details>
+<details className="card report-drilldown" id="reportEndpointDetails">
+  <summary>Requests, journeys &amp; workload</summary>
+  <div id="reportDetails" />
+  <div id="checksCard" style={{display: 'none'}}>
+    <h3>Response checks</h3>
+    <div id="checksBody" />
+  </div>
+</details>
+<details className="card report-drilldown" id="reportDiagnosisDetails">
+  <summary>Diagnosis &amp; baseline comparison</summary>
+  <span className="note" id="reportEval" style={{display: 'none'}} />
 <div className={"rpt-cols"}>
 <div className={"card"}>
 <div className={"rpt-section-h"}>
@@ -1247,17 +1278,10 @@ return <>
 </div>
 </div>
 </div>
-<div className={"card"} id={"checksCard"} style={{"display": "none"} as CSSProperties}>
-<div className={"rpt-section-h"}>
-{"✔ Response checks"}
-</div>
-<div id={"checksBody"} style={{"marginTop": "8px"} as CSSProperties}>
-
-</div>
-</div>
-<div className={"card"} id={"reportLogsCard"} style={{"display": "none"} as CSSProperties}>
-<div className={"rpt-section-h"}>
-{"📜 Run logs "}
+</details>
+<details className="card report-drilldown" id="reportLogsCard" style={{display: 'none'}}>
+<summary>Run logs</summary>
+<div className="rpt-section-h">
 <button className={"btn ghost sm"} style={{"marginLeft": "8px"} as CSSProperties} onClick={handlers.h78}>
 {"⬇ Download"}
 </button>
@@ -1265,7 +1289,7 @@ return <>
 <pre id={"reportLogs"} style={{"marginTop": "8px", "background": "#16201c", "color": "#d7e4dd", "padding": "12px 14px", "borderRadius": "10px", "fontFamily": "ui-monospace,Menlo,Consolas,monospace", "fontSize": "11.5px", "lineHeight": "1.5", "maxHeight": "300px", "overflow": "auto", "whiteSpace": "pre-wrap"} as CSSProperties}>
 
 </pre>
-</div>
+</details>
 <div className={"rpt-cols"}>
 <div className={"card"}>
 <div id={"reportObs"}>

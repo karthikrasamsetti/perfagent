@@ -1,22 +1,17 @@
 <div align="center">
 
-# ⚡ AI Performance Testing Agent
+# PerfAgent
 
-**Plan, generate, run, and diagnose performance tests from one guided web app —
-powered by AI where it helps, deterministic code where it matters.**
+**Plan, verify, run, and explain HTTP performance tests from one workspace.**
 
-Describe your test in plain English (or fill a form, or import a spec) → the AI drafts a
-realistic plan with auth flow and dynamic data → you review & approve → the agent generates
-a k6 script, runs it with live monitoring, and delivers a **report dashboard** that compares
-against your last run and is saved to a browsable history.
-
+Start with a URL, API endpoints, a conversation, or an import. Review the proposed workload,
+verify the requests and response checks with minimal traffic, then start a k6 load test.
+Use the dashboard to compare saved runs and the report to explain the result.
 </div>
 
 > [!IMPORTANT]
-> **Guiding principle — _AI proposes, code proves, humans approve._**
-> The AI only *drafts the plan* and *writes the narrative*. Deterministic code owns every
-> number, the generated script, and the pass/fail verdict. A human approves before any load
-> is fired, and **sensitive data is redacted before it ever reaches the AI.**
+> Run PerfAgent against targets you are authorized to test. Review sends no target traffic.
+> Verify sends test requests. Starting a full load run is a separate action.
 
 ---
 
@@ -24,6 +19,9 @@ against your last run and is saved to a browsable history.
 
 Start with the [project workflow](PROJECT_WORKFLOW.md) for project creation, separate script/Git imports, workload profiles, project dashboards and the admin overview. The [React frontend guide](frontend/README.md) covers development and production builds; [SPA_MIGRATION.md](SPA_MIGRATION.md) records the remaining incremental refactors.
 
+- [Screenshots](#screenshots)
+- [Technology stack](#technology-stack)
+- [AI roles](#ai-roles)
 - [Why this exists](#why-this-exists)
 - [Four ways to start](#four-ways-to-start)
 - [Reviewing the plan](#reviewing-the-plan)
@@ -36,6 +34,7 @@ Start with the [project workflow](PROJECT_WORKFLOW.md) for project creation, sep
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
 - [Running the app](#running-the-app)
+- [First UI test](#first-ui-test)
 - [Save tests to Git and import them back](#save-tests-to-git-and-import-them-back)
 - [Run in Jenkins](#run-in-jenkins-step-3)
 - [Database — SQLite or Postgres](#database--sqlite-or-postgres)
@@ -52,6 +51,54 @@ Start with the [project workflow](PROJECT_WORKFLOW.md) for project creation, sep
 - [Roadmap](#roadmap)
 
 ---
+
+## Screenshots
+
+The screenshots use sample projects, requests, and run results.
+
+| Performance dashboard | Run report |
+|---|---|
+| [![Historical metrics, failures, and regressions](docs/screenshots/dashboard.png)](docs/screenshots/dashboard.png) | [![Run verdict, explanation, and key evidence](docs/screenshots/report.png)](docs/screenshots/report.png) |
+
+<details>
+<summary>Project and test workflow screenshots</summary>
+
+| Page | Screenshot |
+|---|---|
+| Projects | [Project workspace](docs/screenshots/projects.png) |
+| Describe | [Target, endpoints, load, and response checks](docs/screenshots/describe.png) |
+| Review Plan | [Plan summary, editable requests, and test data](docs/screenshots/review-plan.png) |
+| Verify | [Verification and execution controls](docs/screenshots/verify.png) |
+| Script history | [Latest and previous script versions](docs/screenshots/script-history.png) |
+| Run | [Live metrics and endpoint measurements](docs/screenshots/run.png) |
+| Project workspace | [Searchable project tests, Git framework preview, and reports](docs/screenshots/test-library.png) |
+| Monitoring | [Monitoring view](docs/screenshots/monitoring.png) |
+| Activity | [Activity and AI usage](docs/screenshots/activity.png) |
+| Administration | [Admin overview](docs/screenshots/administration.png) |
+
+</details>
+
+## Technology stack
+
+| Layer | Technologies and responsibilities |
+|---|---|
+| Frontend | React 19, TypeScript, React Router 7, Vite 8, CSS, and Canvas charts. FastAPI serves the production build. |
+| API and contracts | Python 3.11+, FastAPI, Uvicorn, Pydantic, and OpenAPI. Shared contracts describe targets, workloads, requests, assertions, and thresholds. |
+| Persistence | SQLAlchemy 2, Alembic, SQLite for local use, and PostgreSQL through psycopg. LangGraph uses a SQLite or PostgreSQL checkpoint backend for conversation state. |
+| Planning and reporting | OpenAI or Anthropic through the server-side provider adapter, Instructor for structured responses, and LangGraph for conversation state and routing. |
+| Execution | k6 for the integrated verification and live-run workflow. Python and Jinja2 render scripts. The project also has generators for Locust, JMeter, and Gatling. |
+| Observability and QA | structlog, Prometheus metrics, pytest, Vitest, and a headless Chromium smoke harness with fixture APIs. |
+
+## AI roles
+
+| Role | What it helps with | Implementation |
+|---|---|---|
+| Conversation assistant | Collects missing details and prepares a draft from a conversation. | [LangGraph conversation workflow](src/perfagent/chat/graph.py) |
+| Test planner | Suggests journeys, traffic weights, and checks. Application code restores explicit inputs and applies the selected workload rules. | [Planner](src/perfagent/planner/planner.py) |
+| Request data and check suggestions | Suggests value sources for a body or response assertions from a supplied sample, for the user to review. | [Dynamic data suggestions](src/perfagent/dynamize.py), [check suggestions](src/perfagent/check_suggest.py) |
+| Report narrator | Explains computed results and can fall back to a rule-based summary when a provider is unavailable. | [Report narrator](src/perfagent/analyzer/narrator.py) |
+
+These roles share the application's guarded provider interface. Application code controls validation, script generation, run execution, metrics, and the verdict. The user selects when to verify or run.
 
 ## Why this exists
 
@@ -95,24 +142,17 @@ Inline **ℹ️ tooltips** explain every concept, so a QA engineer can use it wi
 
 ## Reviewing the plan
 
-Step 2 shows the **summary first** — what the test will do, in plain English — and keeps
-the detail closed until you want it. Everything a plan needs is in four numbered sections:
+Start with **Before you approve** and **What will run**. Confirm the target, masked authentication,
+planned load shape, journey order, and pass rules. Open a request with its **Edit** button to
+change its method, path, body, or response checks.
 
-1. **Target & load** — target URL, peak users, duration, test type and load tool. Changing
-   the size rebuilds the load shape in code (never by the AI). *Connection options*
-   (headers, environment label, TLS) are tucked underneath.
-2. **Test data file** *(optional)* — upload a CSV / TSV / TXT / JSON file here, see its
-   columns and first rows, and choose how its rows are used.
-3. **Journeys** — each step is one line (`POST /orders · 5 changing values · 2 checks`).
-   Click a step to open its **request data**, **checks**, and — under *Advanced* —
-   capturing a value for later steps and GraphQL.
-4. **Pass / fail rules** — written as sentences ("95% of responses are faster than **500** ms",
-   "The error rate stays under **5** %"); you only edit the number.
-
-**🔍 Preview the requests** shows the first requests of every step exactly as they will
-be sent — with real rows from your file and sample generated values — without sending
-anything. **Approve & generate** stays pinned to the bottom of the page, and warns you
-first if any value has no source and would be sent empty.
+- **Response checks** verify the content that came back. For example, enter `order.id` under the
+  Describe endpoint's optional response check, then confirm the field-existence rule in Review.
+  For a value comparison, edit the request's response checks in Review.
+- **Changing values** can come from uploaded data, runtime generators, or an earlier response
+  in the same journey. Review flags unresolved values and links to the affected request.
+- **Preview sample requests** shows sample URLs and bodies. **Approve & continue to Verify**
+  generates the execution script. Use **Verify** to send requests and evaluate the checks.
 
 ---
 
@@ -158,19 +198,11 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 
 ## The 5-step workflow
 
-```
-  1 ─ Describe ──▶ 2 ─ Review & Approve ──▶ 3 ─ Generate ──▶ 4 ─ Run & Monitor ──▶ 5 ─ Report
-  chat, form, own     summary first,          k6 script         validate, pre-flight,  dashboard +
-  script or Git       details on demand       (deterministic,   live metrics, chart,   diagnosis +
-                      + grounding + guardrail  editable)         live logs              vs. last run,
-                                                                                        checks + logs (saved)
-```
-
-1. **Describe** — a conversation, a form, your own k6 script, or an import from Git.
-2. **Review & approve** — a plain-English summary of what the test does and why, then four sections you open only if needed: load, **test data file**, journeys (with **request data** and **response checks** per step) and pass/fail rules. **Preview the requests** before approving.
-3. **Generate** — a deterministic renderer produces a runnable **k6** script. No LLM touches it. You can **edit it** to add custom debugging before running, and **Save to Git** for CI/CD.
-4. **Run & monitor** — **validate** the script and **pre-flight** the endpoints, then launch k6 with live tiles, a chart, and **live run logs**.
-5. **Report** — a **dashboard**: PASS/FAIL/INCONCLUSIVE verdict, KPI tiles, automatic **diagnosis**, a **comparison to your last run**, a **response-checks panel**, the **run logs**, and an AI narrative whose figures are verified. Saved to the **Runs & reports** history so you can reopen it anytime.
+1. **Describe** the target, endpoints, response checks, and workload. Choose VU-based traffic or a request-rate goal for a single HTTP request per iteration.
+2. **Review Plan** to inspect the draft, change any request, attach test data, and confirm checks and thresholds.
+3. **Verify** the generated or imported script. Validate its syntax, verify the requests and assertions, and optionally run a short smoke test.
+4. **Run** the load test and watch throughput, latency, errors, VUs, dropped iterations, and live logs.
+5. **Report** on the verdict and the evidence behind it. Reopen saved reports, compare compatible runs, or export a standalone HTML report.
 
 ---
 
@@ -217,7 +249,8 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
   debugging, or your own validation); **Regenerate** restores the deterministic version.
 
 ### 📊 Report & history
-- **Report dashboard** — verdict hero, KPI tiles, diagnosis + baseline cards, executive summary.
+- **Performance dashboard** shows comparable historical runs across latency, throughput, error rate, and daily outcomes, with environment and release filters and links to saved reports.
+- **Run report** opens with the verdict, What happened, and linked key evidence, followed by thresholds, synchronized timelines, endpoint rankings, and baseline comparison.
 - **Response checks panel** — each assertion with its pass/fail count, so you can see exactly
   which checks failed and why the run passed or failed.
 - **Run logs** — the full k6 output for the run is shown on the report, **saved with it**, and
@@ -325,7 +358,7 @@ structure is shared.
 uv sync
 
 # 2. configure your LLM key
-copy .env.example .env        # then edit .env
+cp .env.example .env          # macOS / Linux; PowerShell: Copy-Item .env.example .env
 
 # 3. run the agent
 uv run uvicorn perfagent.api.app:app --reload --port 8080
@@ -379,7 +412,7 @@ pip install -r requirements.txt
 ```
 </details>
 
-Then create your environment file (`copy .env.example .env`) and fill it in:
+Then create your environment file (`cp .env.example .env` on macOS/Linux or `Copy-Item .env.example .env` in PowerShell) and fill it in:
 
 ```ini
 LLM_PROVIDER=openai             # or "anthropic"
@@ -389,7 +422,7 @@ LOG_LEVEL=INFO
 GUARDRAIL_DEBUG=0               # set 1 temporarily to log the (redacted) prompt sent to the AI
 ```
 
-> `.env` is git-ignored, so your key is never committed.
+> Keep provider keys and target credentials in local server-side configuration. Commit only placeholders in `.env.example`.
 
 ---
 
@@ -406,8 +439,17 @@ Open **<http://127.0.0.1:8080>**.
 uv run python -m perfagent.sample_target.app      # http://127.0.0.1:8000
 ```
 
-Then: **Describe** (chat or form) → **Draft plan** → review/edit → **Approve** →
-**Generate** → **Validate / Pre-flight** → **Run & monitor** → **Report**.
+Then follow **Describe → Review Plan → Verify → Run → Report**. For frontend development, run `npm ci` and `npm run dev` from `frontend/` while the API is running. See the [frontend guide](frontend/README.md).
+
+## First UI test
+
+Start PerfAgent and the sample target using the commands above. Use port **8080** for the packaged UI or the URL printed by Vite for frontend development. The sample target runs on port **8000**.
+
+1. Create a project and select **Open project**. Confirm the workspace shows its tests and the configured Git framework. The tree previews the export layout. **Import / sync Git** is where you browse a repository.
+2. Choose **Create test**, give it a unique name, and enter `http://127.0.0.1:8000` and `POST /checkout` in Describe. Set the optional response check to `order_id`. The sample response contains that field. AI drafting uses the provider configured in `.env`.
+3. Use a small workload such as **2 peak VUs for 15 seconds**. In Review, confirm the path, response check, load chart, and thresholds. **Preview sample requests** displays sample input. **Approve & continue to Verify** saves the script version.
+4. Select **Verify test** and confirm the response check passes. Start the load test and compare the dashboard measurements with the saved report. Open the report and download the standalone HTML.
+5. Return to the plan and approve it again without edits. Verify should show **Latest version reused — no changes**. Then change a threshold and approve again. From **Project workspace → View history**, confirm you can inspect or download the older script while Verify stays on the latest version. Smoke run artifacts have a separate group.
 
 ---
 
@@ -623,7 +665,7 @@ added without documenting it there.
 
 ## Running the tests
 
-The suite mocks the LLM — **no API key, no paid calls, no k6 required**:
+The suite mocks the LLM and uses local fixtures. Tests that exercise k6 directly require an available binary or skip when it is unavailable:
 
 ```bash
 uv run pytest -q
@@ -713,50 +755,32 @@ prompt) let you confirm nothing sensitive reaches the AI before testing real end
 
 ## Architecture
 
-The system is a pipeline connected by a shared contract (the `LoadModel`). The AI is involved
-only in drafting the plan and writing the report narrative; everything else is deterministic
-code, and a human approves before any load is fired.
+The React workspace calls the FastAPI JSON API. `LoadModel` is the shared test specification.
+Approval saves or reuses a script version with frozen execution inputs. The runner
+streams k6 events into the aggregator. The analysis layer computes threshold outcomes
+and baseline changes, then saves the report for the dashboard and standalone HTML export.
 
 ```mermaid
-flowchart TD
-    IN([Inputs: chat · form · import OpenAPI/Postman/HAR · import from Git])
-    PLAN["1 · Plan — AI drafts<br/><small>journeys · weights · correlation · dynamic data</small>"]
-    LM["LoadModel — the contract<br/><small>scenarios · headers · extracts · assertions · thresholds · data</small>"]
-    APPROVE["2 · Approve — human gate<br/><small>editable form · plain-English summary · nothing runs yet</small>"]
-    GEN["3 · Generate — deterministic<br/><small>k6 script: data + headers + correlation + generators + assertions · editable · Save to Git</small>"]
-    RUN["4 · Run + monitor<br/><small>validate · pre-flight · k6 · live metrics + chart + logs</small>"]
-    REPORT["5 · Report — dashboard<br/><small>verdict · KPIs · diagnosis · checks · logs · vs. last run · saved</small>"]
-    OUT([Live dashboard + saved report history · CI/CD via Git & Jenkins])
-
-    IN --> PLAN --> LM --> APPROVE --> GEN --> RUN --> REPORT --> OUT
-
-    GUARD["Guardrails<br/><small>redact before AI · scrub output</small>"]
-    EVAL["AI evaluation<br/><small>plan grounding · report citation</small>"]
-    OBS["Logging · audit · tokens · traces<br/><small>every action recorded</small>"]
-    GUARD -. protects .-> PLAN
-    GUARD -. protects .-> REPORT
-    EVAL -. checks .-> PLAN
-    EVAL -. checks .-> REPORT
-    OBS -. records .-> RUN
-
-    classDef ai fill:#EEEDFE,stroke:#534AB7,color:#26215C;
-    classDef code fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
-    classDef gate fill:#FAEEDA,stroke:#854F0B,color:#412402;
-    classDef io fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A;
-    class PLAN ai;
-    class LM,GEN,RUN,REPORT,EVAL,OBS code;
-    class APPROVE,GUARD gate;
-    class IN,OUT io;
+flowchart LR
+    UI["React workspace"] --> API["FastAPI JSON API"]
+    API --> PLAN["Planning and imports"]
+    PLAN --> MODEL["LoadModel"]
+    MODEL --> APPROVE["Review and approve"]
+    APPROVE --> GEN["Script renderer and frozen inputs"]
+    GEN --> VERIFY["Verification"]
+    GEN --> RUN["k6 runner"]
+    RUN --> METRICS["Metrics aggregation and verdict"]
+    METRICS --> REPORT["Saved report and HTML export"]
+    API <--> DB[("SQLite or PostgreSQL")]
+    REPORT --> DB
+    DB --> DASH["Dashboard and history"]
+    PLAN -.-> LLM["Guarded AI provider"]
+    REPORT -.-> LLM
 ```
 
-**Trust boundary**
-
-| Owner | Responsible for |
-|---|---|
-| 🟣 **AI** | Journeys, weights, dynamic-data assignment, suggested checks, the report narrative |
-| 🟢 **Code** | Load shape, the generated script, every metric, verdict, diagnosis, baseline |
-| 🟡 **Human** | Approving the plan before any load is fired |
-| 🟡 **Guardrails** | Redacting sensitive data before the AI sees it |
+The UI also supports importing existing k6 scripts and recovering saved reports after a server restart.
+Local and managed access have different deployment requirements. Managed gateway checks apply at the
+workspace boundary. Per-project authorization and PostgreSQL row-level security remain hosted deployment work.
 
 ---
 

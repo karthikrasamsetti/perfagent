@@ -45,6 +45,7 @@ from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_basel
 from perfagent.analyzer.diagnostics import Finding, diagnose
 from perfagent.observability.correlation import correlate
 from perfagent.analyzer.verdict import evaluate_k6_summary
+from perfagent.analyzer.report_evidence import report_evidence
 from perfagent.api.access import WorkspaceAccess
 from perfagent.api.browser_security import BrowserWriteProtection
 from perfagent.api.chat_routes import router as chat_router
@@ -90,9 +91,9 @@ from perfagent.planner.profile import build_profile
 from perfagent.preflight import preflight
 from perfagent.providers import build_provider
 from perfagent.request_data import preview_requests
-from perfagent.api.run_inputs import freeze_script, script_workload_version
+from perfagent.api.run_inputs import freeze_script, planned_phases, script_workload_version
 from perfagent.api.test_identity import saved_identity
-from perfagent.api.projects import router as projects_router, require_project
+from perfagent.api.projects import begin_name_write, check_test_name, require_project, router as projects_router
 from perfagent.db.models import ScriptSnapshotRow, ScriptVerificationRow
 from perfagent.runner import get_run, k6_available, start_run, stop_run
 from perfagent.runner.k6_runner import RunCapacityExceeded
@@ -338,7 +339,7 @@ def get_saved_report(result_id: str) -> dict:
             report = json.loads(r.report_json)
             report.setdefault("plan_id", r.plan_id)
             report["execution"] = {**saved_identity(r, s), **report.get("execution", {})}
-            return report
+            return {**report, "evidence": report_evidence(report)}
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=500, detail="corrupt saved report") from e
 
@@ -453,6 +454,10 @@ async def import_endpoints_api(file: UploadFile) -> dict:
 @app.post("/api/plan", **doc("POST", "/api/plan"))
 def create_plan(request: PlanRequest) -> dict:
     """AI drafts a LoadModel from the endpoints, saved; returns it for review."""
+    if request.project_id and request.test_name.strip():
+        with get_session() as s:
+            require_project(s, request.project_id)
+            check_test_name(s, request.project_id, request.test_name)
     try:
         provider = build_provider()
     except ValueError as e:
@@ -467,8 +472,12 @@ def create_plan(request: PlanRequest) -> dict:
     redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
 
     with get_session() as s:
+        begin_name_write(s)
+        project_id = require_project(s, request.project_id)
+        if request.project_id:
+            check_test_name(s, project_id, plan.load_model.test_name or request.goal)
         row = PlanRow(
-            project_id=require_project(s, request.project_id),
+            project_id=project_id,
             id=plan.id,
             target_base_url=plan.load_model.target_base_url,
             goal=request.goal,
@@ -653,11 +662,20 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
     generated script is parameterized from that data file.
     """
     with get_session() as s:
-        row = s.get(PlanRow, plan_id)
+        begin_name_write(s)
+        row = s.query(PlanRow).filter_by(id=plan_id).with_for_update().one_or_none()
         if row is None:
             raise HTTPException(status_code=404, detail="plan not found")
 
         model = body.load_model or LoadModel.model_validate_json(row.load_model_json)
+        model.test_name = model.test_name.strip()
+        saved_name = json.loads(row.load_model_json).get("test_name") or ""
+        if row.project_id not in (None, "legacy") and saved_name.strip() and not model.test_name.strip():
+            raise HTTPException(400, "Enter a test name before approving the plan.")
+        previous_name = saved_name or row.goal
+        new_name = model.test_name or row.goal
+        if row.project_id not in (None, "legacy") and previous_name.strip().casefold() != new_name.strip().casefold():
+            check_test_name(s, row.project_id, new_name, plan_id=row.id)
 
         # Attach the uploaded data file's schema to the model (values stay in the DB).
         if body.data_file_id:
@@ -690,22 +708,35 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
             filename=script.filename,
             content=script.content,
         )
-        s.add(script_row)
-        freeze_script(s, script_row, model, generated=True)
+        latest = next((entry for entry in reversed(_plan_script_versions(s, row))
+                       if entry["mode"] != "smoke"), None)
+        previous = s.get(ScriptSnapshotRow, latest["script_id"]) if latest else None
+        previous_version = json.loads(previous.metadata_json).get("workload_version") if previous else None
+        frozen = freeze_script(s, script_row, model, generated=True)
+        current_version = json.loads(frozen.metadata_json)["workload_version"]
+        reused = bool(latest and latest["source"] == "generated" and latest["tool"] == script.tool
+                      and previous_version == current_version)
+        s.expunge(frozen)
+        if not reused:
+            s.add(script_row)
+            s.flush()
+            s.add(frozen)
         s.commit()
 
         audit.record("plan.approved", entity="plan", entity_id=plan_id,
                      target=model.target_base_url, summary="Plan approved by user")
-        audit.record("script.generated", entity="script", entity_id=script.id,
-                     target=model.target_base_url,
-                     summary=f"Generated {script.tool} script {script.filename}")
+        if not reused:
+            audit.record("script.generated", entity="script", entity_id=script.id,
+                         target=model.target_base_url,
+                         summary=f"Generated {script.tool} script {script.filename}")
 
         return {
-            "script_id": script.id,
+            "script_id": latest["script_id"] if reused else script.id,
             "plan_id": plan_id,
             "tool": script.tool,
             "filename": script.filename,
             "content": script.content,
+            "reused": reused,
         }
 
 
@@ -732,6 +763,24 @@ def list_plans(project_id: str | None = None) -> dict:
         }
 
 
+def _plan_script_versions(session, plan) -> list[dict]:
+    rows = (session.query(ScriptRow.id, ScriptRow.tool, ScriptRow.filename, ScriptRow.created_at,
+                          ScriptSnapshotRow.metadata_json)
+            .outerjoin(ScriptSnapshotRow, ScriptSnapshotRow.script_id == ScriptRow.id)
+            .filter(ScriptRow.plan_id == plan.id)
+            .order_by(ScriptRow.created_at, ScriptRow.id).all())
+    versions = []
+    for script_id, tool, filename, created_at, metadata_json in rows:
+        metadata = json.loads(metadata_json) if metadata_json else {}
+        source = ("edited" if metadata.get("script_edited") else
+                  "generated" if metadata.get("generated") else
+                  "imported" if plan.goal.startswith("Uploaded script") else "saved")
+        versions.append({"script_id": script_id, "tool": tool, "filename": filename,
+                         "created_at": created_at.isoformat(), "mode": metadata.get("mode", "full"),
+                         "source": source})
+    return versions
+
+
 @app.get("/api/plans/{plan_id}", **doc("GET", "/api/plans/{plan_id}"))
 def get_plan(plan_id: str) -> dict:
     with get_session() as s:
@@ -744,17 +793,7 @@ def get_plan(plan_id: str) -> dict:
             "target": row.target_base_url,
             "goal": row.goal,
             "load_model": LoadModel.model_validate_json(row.load_model_json).model_dump(),
-            "scripts": [
-                {
-                    "script_id": sc.id,
-                    "tool": sc.tool,
-                    "filename": sc.filename,
-                    "created_at": sc.created_at.isoformat(),
-                    "mode": json.loads(snapshot.metadata_json).get("mode", "full")
-                    if (snapshot := s.get(ScriptSnapshotRow, sc.id)) else "full",
-                }
-                for sc in row.scripts
-            ],
+            "scripts": _plan_script_versions(s, row),
         }
 
 
@@ -893,7 +932,7 @@ def edit_script(script_id: str, body: EditScriptBody) -> dict:
 class UploadScriptBody(BaseModel):
     project_id: str | None = None
     test_name: str = Field(default="", max_length=120)
-    filename: str = "loadtest.js"
+    filename: str = ""
     content: str
     target_base_url: str = ""
     tool: str = "k6"
@@ -911,6 +950,14 @@ def upload_script(body: UploadScriptBody) -> dict:
     tool = body.tool or "k6"
     if tool not in supported_tools():
         raise HTTPException(status_code=400, detail=f"unsupported tool {tool!r}")
+    extension = {"k6": ".js", "locust": ".py", "jmeter": ".jmx", "gatling": ".scala"}[tool]
+    filename = body.filename.strip() or "loadtest" + extension
+    try:
+        LoadModel.safe_script_filename(filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if len(filename) > 120 or not filename.endswith(extension):
+        raise HTTPException(400, f"Use a script filename of up to 120 characters ending in {extension}.")
 
     target = body.target_base_url.strip() or "http://127.0.0.1:8000"
     uploaded_model = {
@@ -919,11 +966,15 @@ def upload_script(body: UploadScriptBody) -> dict:
         "load_profile": {"stages": [{"duration_seconds": 1, "target_users": 1}]},
         "thresholds": [],
     }
-    uploaded_model["test_name"] = body.test_name.strip() or Path(body.filename or "loadtest.js").stem
+    uploaded_model["test_name"] = body.test_name.strip() or Path(filename).stem
     minimal = json.dumps(uploaded_model)
     with get_session() as s:
+        begin_name_write(s)
+        project_id = require_project(s, body.project_id)
+        if body.project_id:
+            check_test_name(s, project_id, uploaded_model["test_name"])
         plan_row = PlanRow(
-            project_id=require_project(s, body.project_id),
+            project_id=project_id,
             target_base_url=target,
             goal="Uploaded script (no AI plan)",
             load_model_json=minimal,
@@ -935,7 +986,7 @@ def upload_script(body: UploadScriptBody) -> dict:
         script_row = ScriptRow(
             plan_id=plan_id,
             tool=tool,
-            filename=body.filename or "loadtest.js",
+            filename=filename,
             content=body.content,
         )
         s.add(script_row)
@@ -1073,7 +1124,7 @@ def run_script(script_id: str, body: RunOptions | None = None) -> dict:
                                       metadata_json=json.dumps({**metadata, "duration_seconds": 10,
                                           "script_name": smoke_filename,
                                           "peak_users": model.load_profile.peak_users, "arrival_rate": None,
-                                          "mode": "smoke"}))
+                                          "mode": "smoke", "target_request_rate": None}))
             s.add(saved)
             metadata = json.loads(saved.metadata_json)
         if body.baseline_id:
@@ -1091,6 +1142,8 @@ def run_script(script_id: str, body: RunOptions | None = None) -> dict:
         execution = {**metadata, "baseline_id": body.baseline_id,
                      "release_label": body.release_label, "plan_id": row.plan_id,
                      "verification": _latest_verification(s, row.id)}
+        if row.tool == "k6" and metadata.get("generated") and not metadata.get("script_edited"):
+            execution["planned_phases"] = planned_phases(model)
         try:
             run = start_run(run_id=uuid.uuid4().hex, script_id=row.id, tool=row.tool,
                             target=model.target_base_url, content=row.content,
@@ -1122,6 +1175,8 @@ def run_status(run_id: str) -> dict:
             "peak_users": run.metadata.get("peak_users") if run.metadata.get("generated")
             and not run.metadata.get("script_edited") and not run.metadata.get("arrival_rate") else None,
             "iterations_per_second": run.metadata.get("arrival_rate") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") else None,
+            "requests_per_second": run.metadata.get("target_request_rate") if run.metadata.get("generated")
             and not run.metadata.get("script_edited") else None,
         },
         "snapshot": run.snapshot,
@@ -1172,6 +1227,7 @@ def _build_report(run) -> tuple[dict, str]:
         narrative=narrative,
         plan_id="",
         run_id=run.run_id,
+        samples=run.samples,
     )
     return verdict, report_html
 
@@ -1193,7 +1249,8 @@ def _saved_report(session, run_id):
 @app.get("/api/runs/{run_id}/report", **doc("GET", "/api/runs/{run_id}/report"))
 def run_report(run_id: str) -> dict:
     with _report_lock:
-        return _finish_report(run_id)
+        payload = _finish_report(run_id)
+    return {**payload, "evidence": report_evidence(payload)}
 
 
 def _finish_report(run_id: str) -> dict:
@@ -1389,7 +1446,9 @@ def run_report_download(run_id: str) -> HTMLResponse:
         target=payload.get("target", ""), tool=payload.get("tool", "k6"),
         snapshot=payload.get("snapshot", {}), verdict=payload["verdict"],
         narrative=Narrative.model_validate(payload["narrative"]),
-        plan_id=payload.get("plan_id", ""), run_id=payload.get("run_id", run_id))
+        plan_id=payload.get("plan_id", ""), run_id=payload.get("run_id", run_id),
+        execution=payload.get("execution"), status=payload.get("status"),
+        samples=payload.get("samples"))
     return HTMLResponse(report_html, headers={
         "Content-Disposition": f'attachment; filename="report_{run_id[:8]}.html"'})
 

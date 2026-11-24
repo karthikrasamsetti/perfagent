@@ -28,6 +28,7 @@ class Aggregator:
         self._durations: list[float] = []   # http_req_duration values (ms)
         self._req_count = 0
         self._iterations = 0
+        self._traffic_bytes: Counter = Counter()
         self._active_vus: int | None = None
         self._peak_vus: int | None = None
         self._status_codes: dict[str, Counter] = defaultdict(Counter)
@@ -42,6 +43,7 @@ class Aggregator:
         self._by_name: dict[str, dict] = {}
         # per-check pass/fail (by check name) — for the UI "Checks" panel
         self._checks: dict[str, dict] = {}
+        self._endpoint_check_failures: Counter = Counter()
         self._phases: dict[str, dict[str, list[float]]] = {}
 
     def add_point(self, obj: dict) -> None:
@@ -70,6 +72,8 @@ class Aggregator:
         elif metric in _HTTP_PHASES:
             self._phases.setdefault(name, {}).setdefault(metric, []).append(float(value))
 
+        elif metric in {"data_sent", "data_received"}:
+            self._traffic_bytes[metric] += int(value)
         elif metric == "vus":
             self._active_vus = int(value)
             self._peak_vus = max(self._peak_vus or 0, self._active_vus)
@@ -98,6 +102,9 @@ class Aggregator:
             # k6 emits one `checks` point per check evaluation; the check's name is in
             # tags.check, value is 1 (pass) or 0 (fail).
             self._checks_total += 1
+            endpoint = tags.get("perfagent_endpoint")
+            if endpoint:
+                self._endpoint_check_failures[endpoint] += int(not value)
             check_name = tags.get("check", "(unnamed check)")
             c = self._checks.setdefault(check_name, {"passed": 0, "failed": 0})
             if value:
@@ -147,6 +154,7 @@ class Aggregator:
                     "requests": b["count"],
                     "status_codes": dict(self._status_codes.get(name, {})),
                     "failed": b["failed"],
+                    "checks_failed": self._endpoint_check_failures.get(name),
                     "p95_ms": self._pctl(d, 95),
                     "avg_ms": round(sum(d) / len(d), 2) if d else 0.0,
                 }
@@ -165,6 +173,8 @@ class Aggregator:
             "requests": self._req_count,
             "iterations": self._iterations,
             "active_vus": self._active_vus,
+            "bytes_sent": self._traffic_bytes.get("data_sent"),
+            "bytes_received": self._traffic_bytes.get("data_received"),
             "observed_peak_vus": self._peak_vus,
             "per_journey": [
                 {"name": name, "requests": counts["http_reqs"],

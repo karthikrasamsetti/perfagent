@@ -57,6 +57,21 @@ def finished(api, script_id, monkeypatch, *, status="finished"):
     return run
 
 
+def test_identical_generation_reuses_latest_version_and_changes_preserve_history(setup):
+    client, _, _, script_id, model = setup
+    repeated = client.post("/api/plan/plan/generate", json={"tool": "k6"})
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["script_id"] == script_id and repeated.json()["reused"] is True
+    model.thresholds[0].value = 350
+    changed = client.post("/api/plan/plan/generate", json={"tool": "k6", "load_model": model.model_dump(mode="json")})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["script_id"] != script_id and changed.json()["reused"] is False
+    versions = client.get("/api/plans/plan").json()["scripts"]
+    assert [version["script_id"] for version in versions] == [script_id, changed.json()["script_id"]]
+    assert all(version["source"] == "generated" for version in versions)
+    assert client.get(f"/api/scripts/{script_id}/download").status_code == 200
+
+
 def test_report_retries_do_not_duplicate_and_download_survives_restart(setup, monkeypatch):
     client, engine, api, script_id, _ = setup
     run = finished(api, script_id, monkeypatch)
@@ -348,3 +363,102 @@ def test_verification_is_saved_only_for_the_exact_script_version(setup, monkeypa
     failed = client.post("/api/preflight", json={"script_id": script_id})
     assert failed.status_code == 200, failed.text
     assert client.get(f"/api/scripts/{script_id}/readiness").json()["verification"]["all_ok"] is False
+
+
+def test_history_overview_covers_all_matching_runs_and_preserves_viewer_fields(setup):
+    client, engine, _, _, _ = setup
+    with Session(engine) as s:
+        for index in range(3):
+            s.add(RunResultRow(
+                id=f"overview-{index}", plan_id="plan", target_base_url="http://fixture.test",
+                verdict="fail" if index == 1 else "pass", requests=100 + index,
+                p95_ms=100 + index * 20, error_rate=.01,
+                created_at=datetime(2026, 11, 19, 6, index),
+            ))
+        s.add(RunResultRow(id="outside", plan_id="another", target_base_url="http://unrelated.test",
+                           requests=200, p95_ms=999, verdict="fail"))
+        s.commit()
+
+    def overview(offset):
+        response = client.get("/api/reporting/runs", params={
+            "plan_id": "plan", "role": "viewer", "include_overview": "true",
+            "limit": 1, "offset": offset,
+        })
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    first, second = overview(0), overview(1)
+    assert first["runs"] != second["runs"]
+    assert first["overview"] == second["overview"]
+    totals = first["overview"]
+    assert (totals["total"], totals["passed"], totals["failed"], totals["requests"]) == (3, 2, 1, 303)
+    assert totals["worst_p95_ms"] == 140
+    assert totals["latest"]["run_id"] == "overview-2"
+    assert [point["p95_ms"] for point in totals["trend"]] == [100, 120, 140]
+    assert all("error_rate" not in point for point in totals["trend"])
+    assert totals["outcomes"] == [{"day": "2026-11-19", "pass": 2, "fail": 1, "inconclusive": 0}]
+
+
+def test_history_filters_environment_and_release_before_aggregation(setup):
+    client, engine, _, _, _ = setup
+    with Session(engine) as s:
+        for index, (environment, release) in enumerate([
+            ("staging", "v2"), ("staging", "v1"), ("production", "v2"),
+        ]):
+            payload = {"execution": {"environment": environment, "release_label": release}}
+            s.add(RunResultRow(id=f"filtered-{index}", plan_id="plan", target_base_url="http://fixture.test",
+                               verdict="pass", report_json=json.dumps(payload)))
+        s.commit()
+    params = {"plan_id": "plan", "environment": "STAGING", "release_label": "v2",
+              "role": "engineer", "include_overview": "true"}
+    result = client.get("/api/reporting/runs", params=params).json()
+    assert result["total"] == result["overview"]["total"] == 1
+    assert result["runs"][0]["run_id"] == "filtered-0"
+    assert client.get("/api/reporting/runs", params={**params, "role": "viewer"}).status_code == 400
+
+
+@pytest.mark.parametrize(("environment", "status", "requests", "visible"), [
+    ("staging", "finished", 20, True),
+    ("production", "finished", 20, False),
+    ("staging", "stopped", 20, False),
+    ("staging", "finished", 0, False),
+])
+def test_dashboard_regression_requires_comparable_measurements(
+    setup, environment, status, requests, visible,
+):
+    client, engine, _, _, _ = setup
+    with Session(engine) as s:
+        for index, run_id in enumerate(("baseline", "latest")):
+            report = {
+                "status": status if index else "finished",
+                "baseline_id": "baseline" if index else None,
+                "execution": {"workload_version": "v1",
+                              "environment": environment if index else "staging"},
+                "snapshot": {"requests": requests if index else 20,
+                             "error_rate": .02 if index else 0,
+                             "latency": {"p95_ms": 140 if index else 100}},
+            }
+            s.add(RunResultRow(id=run_id, plan_id="plan", target_base_url="http://fixture.test",
+                               verdict="pass", created_at=datetime(2026, 11, 19, 6, index),
+                               report_json=json.dumps(report)))
+        s.commit()
+
+    for role in ("viewer", "engineer"):
+        response = client.get("/api/reporting/runs", params={
+            "plan_id": "plan", "role": role, "include_overview": "true",
+        })
+        assert response.status_code == 200, response.text
+        overview = response.json()["overview"]
+        assert overview["attention"] is None
+        alert = overview["regression"]
+        if not visible:
+            assert alert is None
+            continue
+        assert alert["baseline_id"] == "baseline" and alert["run"]["verdict"] == "pass"
+        assert alert["changes"][-1] == {
+            "label": "p95 latency", "metric": "p95_ms",
+            "previous_fmt": "100 ms", "current_fmt": "140 ms",
+        }
+        assert [change["metric"] for change in alert["changes"]] == (
+            ["p95_ms"] if role == "viewer" else ["error_rate", "p95_ms"]
+        )

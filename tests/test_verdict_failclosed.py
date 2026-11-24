@@ -60,3 +60,26 @@ def test_missing_metric_is_inconclusive():
 def test_no_thresholds_is_inconclusive():
     m = _model([])
     assert evaluate(m, _SNAP)["overall_passed"] is None
+
+def test_nested_k6_summary_keeps_custom_metrics_and_reports_measured_values():
+    from perfagent.analyzer.verdict import evaluate_k6_summary
+    from perfagent.ci.jenkins import summarize_k6
+
+    metrics = {
+        "http_req_duration": {"values": {"p(95)": 230}, "thresholds": {"p(95)<500": {"ok": True}}},
+        "http_reqs": {"values": {"count": 1000, "rate": 15}},
+        "http_req_failed": {"values": {"rate": .02}, "thresholds": {"rate<0.01": {"ok": False}}},
+        "checks{check:response is XML}": {"values": {"rate": 1}, "thresholds": {"rate>=0.99": {"ok": True}}},
+    }
+
+    result = evaluate_k6_summary(metrics)
+    assert result["overall_passed"] is False
+    assert [(c["metric"], c["actual"], c["passed"]) for c in result["checks"]] == [
+        ("p95_ms", 230, True), ("error_rate", .02, False), ("checks{check:response is XML} rate", 1, True),
+    ]
+    archived = summarize_k6({"metrics": metrics})
+    assert archived["requests"] == 1000
+    assert archived["rps"] == 15
+    assert archived["p95_ms"] == 230
+    assert archived["error_rate"] == .02
+    assert archived["verdict"] == "fail"

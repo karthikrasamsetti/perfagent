@@ -158,3 +158,43 @@ def test_k6_verification_runs_every_journey_and_reports_failed_checks():
         assert browse["name"] == "browse" and browse["ok"] is True
     finally:
         _stop(server)
+
+
+def test_k6_schedules_15_http_requests_per_second_when_capacity_is_available():
+    import pytest
+
+    from perfagent.analyzer.verdict import evaluate_k6_summary
+    from perfagent.runner.k6_binary import find_k6
+    from perfagent.runner.k6_runner import start_run, stop_run
+
+    if find_k6() is None:
+        pytest.skip("An installed k6 binary is required.")
+    server = _serve()
+    try:
+        model = _model(port=server.server_port)
+        model.scenarios[0].steps = model.scenarios[0].steps[:1]
+        model.load_profile = LoadProfile(
+            stages=[Stage(duration_seconds=2, target_users=10)],
+            arrival_rate=15,
+            target_request_rate=15,
+            pre_allocated_vus=10,
+        )
+        content = render_k6(model)
+        assert "executor: 'constant-arrival-rate'" in content
+        assert "rate: 15" in content
+        assert "'http_reqs': ['count>=30']" in content
+        run = start_run("rate-15-test", "script", "k6", model.target_base_url, content)
+        try:
+            deadline = time.monotonic() + 12
+            while run.status not in {"finished", "stopped", "error"} and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert run.status == "finished", run.message
+            # The two-second arrival window can include one request at its boundary.
+            assert 30 <= run.snapshot["requests"] <= 31
+            assert run.snapshot["dropped_iterations"] == 0
+            verdict = evaluate_k6_summary(run.summary_metrics)
+            assert verdict["overall_passed"], verdict
+        finally:
+            stop_run(run.run_id)
+    finally:
+        _stop(server)
