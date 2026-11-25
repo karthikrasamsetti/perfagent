@@ -173,12 +173,20 @@ async function main(){
    await pause(120);
    await check('How it works scrolls to and focuses the workflow', "location.hash==='#workflow' && document.activeElement.id==='workflow' && Math.abs(document.getElementById('workflow').getBoundingClientRect().top)<40");
    const cardCenter=await evaluate(`(()=>{
-     const rect=document.querySelector('.public-steps article').getBoundingClientRect();
+     const card=document.querySelector('.public-steps article');
+     card.scrollIntoView({block:'center',behavior:'instant'});
+     const rect=card.getBoundingClientRect();
      return {x:rect.left+rect.width/2,y:rect.top+rect.height/2};
    })()`);
    await send('Input.dispatchMouseEvent',{...cardCenter,type:'mouseMoved'});
-   await pause(230);
-   await check('Workflow cards lift on hover and the whole card is clickable', `getComputedStyle(document.querySelector('.public-steps article')).transform!=='none' && document.elementFromPoint(${cardCenter.x},${cardCenter.y}).closest('a').getAttribute('href')==='/demo?view=review'`);
+   await check('The workflow card center links to the sample review', `document.elementFromPoint(${cardCenter.x},${cardCenter.y})?.closest('a')?.getAttribute('href')==='/demo?view=review'`);
+   await check('Workflow cards lift on hover when the browser supports it', `(async()=>{
+     const card=document.querySelector('.public-steps article');
+     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+     await Promise.all(card.getAnimations().map(animation=>animation.finished));
+     const canLift=matchMedia('(hover: hover) and (prefers-reduced-motion: no-preference)').matches;
+     return (getComputedStyle(card).transform!=='none')===canLift;
+   })()`);
    await evaluate("document.querySelector('.public-steps article a').focus()");
    await check('Workflow cards highlight the keyboard-focused link', "document.querySelector('.public-steps article').matches(':focus-within')");
 
