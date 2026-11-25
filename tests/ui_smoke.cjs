@@ -50,6 +50,8 @@ async function main(){
   }else if(p.endsWith('/workloads')){
    if(req.method==='POST'){data={...body,workload_id:'profile-one'};profiles[p]=[data];}else data={workloads:profiles[p]||[]};
   }else if(p.endsWith('/project'))data={plan_id:'named-plan',project_id:body.project_id};
+  else if(p==='/api/usage/total')data={tokens:820,cost_usd:.002};
+  else if(p==='/api/workspace/session')data={managed:false};
   else if(p==='/api/tools')data={tools:['k6','locust','jmeter','gatling']};
   else if(p.startsWith('/api/plans/')){
    const planId=p.split('/')[3],run=runs.find(r=>r.plan_id===planId);
@@ -140,6 +142,32 @@ async function main(){
  `});
  await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/'});await pause(900);
  if(spaMode){
+   await check('Public landing loads without workspace APIs', "!!document.querySelector('.public-hero h1') && performance.getEntriesByType('resource').every(entry=>!new URL(entry.name).pathname.startsWith('/api/'))");
+   await evaluate("document.querySelector('.public-preview-switch button:last-child').click()");
+   await check('Landing lets users switch the product preview with a button', "document.querySelector('.public-preview-switch button:last-child').getAttribute('aria-pressed')==='true' && document.querySelector('#public-preview').alt.includes('dashboard')");
+   await evaluate("document.querySelector('.public-preview-switch button:first-child').click()");
+   await capture('landing');
+   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+   await pause(160);
+   await check('Landing fits mobile and shows the demo action', "document.documentElement.scrollWidth<=390 && document.querySelector('.public-primary').getBoundingClientRect().width>0");
+   await capture('landing-mobile');
+   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+   await evaluate("document.querySelector('.public-nav a[href=\"/sign-in\"]').click()");
+   await pause(400);
+   await check('Sign-in entry explains invite access and continues to the workspace', "location.pathname==='/sign-in' && document.querySelector('#access-title').textContent.includes('Sign in') && document.querySelector('.public-primary').getAttribute('href')==='/workspace'");
+   await capture('sign-in');
+   await evaluate("document.querySelector('.public-access .public-secondary').click()");
+   await pause(650);
+   await check('Landing demo opens the isolated sample workspace', "location.pathname==='/demo' && document.querySelector('.demo-banner') && !!document.querySelector('#view-home.show')");
+   await evaluate("document.querySelector('.guided-tour-actions button:first-child').click()");
+   await pause(100);
+   await evaluate("document.querySelector('.home-lead a').click()");
+   await pause(380);
+   await check('Demo navigation shows the sample project and avoids network APIs', "document.querySelector('.project-card')?.textContent.includes('Commerce Demo') && location.pathname==='/demo' && performance.getEntriesByType('resource').every(entry=>!new URL(entry.name).pathname.startsWith('/api/'))");
+   await check('Demo account indicator uses the sample context', "document.querySelector('.workspace-account summary').textContent.trim()==='Demo'");
+   await evaluate("localStorage.removeItem('perfagent:guided-tour:v2')");
+   await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/workspace'});
+   await pause(900);
    await check('First-visit tour opens with an accessible title', "document.querySelector('.guided-tour').open && document.querySelector('#tour-title').textContent === 'Take a tour of PerfAgent'");
    await evaluate("document.querySelector('.guided-tour-actions button:first-child').click()");
    await pause(100);
@@ -184,7 +212,7 @@ async function main(){
    await checkTourPlacement('Home','Desktop',{focus:false});
    await capture('guided-tour-home');
    await nextTourStop();
-   await check('Tour opens actual Projects with a sample project', "location.pathname === '/projects' && document.querySelector('.project-card')?.textContent.includes('Commerce Demo')");
+   await check('Tour opens actual Projects with a sample project', "location.pathname === '/demo' && !!document.querySelector('#view-projects.show') && document.querySelector('.project-card')?.textContent.includes('Commerce Demo')");
    await checkTourPlacement('Projects','Desktop');
    for(const title of tourStops.slice(2)){
      await nextTourStop();
@@ -217,6 +245,13 @@ async function main(){
    await pause(550);
    await check('Done restores the original workspace and focuses Help', "!document.querySelector('.guided-tour-overlay') && document.activeElement.id === 'guided-tour-help' && !document.documentElement.dataset.tour");
    await check('Starts at Home with the main navigation selected', "document.getElementById('view-home').classList.contains('show')&&document.querySelector('[data-view=home]').getAttribute('aria-current')==='page'");
+   await evaluate("document.querySelector('.workspace-account summary').focus()");
+   await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+   await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+   await check('Account disclosure opens from the keyboard and shows local session and usage', "document.querySelector('.workspace-account').open && document.querySelector('.workspace-account-panel strong').textContent==='Local workspace' && Number(document.querySelector('#sessionTokens').textContent)>0");
+   await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+   await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+   await check('Escape closes account disclosure and restores focus', "!document.querySelector('.workspace-account').open && document.activeElement===document.querySelector('.workspace-account summary')");
    await capture('home');
    await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
    await check('Home fits a narrow viewport','document.documentElement.scrollWidth<=390');
@@ -235,6 +270,14 @@ async function main(){
    field.value='';field.dispatchEvent(new Event('input',{bubbles:true}));
    return filtered.join()==='Payments'&&document.querySelectorAll('#projectCards .project-card:not([hidden])').length===2;
  })()`);
+ await evaluate(`(async()=>{
+   const original=window.fetch;
+   window.fetch=(url,options)=>url==='/api/projects'?Promise.resolve(new Response('{}',{status:503})):original(url,options);
+   try{await loadProjects()}finally{window.fetch=original}
+ })()`);
+ await check('Projects retains cards and exposes an inline retry after a failed refresh', "!document.getElementById('projectsRetry').hidden && document.querySelectorAll('.project-card').length===2");
+ await evaluate("document.getElementById('projectsRetry').click()");await pause(150);
+ await check('Projects retry clears the loading error', "document.getElementById('projectsFeedback').hidden && !document.getElementById('projectCards').hasAttribute('aria-busy')");
  await capture('projects-redesign');
  fs.writeFileSync(path.join(os.tmpdir(),'perfagent-ui-projects.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
  await check('Generated code is collapsed by default', "document.querySelector('.script-details').open===false&&document.getElementById('preflightBtn').closest('details')===null");
@@ -248,11 +291,21 @@ async function main(){
      "Boolean(document.getElementById('endpoints').compareDocumentPosition(document.getElementById('draftSchedule'))&Node.DOCUMENT_POSITION_FOLLOWING)&&document.getElementById('impdz').tagName==='BUTTON'");
    await capture('describe-redesign');
  }
- await evaluate("document.getElementById('planBtn').click()");await pause(250);
+ if(spaMode){
+   await evaluate("document.getElementById('target').value='invalid host';document.getElementById('planBtn').click()");
+   await check('Describe links the URL feedback and focuses the invalid field', "document.activeElement.id==='target' && document.activeElement.getAttribute('aria-errormessage')==='planStatus' && document.getElementById('planStatus').textContent.includes('HTTP or HTTPS')");
+   await evaluate("document.getElementById('target').value='http://fixture.test';document.getElementById('target').dispatchEvent(new Event('input',{bubbles:true}))");
+   await check('Editing clears the field error state', "!document.getElementById('target').hasAttribute('aria-invalid')");
+   await check('Draft immediately marks the action busy', "(()=>{const button=document.getElementById('planBtn');button.click();return button.disabled && button.getAttribute('aria-busy')==='true' && document.getElementById('planStatus').textContent.includes('Drafting');})()");
+ }else await evaluate("document.getElementById('planBtn').click()");
+ await pause(250);
  checks.push({name:'Planning receives project and test identity',result:lastPlanRequest?.project_id==='project-new'&&lastPlanRequest?.test_name==='Named checkout'});
  if(spaMode){
  await check('Review stage is exposed as the current workflow step',
    "document.querySelector('button.step[aria-current=step]').textContent.includes('Review plan')&&document.getElementById('workflowAnnouncement').textContent.includes('Step 2 of 5')");
+ await evaluate("planModel.script_filename='invalid script';document.getElementById('genBtn').click()");
+ await check('Review focuses an invalid script name and announces the error', "document.activeElement.id==='pfScriptFilename' && document.activeElement.getAttribute('aria-errormessage')==='genStatus' && document.getElementById('genStatus').getAttribute('role')==='status'");
+ await evaluate("planModel.script_filename='';const field=document.getElementById('pfScriptFilename');field.dispatchEvent(new Event('input',{bubbles:true}));field.closest('details').open=false;document.getElementById('genStatus').textContent=''");
  const accessibility=await send('Accessibility.getFullAXTree');
  checks.push({name:'Workflow navigation and Review control are named in the accessibility tree',result:
    accessibility.nodes.some(node=>node.role?.value==='navigation'&&node.name?.value==='Test workflow')&&
@@ -420,6 +473,14 @@ async function main(){
    await check('Viewing an older script preserves the latest execution version',"document.getElementById('scriptVersionPreview').textContent==='// version-first'&&currentScriptId==='version-latest'");
    showScriptHistoryFixture=false;
    await evaluate("showView('history')");await pause(150);
+   await evaluate(`(async()=>{
+     const original=window.fetch;
+     window.fetch=(url,options)=>String(url).startsWith('/api/plans?')?Promise.resolve(new Response('{}',{status:503})):original(url,options);
+     try{await loadPlans()}finally{window.fetch=original}
+   })()`);
+   await check('Test Library exposes a retry after a failed request', "!document.getElementById('projectTestsRetry').hidden && document.getElementById('projectTestListStatus').textContent.includes('Try again')");
+   await evaluate("document.getElementById('projectTestsRetry').click()");await pause(150);
+   await check('Test Library retry restores the saved test count', "document.getElementById('projectTestsRetry').hidden && document.getElementById('projectTestListStatus').textContent.includes('saved tests')");
    await evaluate("document.getElementById('projectTestSearch').value='checkout';document.getElementById('projectTestSearch').dispatchEvent(new Event('input'))");
    await check('Workspace test search narrows the list',"document.querySelectorAll('#plansTable [data-open-test]').length===1&&document.querySelector('#plansTable tbody').textContent.includes('Checkout flow')");
  }
@@ -557,7 +618,10 @@ async function main(){
  await evaluate('selectReportBaseline()');await check('Baseline saved',"getSelectedBaseline()==='saved-a'");await evaluate('clearSelectedBaseline()');await check('Baseline cleared','getSelectedBaseline()===null');
  await evaluate("currentScriptId='script-a';checkReadiness()");await check('Readiness checklist shown',"document.getElementById('readinessResult').textContent.includes('Before you run')");
  // Match the compatibility controller's native enablement after script generation.
- await evaluate("document.getElementById('validateBtn').disabled=false;document.getElementById('preflightBtn').disabled=false;document.getElementById('validateBtn').click()");await pause(150);
+ await evaluate("document.getElementById('validateBtn').disabled=false;document.getElementById('preflightBtn').disabled=false");
+ if(spaMode)await check('Validate marks the action busy and prevents duplicate clicks', "(()=>{const button=document.getElementById('validateBtn');button.click();button.click();return button.disabled && button.getAttribute('aria-busy')==='true';})()");
+ else await evaluate("document.getElementById('validateBtn').click()");
+ await pause(150);
  checks.push({name:'Validate click sends POST',result:validationCalls.length===1&&validationCalls[0]==='POST'});
  await check('Validation result appears',"document.getElementById('validateResult').classList.contains('ok')");
  await evaluate("document.getElementById('preflightBtn').click()");await pause(150);
@@ -570,6 +634,9 @@ async function main(){
    await evaluate(`goStep(4);resetChart();pushChart(4,6,72,0);pushChart(8,12,86,0);
       pushChart(16,19,105,.003);pushChart(24,20,119,.004);currentRunId='fixture-live';pollRun()`);
    await check('Live run shows planned duration and captured measurements', "document.getElementById('liveRunScope').textContent.includes('60 s planned')&&document.getElementById('mRps').textContent==='19.8 / 20'&&document.getElementById('epTable').textContent.includes('POST /checkout')");
+   await evaluate("document.getElementById('liveChartData').open=true;drawChart()");
+   await check('Live chart provides the same measurements in a labeled table', "document.querySelector('#liveSampleTable th[scope=col]').textContent==='Elapsed (s)' && document.querySelector('#liveSampleTable tbody tr:last-child').textContent.includes('120')");
+   await evaluate("document.getElementById('liveChartData').open=false");
    await check('Live metric picker updates the accessible reading', `(()=>{
      const metric=document.getElementById('liveMetric');
      metric.value='p95';metric.dispatchEvent(new Event('change',{bubbles:true}));

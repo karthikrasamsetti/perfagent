@@ -474,19 +474,37 @@ export function applyTrafficRate(rate){
   input.value=String(rate);
   input.dataset.trafficRate=String(rate);
 }
+function setWorkflowBusy(button, busy){
+  button.disabled=busy;
+  if(busy) button.setAttribute('aria-busy','true');
+  else button.removeAttribute('aria-busy');
+}
+
+function invalidWorkflowField(input, message, feedbackId){
+  const editor=input.closest('details');
+  if(editor) editor.open=true;
+  input.setAttribute('aria-invalid','true');
+  input.setAttribute('aria-errormessage',feedbackId);
+  input.focus();
+  throw new Error(message);
+}
+
 async function doPlan(){
   if(!currentProject||!newTestName){showNewTestForm();return;}
   const status=document.getElementById('planStatus');
-  let eps; try{eps=readEndpoints()}catch(e){status.className='statusline err';status.textContent=e.message;return;}
-  status.className='statusline';status.textContent='Asking the AI to draft a plan…';
-  document.getElementById('planBtn').disabled=true;
+  const button=document.getElementById('planBtn');
+  if(button.disabled) return;
+  status.textContent='';
   try{
-    let target=document.getElementById('target').value.trim();
+    let eps=readEndpoints();
+    const targetField=document.getElementById('target');
+    let target=targetField.value.trim();
+    let url;
+    try{ url=new URL(target); }catch{}
+    if(!url||!['http:','https:'].includes(url.protocol)||url.username||url.password){
+      invalidWorkflowField(targetField,'Enter an HTTP or HTTPS URL without credentials.','planStatus');
+    }
     if(!eps.length){
-      const url=new URL(target);
-      if(!['http:','https:'].includes(url.protocol)||url.username||url.password){
-        throw new Error('Enter an HTTP or HTTPS URL without credentials.');
-      }
       eps=[{method:'GET',path:url.pathname+url.search}];
       target=url.origin;
     }
@@ -495,12 +513,13 @@ async function doPlan(){
       ['draftP95','p95_ms','<=',1], ['draftErrorRate','error_rate','<',100],
     ]){
       const input=document.getElementById(id);
-      if(!input.checkValidity()) throw new Error('Enter valid latency and error rate limits.');
+      if(!input.checkValidity()) invalidWorkflowField(input,'Enter valid latency and error rate limits.','planStatus');
       if(input.value!=='') rules.push({metric,op,value:input.valueAsNumber/divisor});
     }
     const wholeNumber=(id,label,min=1)=>{
-      const value=document.getElementById(id).valueAsNumber;
-      if(!Number.isInteger(value)||value<min) throw new Error(label+' must be a whole number of at least '+min+'.');
+      const input=document.getElementById(id);
+      const value=input.valueAsNumber;
+      if(!Number.isInteger(value)||value<min) invalidWorkflowField(input,label+' must be a whole number of at least '+min+'.','planStatus');
       return value;
     };
     const schedule=document.getElementById('draftSchedule').value;
@@ -542,6 +561,9 @@ async function doPlan(){
       max_users:users, duration_seconds:duration, profile_type:profileType, endpoints:eps,
       ...(rate?{target_request_rate:rate, ...(document.getElementById('draftRequestRate').dataset.trafficRate===String(rate)?{traffic_sample_rate:true}:{})}:{}), ...(journeyRate?{target_iteration_rate:journeyRate}:{}), ...(stages?{stages}:{}),
       ...(executorOptions?{executor_options:executorOptions}:{}), ...(rules.length?{thresholds:rules}:{})};
+    const moveFocus=document.activeElement===button;
+    setWorkflowBusy(button,true);
+    status.className='statusline info'; status.textContent='Drafting your test plan…';
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
@@ -552,9 +574,12 @@ async function doPlan(){
     showGuardrail(j.guardrail); showPlanEval(j.evaluation); showUsage(j.usage); refreshUsage();
     document.getElementById('planMeta').style.display='inline-flex';
     document.getElementById('planMeta').textContent='drafted by '+j.provider;
-    goStep(2); loadPlans();
-  }catch(e){ status.className='statusline err'; status.textContent='Error: '+e.message; }
-  finally{ document.getElementById('planBtn').disabled=false; }
+    status.textContent='';
+    goStep(2);
+    if(moveFocus&&document.activeElement===document.body) document.querySelector('.step.active')?.focus({preventScroll:true});
+    loadPlans();
+  }catch(e){ status.className='statusline err'; status.textContent=e.message; }
+  finally{ setWorkflowBusy(button,false); }
 }
 
 function showGuardrail(g){
@@ -1668,6 +1693,8 @@ function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 /* ---------- generate ---------- */
 async function doGenerate(){
   const status=document.getElementById('genStatus');
+  const button=document.getElementById('genBtn');
+  if(button.disabled) return;
   // sync model from the active editor
   document.getElementById('pfTarget') && (planModel.target_base_url=document.getElementById('pfTarget').value.trim());
   if(document.getElementById('rawToggle').checked){
@@ -1685,21 +1712,24 @@ async function doGenerate(){
     if(!document.getElementById('rawToggle').checked&&field){
       const editor=field.closest('details');
       if(editor) editor.open=true;
+      field.setAttribute('aria-invalid','true');
+      field.setAttribute('aria-errormessage','genStatus');
       field.focus();
     }
     return;
   }
   // Accuracy guard: a ${name} with no source would be sent as an empty value.
+  const moveFocus=document.activeElement===button;
+  setWorkflowBusy(button,true);
+  status.className='statusline info'; status.textContent='Checking the plan…';
   try{
-    const pv=await fetchPreview();
+    const pv=await fetchPreview().catch(error=>{throw new Error('The plan is not valid yet: '+error.message);});
     const bad=[...new Set(pv.steps.flatMap(st=>st.undefined.map(u=>u+'  ('+st.method+' '+st.path+')')))];
     if(bad.length && !confirm('These values have no source and would be sent empty:\n\n  '+bad.join('\n  ')+
         '\n\nGenerate the script anyway?')){
       status.className='statusline err'; status.textContent='Not generated — give those values a source first.'; return;
     }
-  }catch(e){ status.className='statusline err'; status.textContent='The plan is not valid yet: '+e.message; return; }
-  status.className='statusline'; status.textContent='Generating script…';
-  try{
+    status.textContent='Generating your script…';
     const payload={tool:document.getElementById('tool').value, load_model:planModel};
     if(currentDataFileId) payload.data_file_id=currentDataFileId;
     if(currentDataFileId || planModel.data_file) payload.data_row_mode=dataRowMode;
@@ -1720,8 +1750,11 @@ async function doGenerate(){
     const pill=document.getElementById('scriptPill'); pill.style.display='inline-flex'; pill.textContent=j.tool;
     if(j.tool!=='k6'){ const h=document.getElementById('runHint'); h.style.display='flex'; h.textContent='Live run is implemented for k6; download and run this '+j.tool+' script yourself.'; }
     status.textContent='';
-    goStep(3); loadPlans();
-  }catch(e){ status.className='statusline err'; status.textContent='Error: '+e.message; }
+    goStep(3);
+    if(moveFocus&&document.activeElement===document.body) document.querySelector('.step.active')?.focus({preventScroll:true});
+    loadPlans();
+  }catch(e){ status.className='statusline err'; status.textContent=e.message; }
+  finally{ setWorkflowBusy(button,false); }
 }
 
 /* Attach a data file that is already stored (e.g. one imported from Git). */
@@ -3080,6 +3113,8 @@ async function loadPlans(background=false){
   const loading=beginTableRefresh('plansTable',project.project_id,3);
   if(!loading)return;
   const status=document.getElementById('projectTestListStatus');
+  const retry=document.getElementById('projectTestsRetry');
+  if(retry) retry.disabled=true;
   try{
   if(status&&loading.body.querySelector('.ui-skeleton')){
     status.textContent='Loading project tests…';
@@ -3088,7 +3123,10 @@ async function loadPlans(background=false){
   const response=await fetch('/api/plans?project_id='+encodeURIComponent(project.project_id));if(!response.ok)throw Error('Plans could not be loaded.');
   const j=await response.json();
   if(currentProject?.project_id!==project.project_id) return;
-  if(!loading.accept([j.plans||[],project.repo_url,project.branch,project.framework_name,project.ci]))return;
+  const changed=loading.accept([j.plans||[],project.repo_url,project.branch,project.framework_name,project.ci]);
+  const recovering=retry&&!retry.hidden;
+  if(retry) retry.hidden=true;
+  if(!changed&&!recovering)return;
   if(status){
     renderProjectTests(j.plans||[]);
     renderProjectFramework(project,j.plans||[]);
@@ -3101,9 +3139,14 @@ async function loadPlans(background=false){
   }catch(e){
     if(currentProject?.project_id!==project?.project_id)return;
     loading.fail(e.message);
-    if(status&&!background) status.textContent=e.message;
-    else if(!status&&!background) showError(e.message);
-  }finally{loading.finish();}
+    if(status&&(!background||loading.body.querySelector('.ui-skeleton'))){
+      status.textContent='Tests could not be loaded. Try again.';
+      if(retry) retry.hidden=false;
+    }else if(!status&&!background) showError(e.message);
+  }finally{
+    loading.finish();
+    if(retry) retry.disabled=false;
+  }
 }
 
 function renderProjectTests(plans){
@@ -3120,7 +3163,9 @@ function renderProjectTests(plans){
       '</strong><span class="project-test-target">'+esc(plan.target||'')+'</span>'+
       (plan.goal&&plan.goal!==plan.test_name?'<small>'+esc(plan.goal)+'</small>':'')+
       '</td><td>'+(plan.script_count?'<button class="btn ghost sm" data-version-test="'+esc(plan.plan_id)+'">View history</button>':'—')+'</td><td><button class="btn ghost sm" data-open-test="'+
-      esc(plan.plan_id)+'">Open</button></td></tr>').join('');
+      esc(plan.plan_id)+'">Open</button></td></tr>').join('')||
+      '<tr><td colspan="3" class="workspace-list-empty">'+
+      (plans.length?'No tests match your search.':'Create a test or import a script to get started.')+'</td></tr>';
     body.querySelectorAll('[data-open-test]').forEach(button=>button.onclick=()=>openPlan(button.dataset.openTest));
     body.querySelectorAll('[data-version-test]').forEach(button=>{
       button.onclick=async()=>{
@@ -3341,8 +3386,11 @@ async function uploadExisting(){
 
 /* ---------- validate script (syntax/configuration; no traffic) ---------- */
 async function doValidate(){
+  const button=document.getElementById('validateBtn');
+  if(button.disabled) return;
+  setWorkflowBusy(button,true);
   const el=document.getElementById('validateResult'); el.style.display='flex'; el.className='note info';
-  el.textContent='Validating the script… (the very first time, this also sets up the load engine and can take a little longer)';
+  el.textContent='Validating script syntax and configuration…';
   try{
     await ensureScriptId();
     if(!currentScriptId) throw new Error('Generate or import a script first.');
@@ -3359,6 +3407,7 @@ async function doValidate(){
       el.innerHTML='🔴 <b>Script failed validation</b> — fix this before a full run:<br><pre style="margin:6px 0 0;max-height:160px;font-size:11px">'+esc(j.detail||j.message)+'</pre>';
     }
   }catch(e){ el.className='note err'; el.textContent='Validation error: '+e.message; }
+  finally{ setWorkflowBusy(button,false); }
 }
 
 async function loadSavedVerification(scriptId, el){
@@ -3385,7 +3434,7 @@ async function loadSavedVerification(scriptId, el){
 async function doPreflight(){
   const button=document.getElementById('preflightBtn');
   if(button.disabled) return;
-  button.disabled=true;
+  setWorkflowBusy(button,true);
   let scriptId=currentScriptId;
   const el=document.getElementById('preflightResult'); el.style.display='flex'; el.className='note info';
   el.textContent='Verifying test…';
@@ -3425,7 +3474,10 @@ async function doPreflight(){
       (j.all_ok ? ' — endpoint requests succeeded; review authentication and response checks before running.' : ' — check the failures below before a full run.') +
       `<div style="margin-top:6px">${rows}</div></div>`;
   }catch(e){ el.className='note err'; el.textContent='Verification error: '+e.message; }
-  finally{ if(currentScriptId===scriptId) button.disabled=false; }
+  finally{
+    if(currentScriptId===scriptId) setWorkflowBusy(button,false);
+    else button.removeAttribute('aria-busy');
+  }
 }
 
 /* ---------- live chart ---------- */
@@ -3450,6 +3502,15 @@ export function drawChart(){
     'Waiting for a measurement.':releaseNumber(last.y,unit)+' at '+last.x+' s';
   _lineChart(canvas,[{data,color:'#3448bb'}],{height:canvas.clientHeight,
     domain:[data[0]?.x||0,last?.x||0]});
+  if(document.getElementById('liveChartData')?.open){
+    const samples=chartData.slice(-60);
+    document.getElementById('liveSampleTable').innerHTML=samples.length?
+      '<table><caption>Latest '+samples.length+' live samples</caption><thead><tr>'+
+      ['Elapsed (s)','Requests/s','p95 (ms)','Errors (%)'].map(title=>'<th scope="col">'+title+'</th>').join('')+
+      '</tr></thead><tbody>'+samples.map(sample=>'<tr>'+[sample.t,sample.rps,sample.p95,sample.err]
+        .map(value=>'<td>'+esc(value==null?'—':String(Math.round(value*100)/100))+'</td>').join('')+'</tr>').join('')+
+      '</tbody></table>':'<p class="hint">Waiting for the first measurement.</p>';
+  }
 }
 
 /* ---------- sidebar navigation ---------- */
@@ -3675,9 +3736,14 @@ export function filterProjects(){
   status.hidden=!query||!cards.length;
   status.textContent=matches?matches+' matching '+(matches===1?'project':'projects'):'No matching projects.';
 }
-async function loadProjects(){
+export async function loadProjects(){
   const cards=document.getElementById('projectCards');
-  if(!cards.childElementCount){
+  const feedback=document.getElementById('projectsFeedback');
+  const status=document.getElementById('projectsLoadStatus');
+  const retry=document.getElementById('projectsRetry');
+  if(retry) retry.disabled=true;
+  if(!cards.querySelector('.project-card')&&!cards.querySelector('.project-skeleton')){
+    if(feedback&&status){feedback.hidden=false;status.textContent='Loading projects…';}
     cards.setAttribute('aria-busy','true');
     cards.innerHTML=Array.from({length:3},()=>'<div class="card project-skeleton" aria-hidden="true"><span class="ui-skeleton skeleton-value"></span><span class="ui-skeleton skeleton-cell"></span><span class="ui-skeleton skeleton-cell"></span></div>').join('');
   }
@@ -3697,10 +3763,19 @@ async function loadProjects(){
     document.querySelectorAll('#projectCards [data-project-id]').forEach(button=>button.onclick=()=>selectProject(button.dataset.projectId));
     filterProjects();
     renderProjectContext();
+    if(feedback) feedback.hidden=true;
+    if(retry) retry.hidden=true;
   }catch(e){
-    if(cards.querySelector('.project-skeleton')) cards.innerHTML='<p>Projects could not be loaded. Reopen Projects to retry.</p>';
-    showError(e.message);
-  }finally{cards.removeAttribute('aria-busy');}
+    if(cards.querySelector('.project-skeleton')) cards.replaceChildren();
+    if(feedback&&status&&retry){
+      feedback.hidden=false;
+      status.textContent='Projects could not be loaded. Try again.';
+      retry.hidden=false;
+    }else showError(e.message);
+  }finally{
+    cards.removeAttribute('aria-busy');
+    if(retry) retry.disabled=false;
+  }
 }
 function renderProjectContext(){
   document.getElementById('activeProject').style.display=currentProject?'block':'none';
@@ -4519,7 +4594,7 @@ function publishRoute(path){
 }
 function projectPath(){return currentProject?'/projects/'+encodeURIComponent(currentProject.project_id):'/projects';}
 function publishView(view){
-  const path={home:'/',projects:'/projects',admin:'/admin/overview',monitoring:'/monitoring',activity:'/activity',dashboard:projectPath()+'/dashboard',history:projectPath()+'/tests'}[view];
+  const path={home:'/workspace',projects:'/projects',admin:'/admin/overview',monitoring:'/monitoring',activity:'/activity',dashboard:projectPath()+'/dashboard',history:projectPath()+'/tests'}[view];
   if(path)publishRoute(path);
 }
 function publishStep(step){

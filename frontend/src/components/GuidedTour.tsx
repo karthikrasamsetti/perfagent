@@ -5,7 +5,7 @@ const preferenceKey = 'perfagent:guided-tour:v2'
 const project = '/projects/commerce-demo'
 const test = project + '/tests/checkout-plan'
 const stops = [
-  { title: 'Home', path: '/', target: '.home-lead .btnrow', detail: 'Create a test or open your projects from here. You can also import an existing k6 script from Home.' },
+  { title: 'Home', path: '/workspace', target: '.home-lead .btnrow', detail: 'Create a test or open your projects from here. You can also import an existing k6 script from Home.' },
   { title: 'Projects', path: '/projects', target: '#view-projects .projects-intro', detail: 'Open a project to find its tests, saved runs, and dashboard.' },
   { title: 'Describe', path: test + '?step=1', target: '#target', detail: 'Enter the target URL here, then add requests and choose how to schedule traffic. You can set a user count or throughput goal.' },
   { title: 'Review plan', path: test + '?step=2', target: '#reviewRequestsTitle', detail: 'Review the drafted requests, add response checks, attach data, or capture a value for a later request. Preview sample requests before you approve.' },
@@ -61,7 +61,8 @@ export function GuidedTour() {
           <button type="button" className="btn ghost sm" onClick={() => dialog.current?.close()}>Skip tour</button>
           <button type="button" className="btn sm" onClick={() => {
             markSeen()
-            window.location.assign(tourPath(0, window.location.pathname + window.location.search))
+            const start = new URL(tourPath(0, window.location.pathname + window.location.search), window.location.origin)
+            window.location.assign('/demo' + start.search)
           }}>Start tour</button>
         </div>
       </div>

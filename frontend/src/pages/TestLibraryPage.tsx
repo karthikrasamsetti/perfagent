@@ -23,7 +23,10 @@ export function TestLibraryPage() {
             </div>
             <label htmlFor="projectTestSearch">Find a test</label>
             <input id="projectTestSearch" type="search" placeholder="Search by name, purpose, or target" />
-            <p className="hint" id="projectTestListStatus" role="status" />
+            <div className="workspace-list-feedback">
+              <p id="projectTestListStatus" role="status" />
+              <button className="btn ghost sm" id="projectTestsRetry" type="button" onClick={handlers.h91} hidden>Retry loading tests</button>
+            </div>
             <div className="table-scroll" role="region" aria-label="Project tests" tabIndex={0}>
               <table id="plansTable">
                 <thead><tr><th scope="col">Test</th><th scope="col">Script history</th><th scope="col">Action</th></tr></thead>

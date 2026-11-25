@@ -8,6 +8,7 @@ from perfagent.db import PlanRow, RunResultRow, ScriptRow, get_session
 # Endpoints with no project data, including execution routes with their own managed denial.
 _WORKSPACE_ROUTES = {
     ("GET", "/api/tools"),
+    ("GET", "/api/workspace/session"),
     ("GET", "/api/run/available"),
     ("GET", "/api/projects"),
     ("POST", "/api/preflight"),

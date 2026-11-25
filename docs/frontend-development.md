@@ -26,6 +26,8 @@
 - **Typography** uses self-hosted Geist and IBM Plex Mono. Font licenses ship with the frontend build.
 - **Run Report** shows the backend verdict and narrative, linked evidence, the synchronized timeline, endpoint rankings, and export actions.
 
+The workspace account menu shows Local, Demo, or Managed access and groups AI usage with the session context.
+
 The browser sends planning and reporting requests to FastAPI. The backend owns the guarded AI provider, execution credentials, script generation, verification, and metrics. See the [system architecture](architecture.md) and [AI roles](architecture.md#ai-roles).
 
 ## Development
@@ -43,7 +45,7 @@ Start the Python backend separately from the repository root:
 uv run uvicorn perfagent.api.app:app --reload --port 8080
 ```
 
-Open the local URL printed by Vite, normally `http://127.0.0.1:5173`. `/api` and `/legacy` are proxied to PerfAgent on port **8080**. Port **8000** belongs to the optional sample target, not the PerfAgent API. A sample-target response cannot handle `/api/projects`.
+Open the local URL printed by Vite, normally `http://127.0.0.1:5173`. The workspace is at `/workspace`. `/api` and `/legacy` are proxied to PerfAgent on port **8080**. Port **8000** belongs to the optional sample target, not the PerfAgent API. A sample-target response cannot handle `/api/projects`.
 
 From the repository root, the equivalent frontend command is `npm --prefix frontend run dev`. Follow the [first UI test](local-setup.md#first-ui-test) to verify the workflow locally.
 
@@ -56,7 +58,7 @@ npm run build
 npm test
 ```
 
-The build runs TypeScript checking and writes `src/perfagent/web/spa/`. FastAPI serves that build at `/`, supports browser refreshes on SPA routes, and serves assets under `/assets`. The previous workspace remains at `/legacy`. If no build exists, `/` uses the previous workspace rather than returning a blank page.
+The build runs TypeScript checking and writes `src/perfagent/web/spa/`. FastAPI serves the landing page at `/` and the workspace at `/workspace`, supports browser refreshes on SPA routes, and serves assets under `/assets`. The previous workspace remains at `/legacy`. If no build exists, `/` uses the previous workspace rather than returning a blank page.
 
 Built assets are committed so the Python package/checkouts can serve the UI without installing Node. Rebuild after changing frontend source, and commit the matching output. Do not edit the hashed files directly.
 

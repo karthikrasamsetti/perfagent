@@ -1,4 +1,5 @@
 import { Icon } from './Icon'
+import { WorkspaceAccount } from './WorkspaceAccount'
 import { GuidedTour } from './GuidedTour'
 import { handlers } from '../workspace/controller'
 
@@ -16,12 +17,7 @@ export function Topbar() {
         <select id="projectPicker" aria-label="Switch project" onChange={handlers.h107}>
           <option value="">Select project</option>
         </select>
-        <div className="usage-chip" id="sessionUsage" title="Estimated AI usage for this session">
-          <span>AI usage</span>
-          <strong id="sessionTokens">0</strong>
-          <span>tokens</span>
-          <span id="sessionCost" />
-        </div>
+        <WorkspaceAccount />
       </div>
     </header>
   )

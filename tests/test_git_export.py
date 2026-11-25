@@ -168,14 +168,28 @@ def _remote_files(repo, branch="main"):
 
 @pytest.mark.skipif(platform.system() == "Windows",
                     reason="git autocrlf makes re-publish look changed on Windows (passes on Linux CI)")
-def test_publish_to_empty_repo_then_update(bare_repo):
+def test_publish_to_empty_repo_then_update(bare_repo, monkeypatch):
+    from datetime import datetime, timedelta
+    from perfagent.gitexport import framework
+
+    class ExportClock(datetime):
+        offset = timedelta()
+
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 1, 1, tzinfo=tz) + cls.offset
+
+    monkeypatch.setattr(framework, "datetime", ExportClock)
     r1 = publish(_target(bare_repo), _builder("one", _model()), "first")
     assert r1.changed and r1.commit
     assert "fw/tests/one/loadtest.js" in _remote_files(bare_repo)
 
+    ExportClock.offset += timedelta(seconds=5)
     r2 = publish(_target(bare_repo), _builder("one", _model()), "same again")
     assert not r2.changed and r2.commit is None          # no empty commits
 
+    changed = _model(target_base_url="https://other.example.com")
+    assert publish(_target(bare_repo), _builder("one", changed), "change target").changed
     r3 = publish(_target(bare_repo), _builder("two", _model()), "second test")
     files = _remote_files(bare_repo)
     assert r3.changed and {"fw/tests/one/test.json", "fw/tests/two/test.json"} <= files

@@ -10,6 +10,7 @@ These screens show the React workspace with fixture data. The guided tour opens 
 
 | Area | Screens |
 | --- | --- |
+| Landing page | [Desktop](screenshots/landing.png), [mobile](screenshots/landing-mobile.png), [Sign in](screenshots/sign-in.png) |
 | Workspace | [Home](screenshots/home.png), [mobile Home](screenshots/home-mobile.png), [Projects](screenshots/projects-redesign.png), [Test library](screenshots/test-library-redesign.png) |
 | Guided tour | [Home](screenshots/guided-tour-home.png), [Review plan](screenshots/guided-tour-review.png), [mobile Dashboard](screenshots/guided-tour-dashboard-mobile.png) |
 | Describe and Review | [Describe](screenshots/describe-redesign.png), [traffic import](screenshots/traffic-planning.png), [Review plan](screenshots/review-plan-redesign.png), [mobile Review](screenshots/review-plan-redesign-mobile.png), [journey weighting](screenshots/journey-weighting.png) |

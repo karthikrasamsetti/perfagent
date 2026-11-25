@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass
 
@@ -12,6 +13,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from perfagent.config import get_settings
 
+
+PUBLIC_PAGES = frozenset({"/", "/demo", "/sign-in"})
+PUBLIC_ASSET = re.compile(r"/assets/[a-zA-Z0-9_.-]+\.(?:js|css|png|woff2?)")
 
 MANAGED_EXECUTION_DETAIL = "Execution is unavailable in managed workspaces until an isolated runner is configured."
 
@@ -53,6 +57,11 @@ class WorkspaceAccess:
 
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 1008})
+            return
+
+        path = scope["path"]
+        if scope["method"] in {"GET", "HEAD"} and (path in PUBLIC_PAGES or PUBLIC_ASSET.fullmatch(path)):
+            await self.app(scope, receive, send)
             return
 
         expected = config.perfagent_gateway_secret.get_secret_value()

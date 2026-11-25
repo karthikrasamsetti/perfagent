@@ -17,7 +17,7 @@ npm ci
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173>. Vite proxies API requests to port **8080**. Set `PERFAGENT_API_URL` before starting Vite if your API uses a different address. The optional checkout sample target runs on port **8000**.
+Open <http://127.0.0.1:5173> for the landing page, `/demo` for the sample workspace, and `/workspace` for your projects. Vite proxies API requests to port **8080**. Set `PERFAGENT_API_URL` before starting Vite if your API uses a different address. The optional checkout sample target runs on port **8000**.
 
 ## Demo, build, and test
 

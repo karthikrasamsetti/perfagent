@@ -73,6 +73,19 @@ def test_real_app_applies_managed_access_before_routes(monkeypatch):
     )
     monkeypatch.setattr(access, "get_settings", lambda: settings)
     with TestClient(app) as client:
+        for path in ["/", "/demo", "/demo?tour=0", "/sign-in"]:
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert 'id="root"' in response.text
+        asset = next((access_path for access_path in client.get("/").text.split('"')
+                      if access_path.startswith("/assets/") and access_path.endswith(".js")), None)
+        assert asset is not None
+        assert client.head(asset).status_code == 200
+        for path in ["/workspace", "/projects", "/projects/example/runs/private", "/legacy", "/metrics", "/docs"]:
+            assert client.get(path).status_code == 401, path
+        assert client.post("/sign-in").status_code == 401
+        assert client.get("/assets/missing/private.js").status_code == 401
+        assert client.get("/api/workspace/session").status_code == 401
         assert client.get("/api/tools").status_code == 401
         assert client.post("/api/preflight", json={}).status_code == 401
         assert client.put("/api/runs/any/release-policy", json={}).status_code == 401
@@ -81,6 +94,9 @@ def test_real_app_applies_managed_access_before_routes(monkeypatch):
             "X-PerfAgent-Subject": "member",
             "X-PerfAgent-Assurance": "mfa",
         }
+        session = client.get("/api/workspace/session", headers=headers)
+        assert session.json() == {"managed": True}
+        assert session.headers["cache-control"] == "no-store"
         response = client.get("/api/tools", headers=headers)
         assert response.status_code == 200
         assert "k6" in response.json()["tools"]
@@ -97,3 +113,13 @@ def test_real_app_applies_managed_access_before_routes(monkeypatch):
             denied = client.post(path, json=body, headers=headers)
             assert denied.status_code == 403, path
             assert denied.json()["detail"] == access.MANAGED_EXECUTION_DETAIL
+
+
+def test_workspace_session_reports_local_mode_without_identity(monkeypatch):
+    from perfagent.api.app import app
+
+    monkeypatch.setattr(access, "get_settings", lambda: Settings(perfagent_access_mode="local"))
+    with TestClient(app) as client:
+        response = client.get("/api/workspace/session")
+        assert response.json() == {"managed": False}
+        assert response.headers["cache-control"] == "no-store"

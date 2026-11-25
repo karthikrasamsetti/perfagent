@@ -99,7 +99,9 @@ flowchart LR
 ```
 
 The UI also supports importing existing k6 scripts and recovering saved reports after a server restart.
-Local and managed access have different deployment requirements. Managed gateway checks apply at the
+Local and managed access have different deployment requirements. In managed mode the landing page, sample demo, and sign-in entry at `/`, `/demo`, and `/sign-in` can be served publicly with their static bundles. The access gateway must allow those read routes and intercept `/workspace` and other protected routes. Configure the gateway to require MFA and assert the stable subject of an invited member. The sign-in entry directs visitors to the workspace so the gateway can start its login flow. Organization account creation, invitation delivery, and sign-out are handled by the gateway or identity provider.
+
+Managed gateway checks apply at the
 workspace boundary. Managed mode blocks preflight, load and smoke runs, and Jenkins triggers
 at the API. Local mode supports those operations. In managed mode, set `PERFAGENT_PROJECT_GRANTS` to a JSON
 object mapping gateway subjects to existing project IDs and `viewer` or `editor` roles.

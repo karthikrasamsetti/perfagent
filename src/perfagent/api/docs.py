@@ -450,6 +450,10 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "(SQLite or Postgres) and whether its tables are up to date. Returns 503 if the "
         "database cannot be reached. Suitable as a container health check.",
         returns="`status`, `database` (backend, host, name, schema state)."),
+    ("GET", "/api/workspace/session"): _e(
+        "System", "Workspace session mode",
+        "Reports whether the current workspace request was authenticated by the managed gateway.",
+        returns="`managed`."),
     ("GET", "/api/tools"): _e(
         "System", "Supported load tools",
         "The load tools a script can be generated for.", returns="`tools`."),

@@ -532,3 +532,178 @@ def test_release_policy_agrees_across_report_dashboard_and_download(setup, p95, 
         assert decision["rules"][0]["passed"]
         assert client.put(path, json={"budgets": {"max_p95_regression_percent": 20}}).status_code == 200
         assert client.get(candidate + "/saved-report").json()["release_readiness"]["status"] == "ready"
+
+
+def test_local_k6_release_walkthrough(setup):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Event, Thread
+    from time import monotonic, sleep
+
+    from perfagent.runner.k6_binary import find_k6
+
+    if not find_k6():
+        pytest.skip("The release walkthrough requires an installed k6 binary.")
+
+    client, _, _, _, model = setup
+    calls = []
+    webpage_hit = Event()
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self):
+            calls.append(self.path)
+            if self.path == "/":
+                self.respond(200, b"<h1>Release fixture</h1>", "text/html")
+                webpage_hit.set()
+            elif self.path == "/api/account":
+                authorized = self.headers.get("Authorization") == "Bearer fixture"
+                self.respond(200 if authorized else 401, b'{"account_id":1}' if authorized else b'{}')
+            elif self.path == "/orders/order-42":
+                self.respond(200, b'{"id":"order-42"}')
+            else:
+                self.respond(404, b'{}')
+
+        def do_POST(self):
+            calls.append(self.path)
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.path != "/orders":
+                self.respond(404, b'{}')
+            else:
+                self.respond(201, self.server.checkout_body)
+
+        def respond(self, status, body, content_type="application/json"):
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+    server.checkout_body = b'{"id":"order-42"}'
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    active = set()
+
+    def generate(steps, headers=None, *, stoppable=False):
+        candidate = LoadModel.model_validate({
+            **model.model_dump(),
+            "target_base_url": f"http://127.0.0.1:{server.server_port}",
+            "headers": headers or {},
+            "scenarios": [{
+                "name": "release walkthrough",
+                "steps": steps,
+                "think_time": {"min_seconds": 1 if stoppable else 0, "max_seconds": 1 if stoppable else 0},
+            }],
+            "load_profile": {
+                "stages": [{"duration_seconds": 10 if stoppable else 5, "target_users": 1}],
+                "executor_options": {"executor": "constant-vus"} if stoppable else {
+                    "executor": "shared-iterations", "iterations": 1,
+                },
+                "graceful_stop_seconds": 0,
+            },
+            "thresholds": [
+                {"metric": "p95_ms", "op": "<=", "value": 500},
+                {"metric": "error_rate", "op": "<", "value": .05},
+            ],
+        })
+        response = client.post("/api/plan/plan/generate", json={"tool": "k6", "load_model": candidate.model_dump()})
+        assert response.status_code == 200, response.text
+        return response.json()["script_id"]
+
+    def verify(script_id):
+        response = client.post("/api/preflight", json={"script_id": script_id})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def start(script_id, release):
+        response = client.post(f"/api/scripts/{script_id}/run", json={"release_label": release})
+        assert response.status_code == 200, response.text
+        run_id = response.json()["run_id"]
+        active.add(run_id)
+        return run_id
+
+    def finish(run_id, expected_status="finished"):
+        deadline = monotonic() + 20
+        while monotonic() < deadline:
+            response = client.get(f"/api/runs/{run_id}")
+            assert response.status_code == 200, response.text
+            if response.json()["status"] == expected_status:
+                break
+            sleep(.05)
+        else:
+            pytest.fail(f"Run did not reach {expected_status}: {response.text}")
+        active.remove(run_id)
+        response = client.get(f"/api/runs/{run_id}/report")
+        assert response.status_code == 200, response.text
+        report = response.json()
+        assert report["status"] == expected_status
+        saved = client.get(f"/api/runs/{run_id}/saved-report")
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["snapshot"] == report["snapshot"]
+        assert saved.json()["verdict"] == report["verdict"]
+        html = client.get(f"/api/runs/{run_id}/report/download")
+        assert html.status_code == 200 and "Performance Test Report" in html.text
+        verdict_label = {True: "PASS", False: "FAIL", None: "INCONCLUSIVE"}[report["verdict"]["overall_passed"]]
+        assert f">{verdict_label}</span>" in html.text
+        return report
+
+    try:
+        webpage = {"name": "Open page", "path": "/", "assertions": [
+            {"kind": "body_contains", "op": "contains", "value": "Release fixture"},
+        ]}
+        script = generate([webpage])
+        assert verify(script)["all_ok"] is True
+        report = finish(start(script, "webpage"))
+        assert report["snapshot"]["requests"] == 1
+        assert report["verdict"]["overall_passed"] is True
+
+        account = {"name": "Read account", "path": "/api/account", "assertions": [
+            {"kind": "json_path", "op": "exists", "path": "account_id"},
+        ]}
+        script = generate([account], {"Authorization": "Bearer fixture"})
+        assert verify(script)["all_ok"] is True
+        assert finish(start(script, "authenticated-api"))["verdict"]["overall_passed"] is True
+
+        script = generate([account], {"Authorization": "Bearer invalid"})
+        failed = verify(script)
+        assert failed["all_ok"] is False
+        assert failed["journeys"][0]["requests"][0]["status"] == 401
+        report = finish(start(script, "failed-auth"))
+        assert report["verdict"]["overall_passed"] is False
+        assert any(check["metric"] == "error_rate" and check["passed"] is False
+                   for check in report["verdict"]["checks"])
+
+        journey = [
+            {"name": "Create order", "method": "POST", "path": "/orders",
+             "extract": [{"var": "order_id", "path": "id"}],
+             "assertions": [{"kind": "json_path", "op": "exists", "path": "id"}]},
+            {"name": "Read order", "path": "/orders/${order_id}"},
+        ]
+        script = generate(journey)
+        server.checkout_body = b"not JSON"
+        assert verify(script)["all_ok"] is False
+        server.checkout_body = b'{"id":"order-42"}'
+        calls.clear()
+        assert verify(script)["all_ok"] is True
+        assert calls == ["/orders", "/orders/order-42"]
+        report = finish(start(script, "multi-step"))
+        assert report["snapshot"]["requests"] == 2
+        assert report["verdict"]["overall_passed"] is True
+
+        script = generate([webpage], stoppable=True)
+        webpage_hit.clear()
+        run_id = start(script, "interrupted")
+        assert webpage_hit.wait(8)
+        assert client.post(f"/api/runs/{run_id}/stop").status_code == 200
+        assert finish(run_id, "stopped")["verdict"]["overall_passed"] is None
+        report = finish(start(script, "restarted"))
+        assert report["execution"]["release_label"] == "restarted"
+        assert report["verdict"]["overall_passed"] is True
+    finally:
+        for run_id in active:
+            client.post(f"/api/runs/{run_id}/stop")
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

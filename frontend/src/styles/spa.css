@@ -738,3 +738,77 @@ html[data-tour] #workspace-content {
 .guided-tour-workspace {
   pointer-events: none;
 }
+
+.workspace-account { position: relative; flex: none; }
+.workspace-account summary { cursor: pointer; list-style: none; white-space: nowrap; }
+.workspace-account summary::-webkit-details-marker { display: none; }
+.workspace-account summary svg { width: 16px; height: 16px; }
+.workspace-account-panel {
+  position: absolute;
+  z-index: 100;
+  inset: calc(100% + 8px) 0 auto auto;
+  width: min(17rem, calc(100vw - 2rem));
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  box-shadow: 0 12px 30px #18213924;
+}
+.workspace-account-panel p { color: var(--muted); margin: .35rem 0 .8rem; }
+.workspace-account-panel .usage-chip { white-space: normal; flex-wrap: wrap; }
+.workspace-account-panel .usage-chip[hidden] { display: none; }
+.workspace-account-panel a { display: inline-block; margin-top: .75rem; }
+
+#view-create :is(#planStatus, #genStatus):not(:empty) {
+  margin-block: .65rem;
+  padding: .7rem .9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  text-align: start;
+}
+
+#view-create :is(#planStatus, #genStatus).info {
+  background: var(--teal-l);
+  color: var(--teal-d);
+}
+
+#view-create :is(#planStatus, #genStatus).err {
+  background: #fff3f1;
+  border-color: #f0c8c3;
+}
+
+#view-create input[aria-invalid="true"] { border-color: var(--red); }
+#view-create button[aria-busy="true"] { cursor: progress; }
+#view-create button[aria-busy="true"]::after {
+  content: "";
+  display: inline-block;
+  width: .8em;
+  height: .8em;
+  margin-inline-start: .5em;
+  border: 2px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+  animation: workflow-busy .8s linear infinite;
+}
+
+@keyframes workflow-busy { to { transform: rotate(1turn); } }
+
+@media (prefers-reduced-motion: reduce) {
+  #view-create button[aria-busy="true"]::after { animation: none; }
+}
+
+.workspace-list-feedback {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .6rem;
+  min-height: 2rem;
+  margin-block: .5rem;
+  color: var(--muted);
+}
+
+.workspace-list-feedback[hidden],
+.workspace-list-feedback button[hidden] { display: none; }
+.workspace-list-feedback p { margin: 0; }
+.workspace-list-empty { padding-block: 1.1rem; color: var(--muted); }
+#liveSampleTable caption { text-align: start; padding-block: .5rem; color: var(--muted); }

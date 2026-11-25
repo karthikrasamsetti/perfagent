@@ -63,7 +63,7 @@ GUARDRAIL_DEBUG=0               # set 1 temporarily to log the (redacted) prompt
 ```bash
 uv run uvicorn perfagent.api.app:app --reload --port 8080
 ```
-Open **<http://127.0.0.1:8080>**.
+Open **<http://127.0.0.1:8080/workspace>** to start a test. The landing page is at <http://127.0.0.1:8080>.
 
 **Terminal 2 — the built-in mock target (safe to load-test):**
 ```bash
@@ -74,7 +74,7 @@ Then follow **Describe → Review Plan → Verify → Run → Report**. For fron
 
 ## First UI test
 
-Start PerfAgent and the sample target using the commands above. Use port **8080** for the packaged UI or the URL printed by Vite for frontend development. The sample target runs on port **8000**.
+Start PerfAgent and the sample target using the commands above. Open `/workspace` on port **8080** for the packaged UI or on the URL printed by Vite for frontend development. The sample target runs on port **8000**.
 
 1. Create a project and select **Open project**. Confirm the workspace shows its tests and the configured Git framework. The tree previews the export layout. **Import / sync Git** is where you browse a repository.
 2. Choose **Create test**, give it a unique name, and enter `http://127.0.0.1:8000` and `POST /checkout` in Describe. Set the optional response check to `order_id`. The sample response contains that field. AI drafting uses the provider configured in `.env`.

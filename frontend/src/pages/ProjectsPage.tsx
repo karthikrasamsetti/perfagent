@@ -1,6 +1,6 @@
 import { Icon } from '../components/Icon'
 import type { CSSProperties } from 'react'
-import { filterProjects, handlers } from '../workspace/controller'
+import { filterProjects, handlers, loadProjects } from '../workspace/controller'
 
 export function ProjectsPage() {
 return <>
@@ -163,6 +163,10 @@ return <>
   </div>
 </div>
 <p className="muted" id="projectSearchStatus" role="status" hidden />
+<div className="workspace-list-feedback" id="projectsFeedback" hidden>
+  <p id="projectsLoadStatus" role="status" />
+  <button className="btn ghost sm" id="projectsRetry" type="button" onClick={() => void loadProjects()} hidden>Retry loading projects</button>
+</div>
 <div id={"projectCards"} className={"project-grid"}>
 
 </div>

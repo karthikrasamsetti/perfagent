@@ -134,7 +134,7 @@ return <>
   <canvas id="sdTrend" role="img" aria-label="Performance trend" aria-describedby="sdTrendCaption"
     height={150} onClick={event => openDashboardTrendPoint(event.clientX)} />
   <details className="dashboard-trend-data"><summary>Trend data and report links</summary>
-    <div id="sdTrendData" className="table-scroll" />
+    <div id="sdTrendData" className="table-scroll" role="region" aria-label="Performance trend data" tabIndex={0} />
   </details>
 </section>
 <section className="dashboard-history-charts" aria-label="Workload metrics and daily outcomes">

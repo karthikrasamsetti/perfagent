@@ -6,7 +6,7 @@ Plan, verify, run, and explain HTTP performance tests in one workspace. Start wi
 
 ## Try the demo
 
-From the repository root, with Node 22.12 or later:
+Open the public landing page at `/` and select **Try the demo** to enter the sample workspace at `/demo`. The sample resets on reload. To run the demo on its own, start it from the repository root, with Node 22.12 or later:
 
 ```bash
 npm --prefix frontend ci
@@ -25,7 +25,7 @@ cp .env.example .env
 uv run uvicorn perfagent.api.app:app --reload --host 127.0.0.1 --port 8080
 ```
 
-Open <http://127.0.0.1:8080> for the bundled UI. Configure a server-side provider key in `.env` for AI drafting and narration. Follow the [local checkout walkthrough](docs/local-setup.md#first-ui-test) to start the sample target and verify your first test.
+Open <http://127.0.0.1:8080> for the landing page or <http://127.0.0.1:8080/workspace> for your projects. Hosted teams enter through `/sign-in` using the configured MFA gateway. Configure a server-side provider key in `.env` for AI drafting and narration. Follow the [local checkout walkthrough](docs/local-setup.md#first-ui-test) to start the sample target and verify your first test.
 
 Review previews requests. Verify sends requests to the target. Start load applies the workload you approved. Use a target you’re authorized to test.
 

@@ -34,7 +34,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.convertors import Convertor, register_url_convertor
@@ -207,6 +207,16 @@ def legacy_workspace() -> str:
 
 
 # ---------- API ----------
+
+class WorkspaceSession(BaseModel):
+    managed: bool
+
+
+@app.get("/api/workspace/session", response_model=WorkspaceSession, **doc("GET", "/api/workspace/session"))
+def workspace_session(request: Request) -> WorkspaceSession:
+    """Report whether the current workspace request was authenticated by the gateway."""
+    return WorkspaceSession(managed=isinstance(getattr(request.state, "principal", None), access.Principal))
+
 
 @app.get("/api/tools", **doc("GET", "/api/tools"))
 def tools() -> dict:

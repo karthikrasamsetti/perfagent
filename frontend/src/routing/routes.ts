@@ -16,7 +16,7 @@ export function resolveRoute(location: string): WorkspaceRoute {
   const rawStep = Number(url.searchParams.get('step') || 2)
   const base = { step: Math.max(1, Math.min(5, Number.isInteger(rawStep) ? rawStep : 2)), setup: url.searchParams.get('stage') === 'setup' }
   const staticRoutes: Record<string, WorkspaceRoute['kind']> = {
-    '/': 'home', '/projects': 'projects', '/projects/new': 'new-project',
+    '/': 'home', '/workspace': 'home', '/projects': 'projects', '/projects/new': 'new-project',
     '/admin/overview': 'admin', '/monitoring': 'monitoring', '/activity': 'activity',
   }
   if (staticRoutes[path]) return { ...base, kind: staticRoutes[path] }

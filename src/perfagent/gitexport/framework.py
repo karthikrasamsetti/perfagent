@@ -148,15 +148,17 @@ def render_export_script(model: LoadModel) -> tuple[str, dict[str, str], LoadMod
 # ------------------------------------------------------------------------- building
 
 def _write(root: Path, rel: str, content: str, result: ExportResult, *, overwrite: bool = True,
-           executable: bool = False) -> None:
+           executable: bool = False) -> bool:
     path = root / rel
     if path.exists() and not overwrite:
-        return
+        return False
+    changed = not path.is_file() or path.read_bytes() != content.encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8", newline="\n")
     if executable:
         path.chmod(path.stat().st_mode | 0o111)
     result.files.append(rel)
+    return changed
 
 
 def _read_env_base_url(env_file: Path) -> str | None:
@@ -214,8 +216,11 @@ def build_framework(
 
     # ---- the test itself -------------------------------------------------------
     tdir = f"{fw_rel}tests/{test}/"
-    _write(repo_root, tdir + "loadtest.js", script, result)
-    _write(repo_root, tdir + "plan.json", sanitized.model_dump_json(indent=2) + "\n", result)
+    tests = _all_tests(fw_dir)
+    prior_test = tests.get(test, {})
+    script_changed = _write(repo_root, tdir + "loadtest.js", script, result)
+    plan_changed = _write(repo_root, tdir + "plan.json", sanitized.model_dump_json(indent=2) + "\n", result)
+    data_changed = False
 
     data_meta = None
     if model.data_file:
@@ -225,7 +230,7 @@ def build_framework(
         committed = bool(include_data and data_file)
         data_meta = {"filename": fname, "rows": model.data_file.row_count, "committed": committed}
         if committed:
-            _write(repo_root, tdir + fname, data_file[1], result)  # type: ignore[index]
+            data_changed = _write(repo_root, tdir + fname, data_file[1], result)  # type: ignore[index]
             result.warnings.append(
                 f"Test data '{fname}' was committed to Git. Make sure it holds no real customer data."
             )
@@ -248,10 +253,14 @@ def build_framework(
         "required_secrets": result.required_secrets,
         "data_file": data_meta,
     }
+    unchanged_test = (
+        not (script_changed or plan_changed or data_changed)
+        and {**prior_test, "exported_at": now} == test_meta
+    )
+    test_meta["exported_at"] = (prior_test.get("exported_at") or now) if unchanged_test else now
     _write(repo_root, tdir + "test.json", json.dumps(test_meta, indent=2) + "\n", result)
 
     # ---- framework-wide files ----------------------------------------------------
-    tests = _all_tests(fw_dir)
     tests[test] = test_meta
     all_secrets = sorted({s for t in tests.values() for s in t.get("required_secrets", [])})
 
@@ -274,6 +283,10 @@ def build_framework(
         "tests": {name: {k: meta.get(k) for k in ("plan_id", "script_id", "exported_at", "target_base_url")}
                   for name, meta in sorted(tests.items())},
     }
+    manifest_path = fw_dir / "perfagent.json"
+    prior_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    if unchanged_test and {**prior_manifest, "updated_at": now} == manifest:
+        manifest["updated_at"] = prior_manifest.get("updated_at") or now
     _write(repo_root, f"{fw_rel}perfagent.json", json.dumps(manifest, indent=2) + "\n", result)
 
     _write(repo_root, f"{fw_rel}README.md",

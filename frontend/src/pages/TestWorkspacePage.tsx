@@ -7,7 +7,11 @@ import { TrafficImport } from '../components/TrafficImport'
 
 export function TestWorkspacePage() {
 return <>
-<section className={"view"} id={"view-create"}>
+<section className={"view"} id={"view-create"} onInput={event => {
+  if (!(event.target instanceof HTMLInputElement)) return
+  event.target.removeAttribute('aria-invalid')
+  event.target.removeAttribute('aria-errormessage')
+}}>
 <div className={"project-context"} id={"testProjectContext"}>
 
 </div>
@@ -692,7 +696,7 @@ return <>
       </div>
     </details>
 <div className={"rv-actions"}>
-<div className={"statusline"} id={"genStatus"}>
+<div className={"statusline"} id={"genStatus"} role="status">
 
 </div>
 <div className={"rv-actions-row"}>
@@ -1085,8 +1089,12 @@ return <>
       <option value="err">Error rate (%)</option>
     </select></label>
   </div>
-  <canvas id="liveChart" role="img" aria-label="Live throughput over elapsed time" height={170} />
+  <canvas id="liveChart" role="img" aria-label="Live throughput over elapsed time" aria-describedby="liveChartReading" height={170} />
   <p id="liveChartReading" className="hint" />
+  <details id="liveChartData" className="dashboard-trend-data" onToggle={drawChart}>
+    <summary>View live sample data</summary>
+    <div id="liveSampleTable" className="table-scroll" role="region" aria-label="Live samples" tabIndex={0} />
+  </details>
 </section>
 <h3 className="live-endpoints-heading">Endpoint results</h3>
 <div className="table-scroll" role="region" aria-label="Live endpoint results" tabIndex={0}>
@@ -1258,7 +1266,7 @@ return <>
       <figure><figcaption>Error rate (%)</figcaption><canvas id="reportErrorsChart" role="img" aria-label="Error rate by elapsed time" /></figure>
     </div>
   </div>
-  <details id="reportTimelineData"><summary>View recorded samples</summary><div id="reportSampleTable" className="table-scroll" /></details>
+  <details id="reportTimelineData"><summary>View recorded samples</summary><div id="reportSampleTable" className="table-scroll" role="region" aria-label="Recorded run samples" tabIndex={0} /></details>
 <div className={"card"}>
 <div className={"rpt-section-h"}>
 {"📊 Trend across runs"}
