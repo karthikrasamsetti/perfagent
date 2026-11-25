@@ -9,8 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --ink:#16201c; --muted:#6a7570; --line:#e7e9e5; --bg:#f4f6f4; --card:#ffffff;
-    --teal:#0f7a5f; --teal-d:#0a5a46; --teal-l:#e8f5ef; --teal-ring:#b3e2d2;
+    --ink:#17243b; --muted:#596b82; --line:#dfe6ef; --bg:#f5f7fb; --card:#ffffff;
+    --teal:#2563eb; --teal-d:#1e40af; --teal-l:#eff5ff; --teal-ring:#b9cffb;
     --amber:#9a6412; --amber-l:#fcf2dd; --amber-line:#ecd29c;
     --red:#b4342b; --red-l:#fcebe8; --blue:#2563a8; --blue-l:#e9f0f9;
     --shadow-sm:0 1px 2px rgba(16,32,26,.05);
@@ -374,33 +374,240 @@
   .panel#panel5 .card{margin-bottom:18px}
   @media(max-width:860px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.rpt-cols{grid-template-columns:1fr}}
 
+  /* ===== sidebar redesign ===== */
+  .app{display:flex;min-height:100vh}
+  .sidebar{width:230px;flex:none;background:linear-gradient(170deg,#0f2b23,#0a1f19);
+           color:#cfe4db;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;
+           transition:width .18s;z-index:50;overflow:hidden}
+  .sidebar.collapsed{width:60px}
+  .sb-top{display:flex;align-items:center;gap:10px;padding:16px 16px 14px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .sb-logo{width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,.14);display:flex;
+           align-items:center;justify-content:center;font-size:16px;flex:none}
+  .sb-title{font-weight:700;font-size:13.5px;color:#fff;white-space:nowrap;letter-spacing:-.01em}
+  .sidebar.collapsed .sb-title{display:none}
+  .sb-toggle{margin-left:auto;background:none;border:none;color:#9fc3b7;cursor:pointer;font-size:16px;padding:4px;border-radius:6px}
+  .sb-toggle:hover{background:rgba(255,255,255,.08);color:#fff}
+  .sidebar.collapsed .sb-toggle{margin:0}
+  .sb-nav{padding:10px 8px;display:flex;flex-direction:column;gap:3px;flex:1;overflow-y:auto}
+  .sb-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:9px;color:#b9d4ca;
+           cursor:pointer;font-size:13.5px;font-weight:500;border:none;background:none;text-align:left;
+           width:100%;transition:.12s;white-space:nowrap}
+  .sb-item:hover{background:rgba(255,255,255,.07);color:#fff}
+  .sb-item.active{background:var(--teal);color:#fff;font-weight:600;box-shadow:0 2px 8px rgba(15,122,95,.3)}
+  .sb-ic{font-size:17px;flex:none;width:20px;text-align:center}
+  .sidebar.collapsed .sb-lbl{display:none}
+  .sb-foot{padding:12px 14px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;color:#7fa294;white-space:nowrap}
+  .sidebar.collapsed .sb-foot{display:none}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .maintop{display:flex;align-items:center;gap:12px;padding:12px 24px;background:#fff;border-bottom:1px solid var(--line);
+           position:sticky;top:0;z-index:40}
+  .maintop h1{margin:0;font-size:15px;font-weight:650;letter-spacing:-.01em}
+  .maintop .sub{font-size:12px;color:var(--muted)}
+  .view{display:none;animation:fade .2s ease}
+  .view.show{display:block}
+  .viewwrap{max-width:1120px;margin:22px auto 60px;padding:0 24px;width:100%}
+  .mobnav{display:none}
+  @media(max-width:860px){
+    .sidebar{position:fixed;left:0;top:0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.25)}
+    .sidebar.mobopen{transform:translateX(0)}
+    .mobnav{display:inline-flex;background:none;border:none;color:var(--ink);font-size:20px;cursor:pointer}
+    .sb-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:45}
+    .sb-backdrop.show{display:block}
+  }
+  /* richer dashboard */
+  .dash-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:14px}
+  @media(max-width:860px){.dash-grid{grid-template-columns:1fr}}
+  .dash-cell{border:1px solid var(--line);border-radius:12px;padding:14px;background:#fff}
+  .dash-cell h4{margin:0 0 4px;font-size:12.5px;font-weight:700;color:var(--ink)}
+  .dash-cell .sub{font-size:11px;color:var(--muted);margin-bottom:8px}
+  .monitor-card{border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden;margin-bottom:14px;background:#fff}
+  .monitor-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .monitor-head .tool{font-weight:650;font-size:13.5px}
+  .monitor-head .url{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px}
+  .monitor-frame{width:100%;height:420px;border:0;display:block;background:#fcfcfb}
+  .monitor-empty{padding:18px;text-align:center;color:var(--muted);font-size:13px}
+  .tool-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:11.5px;
+             font-weight:600;background:var(--teal-l);color:var(--teal-d);border:1px solid var(--teal-ring)}
+
+  /* Professional workspace theme; shared controls across all workflow steps. */
+  body{font-size:16px}
+  .sidebar{background:linear-gradient(180deg,#e8efff 0%,#f2f5ff 65%,#e9eefe 100%);color:var(--ink);border-right:1px solid #ccd9f3}
+  .sidebar.collapsed .sb-top{flex-direction:column;padding:20px 8px;gap:12px}
+  .sidebar.collapsed .sb-toggle{display:flex;align-items:center;justify-content:center;width:40px;height:36px;flex:none}
+  .sidebar.collapsed .sb-nav{padding:16px 6px}
+  .sidebar.collapsed .sb-item{padding:12px;justify-content:center}
+  .sb-top{padding:24px 16px;border-color:var(--line)}
+  .sb-logo{background:var(--teal-l);color:var(--teal)}
+  .sb-title{color:var(--ink);font-size:19px;letter-spacing:-.04em}
+  .sb-toggle{color:var(--muted)}
+  .sb-toggle:hover{background:var(--teal-l);color:var(--teal-d)}
+  .sb-nav{padding:20px 12px;gap:8px}
+  .sb-item{color:var(--muted);font-family:inherit;font-size:14px;padding:12px}
+  .sb-item:hover{background:#f3f6fb;color:var(--ink)}
+  .sb-item.active{background:var(--teal);color:#fff;box-shadow:0 3px 10px #2563eb26}
+  .sb-ic{background:#ffffffa6;border-radius:6px;min-height:26px;display:inline-flex;align-items:center;justify-content:center}
+  .sb-item.active .sb-ic{background:#ffffff26}
+  .sb-foot{color:var(--muted);border-color:var(--line);font-size:12px;padding:18px 14px}
+  .maintop{padding:22px 32px;gap:16px;background:linear-gradient(105deg,#fff,#eff5ff);border-top:3px solid var(--teal)}
+  .table-scroll{overflow-x:auto}
+  .project-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:18px;margin-top:24px}
+  .project-card h3{margin:0 0 8px;font-size:20px}
+  .project-card p{color:var(--muted);overflow-wrap:anywhere}
+  .project-context{padding:12px 16px;background:var(--teal-l);border:1px solid var(--teal-ring);border-radius:10px;margin-bottom:20px}
+  .rpt-hero{flex-wrap:wrap}
+  #reportContext{overflow-wrap:anywhere}
+  .rpt-hero ~ .btnrow,.rpt-hero ~ #reportContext{margin-left:20px!important;margin-right:20px!important}
+  #sdTable tbody tr:hover{background:var(--teal-l)}
+  .maintop h1{font-size:22px;letter-spacing:-.035em}
+  .maintop .sub{font-size:14px;margin-top:4px}
+  .usage-chip{color:var(--muted);background:#f8faff;border-color:var(--line);font-size:12px}
+  .stepper{gap:10px;margin-top:28px;width:100%;padding:0 28px}
+  .step{opacity:1;background:transparent;box-shadow:none;padding:14px 12px;border-color:transparent}
+  .step .num{width:30px;height:30px;background:#e8edf5;font-size:13px}
+  .step .lbl{font-size:14px;color:var(--muted)}
+  .step .sub{font-size:12px;margin-top:2px}
+  .step.active{background:#fff;border-color:var(--teal-ring);box-shadow:var(--shadow-sm)}
+  .step.active .lbl,.step.done .lbl{color:var(--ink)}
+  .wrap{margin-top:24px;padding:0 28px}
+  .viewwrap{padding:0 28px}
+  .card{padding:28px;box-shadow:0 2px 8px rgba(23,36,59,.035);margin-bottom:22px}
+  .card h2{font-size:20px;margin-bottom:10px}
+  .card .hint{font-size:14px;line-height:1.65}
+  label{font-size:14px;margin-bottom:7px;color:#40516b}
+  input,select,textarea{font-size:15px;padding:11px 13px;border-color:#ccd7e5}
+  select{appearance:none;padding-right:32px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23596b82' stroke-width='1.5'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+  select[multiple],select[size]{appearance:auto;background-image:none}
+  .field{margin-bottom:20px}
+  .grid2{gap:22px}
+  .btn{font-family:inherit;font-size:14px;min-height:44px;padding:11px 18px}
+  .btn.sm{font-size:14px;min-height:36px}
+  button:focus-visible,summary:focus-visible,a:focus-visible{outline:3px solid var(--teal);outline-offset:3px}
+  .modeswitch{background:#edf1f7;padding:5px;gap:5px;margin:8px 0 20px}
+  .modebtn{font-size:14px;padding:10px 16px}
+  .modebtn.active{color:var(--teal-d);box-shadow:0 1px 4px rgba(23,36,59,.1)}
+  .dz:hover,.dropzone:hover{background:#e3edff}
+  .scn,.tile,.existing-panel,.stp-body{background:#f8faff}
+  .stp-head:hover{background:var(--teal-l)}
+  .dfile{background:#f8faff}
+  .dfile th{background:#edf2fa}
+  .tile .l,.kpi-l{font-size:12px}
+  .note,.statusline,.existing-sub{font-size:14px}
+  .rv-actions{margin:22px -28px -28px;padding:16px 28px}
+  .dash-cell h4,.monitor-head .tool{font-size:15px}
+  .dash-cell .sub{font-size:13px}
+  @media(max-width:1100px){.step{min-width:0}.step .sub{display:none}.stepper{gap:4px}}
+  @media(max-width:860px){
+    .maintop{padding:16px 20px;flex-wrap:wrap}
+    .maintop h1{font-size:19px}
+    .maintop .sub{font-size:13px}
+    .stepper{flex-direction:row;flex-wrap:nowrap;padding:0 16px;margin-top:18px;overflow-x:auto}
+    .step{flex:1 0 105px;padding:10px 8px;gap:7px}
+    .step .lbl{font-size:12px}
+    .wrap,.viewwrap{padding:0 16px;margin-top:18px}
+    .card{padding:20px}
+    .rv-actions{margin:18px -20px -20px;padding:14px 20px}
+  }
+  @media(max-width:540px){
+    .usage-chip{margin-left:auto}
+    .endpoint,.stepline{grid-template-columns:80px minmax(0,1fr) 32px}
+    .endpoint>input:nth-child(3),.stepline>input:nth-child(3){grid-column:1 / 3;grid-row:2}
+    .endpoint>.iconbtn,.stepline>.iconbtn{grid-column:3;grid-row:1 / 3}
+    .scn-head,.rv-actions-row{flex-wrap:wrap}
+    .tiles,.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .modeswitch{display:flex}.modebtn{flex:1;padding:10px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+  }
 </style>
 </head>
 <body>
+<div id="appNotice" role="alert" style="display:none;position:fixed;bottom:20px;right:20px;max-width:min(480px,90vw);z-index:4000" class="note err"><span id="appNoticeText"></span><button class="btn ghost sm" onclick="this.parentElement.style.display='none'" aria-label="Dismiss message">Dismiss</button></div>
 
-<div class="topbar">
-  <div class="logo">⚡</div>
-  <div>
-    <h1>AI Performance Testing Agent</h1>
-    <p>AI drafts the plan · you approve · code generates, runs &amp; reports</p>
-  </div>
-  <div style="flex:1"></div>
-  <div class="usage-chip" id="sessionUsage" title="Total AI tokens used this session (rough cost estimate)">
-    🪙 <span id="sessionTokens">0</span> tokens
-    <span id="sessionCost" style="opacity:.8"></span>
-  </div>
-</div>
+<div class="sb-backdrop" id="sbBackdrop" onclick="closeMobNav()"></div>
+<div class="app">
 
-<!-- STEPPER -->
-<div class="stepper" id="stepper">
-  <div class="step" data-step="1"><div class="num">1</div><div><div class="lbl">Describe</div><div class="sub">target &amp; endpoints</div></div></div>
-  <div class="step" data-step="2"><div class="num">2</div><div><div class="lbl">Review plan</div><div class="sub">edit &amp; approve</div></div></div>
-  <div class="step" data-step="3"><div class="num">3</div><div><div class="lbl">Script</div><div class="sub">generated code</div></div></div>
-  <div class="step" data-step="4"><div class="num">4</div><div><div class="lbl">Run</div><div class="sub">live metrics</div></div></div>
-  <div class="step" data-step="5"><div class="num">5</div><div><div class="lbl">Report</div><div class="sub">verdict</div></div></div>
-</div>
+  <!-- LEFT SIDEBAR -->
+  <nav class="sidebar" id="sidebar" aria-label="Main navigation">
+    <div class="sb-top">
+      <div class="sb-logo">⚡</div>
+      <div class="sb-title">PerfAgent</div>
+      <button class="sb-toggle" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true" aria-controls="sidebar">☰</button>
+    </div>
+    <div class="sb-nav">
+      <button class="sb-item active" data-view="projects" onclick="showView('projects')"><span class="sb-ic">▦</span><span class="sb-lbl">Projects</span></button>
+      <button class="sb-item" data-view="create" onclick="showNewTestForm()"><span class="sb-ic">🎯</span><span class="sb-lbl">Create test</span></button>
+      <button class="sb-item" onclick="startProjectImport('script')"><span class="sb-ic">＋</span><span class="sb-lbl">Import script</span></button>
+      <button class="sb-item" onclick="startProjectImport('git')"><span class="sb-ic">⑂</span><span class="sb-lbl">Git framework</span></button>
+      <button class="sb-item" data-view="dashboard" onclick="showView('dashboard')"><span class="sb-ic">📊</span><span class="sb-lbl">Dashboard</span></button>
+      <button class="sb-item" data-view="history" onclick="showView('history')"><span class="sb-ic">📁</span><span class="sb-lbl">History</span></button>
+      <button class="sb-item" data-view="monitoring" onclick="showView('monitoring')"><span class="sb-ic">📡</span><span class="sb-lbl">Monitoring</span></button>
+      <button class="sb-item" data-view="activity" onclick="showView('activity')"><span class="sb-ic">📋</span><span class="sb-lbl">Activity</span></button>
+      <button class="sb-item" data-view="admin" onclick="showView('admin')"><span class="sb-ic">▤</span><span class="sb-lbl">Admin overview</span></button>
+    </div>
+    <div class="sb-foot">AI drafts · you approve · code runs</div>
+  </nav>
 
-<div class="wrap">
+  <!-- MAIN AREA -->
+  <div class="main">
+    <div class="maintop">
+      <button class="mobnav" onclick="openMobNav()" aria-label="Open navigation">☰</button>
+      <div>
+        <h1 id="viewTitle">Create a performance test</h1>
+        <div class="sub" id="viewSub">AI drafts the plan · you approve · code generates, runs &amp; reports</div>
+      </div>
+      <div style="flex:1"></div>
+      <select id="projectPicker" aria-label="Current project" style="width:auto;max-width:220px" onchange="selectProject(this.value)"><option value="">Select project</option></select>
+      <div class="usage-chip" id="sessionUsage" title="Total AI tokens used this session (rough cost estimate)">
+        🪙 <span id="sessionTokens">0</span> tokens
+        <span id="sessionCost" style="opacity:.8"></span>
+      </div>
+    </div>
+
+    <section class="view show" id="view-projects"><div class="viewwrap">
+      <div class="card"><h2>Your performance projects</h2><p class="hint">Keep each application's tests, environments, repository and run history together.</p>
+        <div class="btnrow"><button class="btn" onclick="editProject()">Create project</button><button class="btn ghost" onclick="beginFrameworkImport()">Import framework from Git</button></div>
+      </div>
+      <div id="projectForm" class="card" style="display:none"><h2 id="projectFormTitle">Create project</h2>
+        <div class="grid2">
+          <div class="field"><label for="projectName">Project name</label><input id="projectName" maxlength="120" placeholder="Commerce performance"></div>
+          <div class="field"><label for="projectFramework">Framework folder</label><input id="projectFramework" placeholder="commerce-performance"></div>
+          <div class="field"><label for="projectTarget">Default target URL</label><input id="projectTarget" placeholder="https://staging.example.com"></div>
+          <div class="field"><label for="projectEnvironment">Default environment</label><input id="projectEnvironment" value="staging"></div>
+          <div class="field"><label for="projectRepo">Git repository (optional)</label><input id="projectRepo" placeholder="https://github.com/org/performance-tests.git"></div>
+          <div class="field"><label for="projectBranch">Git branch</label><input id="projectBranch" value="main"></div>
+        </div>
+        <div class="field"><label for="projectDescription">Description</label><textarea id="projectDescription" maxlength="2000"></textarea></div>
+        <div class="field"><label>CI templates</label><label class="chk"><input type="checkbox" class="projectCi" value="jenkins" checked> Jenkins</label><label class="chk"><input type="checkbox" class="projectCi" value="github"> GitHub Actions</label><label class="chk"><input type="checkbox" class="projectCi" value="azure"> Azure Pipelines</label><label class="chk"><input type="checkbox" class="projectCi" value="gitlab"> GitLab CI</label></div>
+        <div class="btnrow"><button class="btn" onclick="saveProject()">Save project</button><button class="btn ghost" onclick="document.getElementById('projectForm').style.display='none';importAfterProject=false">Cancel</button></div>
+        <div id="projectSaveStatus" class="statusline" role="status"></div>
+      </div>
+      <div id="activeProject" class="card" style="display:none"><h2 id="activeProjectName"></h2><p class="hint" id="activeProjectDescription"></p>
+        <div class="btnrow"><button class="btn" onclick="showNewTestForm()">Create test</button><button class="btn ghost" onclick="startProjectImport('script')">Import script</button><button class="btn ghost" onclick="startProjectImport('git')">Import / sync Git</button><button class="btn ghost" onclick="showView('history')">Test library</button><button class="btn ghost" onclick="showView('dashboard')">Project dashboard</button><button class="btn ghost" onclick="editProject(currentProject)">Settings</button></div>
+      </div>
+      <div id="newTestForm" class="card" style="display:none"><h2>Create a test</h2><p class="hint">Name the journey first. You can save several workload profiles for the same test.</p>
+        <div class="field"><label for="newTestName">Test name</label><input id="newTestName" maxlength="120" placeholder="Checkout journey"></div>
+        <div class="field"><label for="newTestPurpose">Purpose</label><textarea id="newTestPurpose" placeholder="Verify checkout meets expected traffic and response-time targets"></textarea></div>
+        <div class="btnrow"><button class="btn" onclick="startNamedTest()">Continue to test setup</button></div>
+      </div>
+      <div id="projectCards" class="project-grid"></div>
+    </div></section>
+    <section class="view" id="view-admin"><div class="viewwrap"><div class="card"><h2>All-project overview</h2><p class="hint">Administrator access is checked by the server. Enter the token configured as ADMIN_API_TOKEN; it stays in this page's memory.</p>
+      <div class="field"><label for="adminToken">Administrator token</label><input id="adminToken" type="password" autocomplete="off"></div><div class="btnrow"><button class="btn" onclick="loadAdminOverview()">Load overview</button><button class="btn ghost" onclick="document.getElementById('adminToken').value='';document.getElementById('adminOverview').innerHTML=''">Clear</button></div>
+      <div id="adminOverview" role="status" style="margin-top:20px"></div>
+    </div></div></section>
+    <!-- ===== VIEW: CREATE TEST (the 5-step wizard) ===== -->
+    <section class="view" id="view-create">
+    <div class="project-context" id="testProjectContext"></div>
+    <div class="stepper" id="stepper">
+      <div class="step" data-step="1"><div class="num">1</div><div><div class="lbl">Describe</div><div class="sub">target &amp; endpoints</div></div></div>
+      <div class="step" data-step="2"><div class="num">2</div><div><div class="lbl">Review plan</div><div class="sub">edit &amp; approve</div></div></div>
+      <div class="step" data-step="3"><div class="num">3</div><div><div class="lbl">Script</div><div class="sub">generated code</div></div></div>
+      <div class="step" data-step="4"><div class="num">4</div><div><div class="lbl">Run</div><div class="sub">live metrics</div></div></div>
+      <div class="step" data-step="5"><div class="num">5</div><div><div class="lbl">Report</div><div class="sub">verdict</div></div></div>
+    </div>
+
+    <div class="wrap">
 
   <!-- ===== STEP 1: DESCRIBE ===== -->
   <div class="panel show" id="panel1">
@@ -460,7 +667,7 @@
 
       <!-- ===== MANUAL FORM ===== -->
       <div id="modeManual">
-      <p class="hint">Fill in the target and its endpoints. The AI drafts a plan from them; you add test data, checks and limits on the next step.</p>
+      <p class="hint">Enter a URL for a page test, or add endpoints for an API or journey. Review the suggested workload before sending traffic.</p>
 
       <div class="grid2">
         <div class="field"><label>Target base URL</label><input id="target" value="http://127.0.0.1:8000" /></div>
@@ -480,6 +687,20 @@
         </select>
       </div>
 
+      <details class="field">
+        <summary>Pass rules (optional)</summary>
+        <div class="grid2">
+          <div class="field">
+            <label for="draftP95">Maximum p95 latency (ms)</label>
+            <input id="draftP95" type="number" min="0" step="any" placeholder="500" />
+          </div>
+          <div class="field">
+            <label for="draftErrorRate">Error rate must be below (%)</label>
+            <input id="draftErrorRate" type="number" min="0" max="100" step="any" placeholder="1" />
+          </div>
+        </div>
+        <p class="hint">Leave both blank to get suggested rules.</p>
+      </details>
       <div class="field" style="margin-top:4px">
         <div class="lblrow"><label>Import endpoints (optional)</label><i class="infohint" data-tip="Load endpoints automatically from an OpenAPI/Swagger spec, a Postman collection, or a HAR capture — instead of typing them.">i</i></div>
         <div class="dz" id="impdz" onclick="document.getElementById('importFile').click()" style="padding:10px">
@@ -503,6 +724,7 @@
 
       <!-- ===== MY K6 SCRIPT (run an existing script; skips AI planning) ===== -->
       <div id="modeScript" style="display:none">
+          <div class="field"><label for="exTestName">Test name</label><input id="exTestName" maxlength="120" placeholder="e.g. Checkout regression"></div>
           <div class="lblrow"><label>Target base URL</label><i class="infohint" data-tip="Where the script sends traffic — used for the report. The script's own BASE_URL still applies at run time.">i</i></div>
           <input id="exTarget" value="http://127.0.0.1:8000" />
 
@@ -581,6 +803,11 @@
 
         <section class="rv-sec">
           <h3><span class="rv-n">1</span>Target &amp; load</h3>
+          <div class="btnrow"><select id="savedWorkload" aria-label="Saved workload" style="width:auto" onchange="applySavedWorkload()"><option value="">Saved workload profiles</option></select><input id="workloadName" aria-label="Workload profile name" placeholder="Average load / stress / soak" style="width:220px"><button class="btn ghost sm" onclick="saveWorkloadProfile()">Save workload</button></div>
+          <div class="grid2">
+            <div class="field"><label for="pfTestName">Test name</label><input id="pfTestName" maxlength="120" placeholder="e.g. Checkout flow - staging" oninput="planModel.test_name=this.value.trim()" onchange="suggestScriptFilename()"></div>
+            <div class="field"><label for="pfScriptFilename">Script filename</label><input id="pfScriptFilename" maxlength="120" placeholder="e.g. checkout-flow.js" oninput="planModel.script_filename=this.value.trim()"></div>
+          </div>
           <div class="rv-grid">
             <div class="field" style="grid-column:span 2"><label for="pfTarget">Target base URL</label>
               <input id="pfTarget" oninput="planModel.target_base_url=this.value.trim();renderSummary()" /></div>
@@ -599,6 +826,9 @@
             <div class="field" style="grid-column:span 2"><label for="tool">Load tool</label><select id="tool" onchange="if(planModel) renderDataCard()"></select></div>
           </div>
           <div class="rv-shape" id="pfShape"></div>
+          <div class="grid2" style="margin-top:12px"><div class="field"><label for="pfArrival">Target iterations/second (k6, optional)</label><input id="pfArrival" type="number" min="1" max="1000000" placeholder="Leave empty for user-based load" onchange="setTrafficRate()"></div><div class="field"><label for="pfArrivalVus">Preallocated users for rate mode</label><input id="pfArrivalVus" type="number" min="1" value="10" onchange="setTrafficRate()"></div></div>
+          <p class="hint">An iteration runs one journey and may send several requests. Rate mode uses the total duration above; ramp stages apply to user-based mode.</p>
+          <div class="btnrow"><select id="environmentPreset" aria-label="Saved environment" style="width:auto" onchange="useEnvironmentPreset()"><option value="">Saved environments</option></select><button class="btn ghost sm" onclick="saveEnvironmentPreset()">Save current environment</button></div>
 
           <details class="rv-more" id="connDetails">
             <summary>Connection options — headers, environment, TLS <span class="muted" id="connCount"></span></summary>
@@ -679,6 +909,9 @@
       <pre id="scriptOut">The generated script appears here.</pre>
       <textarea id="scriptEdit" style="display:none;min-height:360px;width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5"></textarea>
       <div class="note info" id="editNote" style="display:none;margin-top:8px">✏️ Editing mode — your changes (e.g. extra console.log for debugging) will be used when you validate or run. Click "Regenerate" to discard edits and restore the generated script.</div>
+      <div class="field" style="margin-top:16px"><label for="releaseLabel">Release or commit label (optional)</label><input id="releaseLabel" maxlength="100" placeholder="e.g. release-2.4 or commit SHA"></div>
+      <div class="btnrow"><button class="btn ghost" onclick="checkReadiness()">Check readiness</button><button class="btn ghost" onclick="runScript(true)">Run 10-second smoke test</button><span class="muted">Generated k6 scripts: one user per journey.</span></div>
+      <div id="readinessResult" class="note info" style="display:none" role="status"></div>
       <div class="btnrow">
         <button class="btn ghost sm" onclick="goStep(2)">← Back to plan</button>
         <button class="btn ghost sm" id="editBtn" onclick="toggleEditScript()">✏️ Edit script</button>
@@ -686,12 +919,12 @@
         <button class="btn ghost sm" id="dlBtn" onclick="download()" disabled>⬇ Download</button>
         <div class="spacer"></div>
         <button class="btn ghost" id="validateBtn" onclick="doValidate()" disabled>✓ Validate script</button>
-        <button class="btn ghost" id="preflightBtn" onclick="doPreflight()" disabled>✈ Pre-flight check</button>
+        <button class="btn ghost" id="preflightBtn" onclick="doPreflight()" disabled>Verify test</button>
         <button class="btn" id="runBtn" onclick="runScript()" disabled>▶ Run &amp; monitor live</button>
       </div>
       <div class="note warn" id="runHint" style="margin-top:10px;display:none"></div>
       <div class="note" id="validateResult" style="display:none"></div>
-      <div class="note" id="preflightResult" style="display:none"></div>
+      <div class="note" id="preflightResult" role="status" style="display:none"></div>
     </div>
 
     <div class="card" id="gitCard">
@@ -792,6 +1025,9 @@
         <div class="tile"><div class="v" id="mErr">0%</div><div class="l">Error rate</div></div>
         <div class="tile"><div class="v" id="mP95">0 ms</div><div class="l">p95 latency</div></div>
         <div class="tile"><div class="v" id="mP99">0 ms</div><div class="l">p99 latency</div></div>
+        <div class="tile"><div class="v" id="mActiveVus">—</div><div class="l">Active VUs / planned peak</div></div>
+        <div class="tile"><div class="v" id="mIterationRate">—</div><div class="l">Iterations/s / target</div></div>
+        <div class="tile"><div class="v" id="mDroppedIterations">—</div><div class="l">Dropped iterations</div></div>
       </div>
       <table id="epTable"><thead><tr><th>Endpoint</th><th>Requests</th><th>Failed</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead><tbody></tbody></table>
 
@@ -815,6 +1051,9 @@
         <button class="btn" onclick="downloadReport()" style="background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.3)">⬇ Download report</button>
       </div>
 
+      <div class="btnrow" style="margin:16px 20px"><button class="btn" id="rerunBtn" onclick="rerunReport()" disabled>Run again</button><span class="muted" id="rerunNote" role="status"></span></div>
+      <div class="btnrow"><button class="btn ghost sm" onclick="selectReportBaseline()">Use as baseline</button><button class="btn ghost sm" onclick="clearSelectedBaseline()">Clear selected baseline</button><span class="muted" id="baselineSelection" role="status"></span></div>
+      <div id="reportContext" class="note info"></div>
       <!-- KPI tiles -->
       <div class="kpi-grid" id="kpiGrid">
         <div class="kpi"><div class="kpi-v" id="kRequests">—</div><div class="kpi-l">Requests</div></div>
@@ -826,6 +1065,7 @@
       </div>
     </div>
 
+    <div id="reportDetails" class="card"></div>
     <!-- time-series + trend charts -->
     <div class="rpt-cols">
       <div class="card">
@@ -877,6 +1117,63 @@
     </div>
   </div>
 
+    </div><!-- /.wrap -->
+    </section><!-- /view-create -->
+
+    <!-- ===== VIEW: DASHBOARD ===== -->
+    <section class="view" id="view-dashboard">
+      <div class="viewwrap">
+      <div class="project-context" id="projectDashboardSummary" role="status"></div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0;font-size:15px">📊 Stakeholder dashboard</h2>
+          <button class="btn ghost sm" onclick="loadStakeholder()">↻ Refresh</button>
+          <span class="muted">what each role sees across all runs</span>
+          <div class="spacer"></div>
+          <label for="sdRole" style="margin:0;font-size:12px">View as</label>
+          <select id="sdRole" style="width:auto;padding:5px 9px" onchange="loadStakeholder()">
+            <option value="executive">Executive</option>
+            <option value="qa_lead">QA lead</option>
+            <option value="engineer">Engineer</option>
+            <option value="viewer">Viewer</option>
+          </select>
+        </div>
+
+        <div class="grid3" style="margin-top:20px">
+          <div class="field"><label for="sdTest">Test / workload</label><select id="sdTest" onchange="loadStakeholder()"><option value="">All tests</option></select></div>
+          <div class="field"><label for="sdTarget">Target contains</label><input id="sdTarget" type="search" placeholder="Filter targets" oninput="clearTimeout(dashboardFilterTimer);dashboardFilterTimer=setTimeout(()=>loadStakeholder(),250)"></div>
+          <div class="field"><label for="sdVerdict">Verdict</label><select id="sdVerdict" onchange="loadStakeholder()"><option value="">All verdicts</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="inconclusive">Inconclusive</option></select></div>
+          <div class="field"><label for="sdFrom">From date</label><input type="date" id="sdFrom" onchange="loadStakeholder()"></div>
+          <div class="field"><label for="sdTo">Through date</label><input type="date" id="sdTo" onchange="loadStakeholder()"></div>
+        </div>
+        <div class="btnrow"><button class="btn ghost sm" onclick="resetDashboardFilters()">Clear filters</button><span class="muted" id="sdFilterNote" role="status">Filters search saved runs. Summaries and charts show the current page.</span></div>
+        <div class="tiles" id="sdTiles" style="grid-template-columns:repeat(4,1fr);margin:14px 0 4px"></div>
+
+        <div class="dash-grid">
+          <div class="dash-cell"><h4>p95 latency across runs</h4><div class="sub">lower is better · amber line</div>
+            <canvas id="sdTrend" height="140" style="width:100%"></canvas></div>
+          <div class="dash-cell"><h4>Error rate across runs</h4><div class="sub">percentage of failed requests · red line</div>
+            <canvas id="sdErrTrend" height="140" style="width:100%"></canvas></div>
+          <div class="dash-cell"><h4>Verdict breakdown</h4><div class="sub">pass / fail / inconclusive</div>
+            <canvas id="sdDonut" height="140" style="width:100%"></canvas></div>
+          <div class="dash-cell"><h4>Latency percentiles (latest run)</h4><div class="sub">p50 · p95 · p99 in ms</div>
+            <canvas id="sdBars" height="140" style="width:100%"></canvas></div>
+        </div>
+
+        <div class="mini" style="margin-top:18px">Compare runs</div>
+        <div class="grid2"><div class="field"><label for="sdCompareA">Baseline run</label><select id="sdCompareA" onchange="renderRunComparison()"></select></div><div class="field"><label for="sdCompareB">Comparison run</label><select id="sdCompareB" onchange="renderRunComparison()"></select></div></div>
+        <div id="sdComparison" class="table-scroll" aria-live="polite"></div>
+        <div class="mini" style="margin-top:18px">Recent runs</div>
+        <div class="table-scroll" role="region" aria-label="Recent runs" tabindex="0"><table id="sdTable" style="margin-top:4px"><thead><tr id="sdHead"></tr></thead><tbody></tbody></table></div>
+        <div class="btnrow"><button class="btn ghost sm" id="sdPrev" onclick="loadStakeholder(Math.max(0,dashboardOffset-50))">Previous</button><span class="muted" id="sdPage" role="status"></span><button class="btn ghost sm" id="sdNext" onclick="loadStakeholder(dashboardOffset+50)">Next</button></div>
+        <div class="muted" id="sdEmpty" style="display:none;padding:10px 2px">No runs recorded yet. Run a plan to populate this.</div>
+      </div>
+      </div>
+    </section>
+
+    <!-- ===== VIEW: HISTORY ===== -->
+    <section class="view" id="view-history">
+      <div class="viewwrap">
   <!-- HISTORY -->
   <div class="card">
     <div style="display:flex;align-items:center;gap:10px">
@@ -893,9 +1190,37 @@
       <button class="btn ghost sm" onclick="loadRuns()">↻ Refresh</button>
       <span class="muted">every finished run — click to reopen its report</span>
     </div>
-    <table id="runsTable" style="margin-top:10px"><thead><tr><th>When</th><th>Verdict</th><th>Target</th><th>Goal</th><th>Requests</th><th>Errors</th><th>p95</th><th></th></tr></thead><tbody></tbody></table>
+    <table id="runsTable" style="margin-top:10px"><thead><tr><th>When</th><th>Verdict</th><th>Target</th><th>Test / script</th><th>Requests</th><th>Errors</th><th>p95</th><th></th></tr></thead><tbody></tbody></table>
   </div>
+      </div>
+    </section>
 
+    <!-- ===== VIEW: MONITORING ===== -->
+    <section class="view" id="view-monitoring">
+      <div class="viewwrap">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0;font-size:15px">📡 Monitoring tools</h2>
+          <span class="muted">link your own Grafana, Datadog, Prometheus or any dashboard — it embeds here</span>
+        </div>
+        <p class="hint" style="margin:10px 0 0">Add the URL of a dashboard you already run. It is stored only in this browser. If the tool blocks embedding, use <b>Open ↗</b> to view it in a new tab. For Grafana embedding, the Grafana admin must set <code class="k">allow_embedding = true</code>.</p>
+        <div class="grid3" style="margin-top:14px">
+          <div class="field"><label>Tool</label>
+            <select id="monTool"><option>Grafana</option><option>Datadog</option><option>Prometheus</option><option>Kibana</option><option>New Relic</option><option>Custom</option></select></div>
+          <div class="field" style="grid-column:span 2"><label>Dashboard URL</label>
+            <input id="monUrl" placeholder="https://grafana.mycompany.com/d/abc/perf?kiosk" autocomplete="off"/></div>
+        </div>
+        <div class="btnrow"><button class="btn" onclick="monAdd()">+ Add dashboard</button>
+          <span class="hint" style="margin:0">Tip: append <code class="k">&amp;kiosk</code> to a Grafana URL to hide its menus.</span></div>
+        <div class="statusline" id="monStatus"></div>
+      </div>
+      <div id="monList"></div>
+      </div>
+    </section>
+
+    <!-- ===== VIEW: ACTIVITY ===== -->
+    <section class="view" id="view-activity">
+      <div class="viewwrap">
   <!-- ACTIVITY LOG -->
   <div class="card">
     <div style="display:flex;align-items:center;gap:10px">
@@ -915,16 +1240,31 @@
     </div>
     <table id="tracesTable" style="margin-top:10px"><thead><tr><th>When</th><th>Step</th><th>Model</th><th>Tokens</th><th>Latency</th><th>Redactions</th><th>Status</th></tr></thead><tbody></tbody></table>
   </div>
+      </div>
+    </section>
 
-</div>
+  </div><!-- /.main -->
+</div><!-- /.app -->
 
 <script>
+let projects=[],currentProject=null,editingProjectId=null,newTestName='',importAfterProject=false,savedWorkloads=[];
 let currentPlanId=null, currentScriptId=null, currentDataFileId=null, currentRunId=null, pollTimer=null;
 let planModel=null;        // the editable plan object
 let dataColumns=[];        // uploaded data file columns
 
 /* ---------- stepper ---------- */
 function goStep(n){
+  const verification=document.getElementById('preflightResult');
+  if(n===3 && verification && verification.dataset.scriptId!==currentScriptId){
+    verification.style.display='none';
+    if(currentScriptId) loadSavedVerification(currentScriptId, verification);
+  }
+  // the 5 panels live inside the Create view; make sure it is the visible view
+  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-create'));
+  document.querySelectorAll('.sb-item').forEach(b=>b.classList.toggle('active', b.dataset.view==='create'));
+  const mt=(typeof VIEW_META!=='undefined')?VIEW_META.create:null;
+  if(mt){ document.getElementById('viewTitle').textContent=mt[0]; document.getElementById('viewSub').textContent=mt[1]; }
+  if(n===5){document.getElementById('viewTitle').textContent=reportContext?.testName?reportContext.testName+' - report':'Performance report';document.getElementById('viewSub').textContent='Measured results, thresholds and workload comparisons';}
   for(let i=1;i<=5;i++){
     document.getElementById('panel'+i).classList.toggle('show', i===n);
   }
@@ -976,13 +1316,14 @@ const CONV_EXAMPLES=[
 ];
 
 async function convApi(path, opts){
+  if(path==='/sessions'&&opts?.method==='POST'){opts={...opts,body:JSON.stringify({...JSON.parse(opts.body||'{}'),project_id:currentProject?.project_id,test_name:newTestName})};}
   const r=await fetch('/api/chat'+path, opts||{});
   let j={}; try{ j=await r.json(); }catch(e){}
   if(!r.ok){ const err=new Error(j.detail||('request failed ('+r.status+')')); err.status=r.status; throw err; }
   return j;
 }
-function convRemember(id){ try{ if(id) localStorage.setItem(CONV_KEY,id); else localStorage.removeItem(CONV_KEY); }catch(e){} }
-function convRecall(){ try{ return localStorage.getItem(CONV_KEY); }catch(e){ return null; } }
+function convRemember(id){ try{ if(id) localStorage.setItem(CONV_KEY+':'+(currentProject?.project_id||'legacy'),id); else localStorage.removeItem(CONV_KEY+':'+(currentProject?.project_id||'legacy')); }catch(e){} }
+function convRecall(){ try{ return localStorage.getItem(CONV_KEY+':'+(currentProject?.project_id||'legacy')); }catch(e){ return null; } }
 
 async function initConversation(){
   let cfg; try{ cfg=await convApi('/config'); }catch(e){ return; }
@@ -1000,7 +1341,8 @@ async function initConversation(){
 
 async function convLoadHistory(){
   try{
-    const j=await convApi('/sessions?limit=20');
+    if(!currentProject)return;
+    const j=await convApi('/sessions?limit=20'+projectQuery());
     const sel=document.getElementById('convHistory');
     const label={collecting:'gathering',ready:'ready',planned:'plan built'};
     sel.innerHTML='<option value="">Recent conversations…</option>'+j.sessions.map(x=>{
@@ -1095,8 +1437,15 @@ function convRenderDraft(v){
   h+='<div class="dsec">Endpoints</div>';
   if(d.endpoints.length){
     h+=d.endpoints.map(e=>'<div class="dep"><span class="m">'+esc(e.method)+'</span><span>'+esc(e.path)+
-        (e.example_body?' <span class="dtag">body</span>':'')+'</span></div>').join('');
+        (e.example_body?' <span class="dtag">body</span>':'')+'</span></div>'+
+        (e.assertions||[]).map(check=>'<div class="muted">'+esc(checkLabel(check))+'</div>').join('')).join('');
   } else { h+='<div class="drow" style="border:0"><span class="dv todo">needed</span></div>'; }
+  if(d.thresholds?.length){
+    h+='<div class="dsec">Pass rules</div>'+d.thresholds.map(rule=>{
+      const value=rule.metric==='error_rate'?Number((rule.value*100).toPrecision(15))+'%':rule.value+' ms';
+      return '<div class="drow">'+esc(rule.metric+' '+rule.op+' '+value)+'</div>';
+    }).join('');
+  }
   const open=(v.questions||[]);
   if(open.length){
     h+='<div class="dsec">'+(miss.length?'Still needed':'Open questions')+'</div><ul class="dlist">'+
@@ -1163,7 +1512,8 @@ async function convBuild(){
 function convOpenPlan(p){
   if(!p) return;
   if(currentPlanId!==p.plan_id){                    // don't overwrite edits made in review
-    currentPlanId=p.plan_id; planModel=p.load_model; planRationale=p.rationale||'';
+    currentPlanId=p.plan_id; planModel=p.load_model;
+    if(currentProject){planModel.test_name=planModel.test_name||newTestName;attachCurrentTest(p.plan_id);} planRationale=p.rationale||'';
     document.getElementById('importNote').style.display='none';
     applyIntegrations(p.plan_id);
     renderPlanForm(); renderRawFromModel();
@@ -1180,10 +1530,18 @@ function convOpenPlan(p){
 function addEndpoint(method="GET",path="",body=""){
   const d=document.createElement('div');d.className='endpoint';
   d.innerHTML=`<select>${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${m===method?'selected':''}>${m}</option>`).join('')}</select>
-    <input placeholder="/path" value="${path}" />
-    <input class="bodyInput" placeholder='body JSON e.g. {"user":"demo"}' value='${body}' />
+    <input placeholder="/path" aria-label="Endpoint path" />
+    <input class="bodyInput" aria-label="JSON request body" placeholder='body JSON e.g. {"user":"demo"}' />
     <button class="iconbtn gbtn" title="Edit body + add dynamic data" onclick="openBodyEditor(this)">✏️</button>
-    <button class="iconbtn" onclick="this.parentElement.remove()">×</button>`;
+    <button class="iconbtn" type="button" aria-label="Remove endpoint" onclick="this.parentElement.remove()">×</button>
+    <details style="grid-column:1 / -1">
+      <summary>Response check (optional)</summary>
+      <input class="draftJsonPath" aria-label="JSON field that must exist" placeholder="e.g. order.id" />
+    </details>`;
+  const [pathInput, bodyInput]=d.querySelectorAll('input');
+  pathInput.value=path;
+  bodyInput.value=body;
+  d.querySelector('select').setAttribute('aria-label', 'HTTP method');
   document.getElementById('endpoints').appendChild(d);
 }
 
@@ -1301,8 +1659,13 @@ function readEndpoints(){
     const method=d.querySelector('select').value;
     const ins=d.querySelectorAll('input');
     const path=ins[0].value.trim(); const bodyRaw=ins[1].value.trim();
-    if(!path) return null;
+    const jsonPath=d.querySelector('.draftJsonPath').value.trim();
+    if(!path){
+      if(bodyRaw||jsonPath) throw new Error('Enter a path for the endpoint with a body or response check.');
+      return null;
+    }
     const ep={method,path};
+    if(jsonPath) ep.assertions=[{kind:'json_path',op:'exists',path:jsonPath}];
     if(bodyRaw){ try{ep.example_body=JSON.parse(bodyRaw)}catch(e){throw new Error(`Body for ${method} ${path} isn't valid JSON: ${e.message}`)} }
     return ep;
   }).filter(Boolean);
@@ -1315,18 +1678,35 @@ async function loadTools(){
 
 /* ---------- draft plan ---------- */
 async function doPlan(){
+  if(!currentProject||!newTestName){showNewTestForm();return;}
   const status=document.getElementById('planStatus');
   let eps; try{eps=readEndpoints()}catch(e){status.className='statusline err';status.textContent=e.message;return;}
-  if(!eps.length){status.className='statusline err';status.textContent='Add at least one endpoint.';return;}
   status.className='statusline';status.textContent='Asking the AI to draft a plan…';
   document.getElementById('planBtn').disabled=true;
   try{
-    const body={target_base_url:document.getElementById('target').value.trim(),
+    let target=document.getElementById('target').value.trim();
+    if(!eps.length){
+      const url=new URL(target);
+      if(!['http:','https:'].includes(url.protocol)||url.username||url.password){
+        throw new Error('Enter an HTTP or HTTPS URL without credentials.');
+      }
+      eps=[{method:'GET',path:url.pathname+url.search}];
+      target=url.origin;
+    }
+    const rules=[];
+    for(const [id,metric,op,divisor] of [
+      ['draftP95','p95_ms','<=',1], ['draftErrorRate','error_rate','<',100],
+    ]){
+      const input=document.getElementById(id);
+      if(!input.checkValidity()) throw new Error('Enter valid latency and error rate limits.');
+      if(input.value!=='') rules.push({metric,op,value:input.valueAsNumber/divisor});
+    }
+    const body={project_id:currentProject.project_id,test_name:newTestName,environment:currentProject.environment||'',target_base_url:target,
       goal:document.getElementById('goal').value.trim(),
       max_users:parseInt(document.getElementById('maxUsers').value),
       duration_seconds:parseInt(document.getElementById('duration').value),
       profile_type:document.getElementById('profileType').value,
-      endpoints:eps};
+      endpoints:eps, ...(rules.length?{thresholds:rules}:{})};
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
@@ -1349,8 +1729,8 @@ function showGuardrail(g){
 }
 function showPlanEval(e){
   const el=document.getElementById('planEval'); if(!e){el.style.display='none';return;} el.style.display='inline-flex';
-  if(e.grounded){ el.className='rv-chip ok'; el.textContent='✅ Plan matches what you asked for ('+e.passed+'/'+e.total+' checks)';
-    el.title='Grounding checks: the plan only uses the target and endpoints you gave.'; }
+  if(e.grounded){ el.className='rv-chip ok'; el.textContent='Plan validation passed ('+e.passed+'/'+e.total+' checks)';
+    el.title='Checks the draft against its configured inputs. Verification sends requests to the target.'; }
   else { const f=(e.checks||[]).filter(c=>!c.passed).map(c=>c.name).join(', ');
          el.className='rv-chip warn'; el.textContent='⚠ Review needed — '+e.passed+'/'+e.total+' checks passed';
          el.title='Issues: '+(f||'see the plan'); }
@@ -1421,7 +1801,7 @@ function checkLabel(c){
   if(c.kind==='not_contains')  return 'Body does NOT contain "'+c.value+'"';
   if(c.kind==='status')        return 'Status is '+c.value;
   if(c.kind==='response_time') return 'Response under '+c.value+'ms';
-  if(c.kind==='json_path')     return 'Field '+c.path+' '+c.op+' '+c.value;
+  if(c.kind==='json_path')     return 'Field '+c.path+(c.op==='exists'?' exists':' '+c.op+' '+c.value);
   return c.kind;
 }
 function applySuggestedChecks(){
@@ -1482,7 +1862,7 @@ function renderSummary(){
   const thr=(planModel.thresholds||[]).map(t=>{
     const m={p95_ms:'95% of responses',p99_ms:'99% of responses',p50_ms:'half of responses',
              avg_ms:'average response',error_rate:'error rate'}[t.metric]||t.metric;
-    if(t.metric==='error_rate'){ const pct=(t.value*100).toFixed(t.value<0.01?1:0);
+    if(t.metric==='error_rate'){ const pct=Number((t.value*100).toPrecision(15));
       return `the ${m} stays ${t.op.includes('<')?'under':'over'} ${pct}%`; }
     return `${m} ${t.op.includes('<')?'stay under':'exceed'} ${t.value} ms`;
   });
@@ -1534,9 +1914,15 @@ function renderPlanForm(){
   _rdPaths=[];
   if(_reviewPlanId!==currentPlanId){ _reviewPlanId=currentPlanId; resetReviewState(); }
   document.getElementById('pfTarget').value=planModel.target_base_url||'';
+  document.getElementById('pfTestName').value=planModel.test_name||'';
+  document.getElementById('pfScriptFilename').value=planModel.script_filename||'';
+  loadWorkloadProfiles();
   document.getElementById('environment').value=planModel.environment||'';
   document.getElementById('insecureTls').checked=!!planModel.insecure_tls;
   renderLoad(); renderDataCard(); renderConnCount();
+  document.getElementById("pfArrival").value=planModel.load_profile.arrival_rate||"";
+  document.getElementById("pfArrivalVus").value=planModel.load_profile.pre_allocated_vus||10;
+  renderEnvironmentPresets();
   const host=document.getElementById('scenarios'); host.innerHTML='';
   (planModel.scenarios||[]).forEach((sc,si)=>host.appendChild(scenarioCard(sc,si)));
   const th=document.getElementById('thresholds'); th.innerHTML='';
@@ -1575,7 +1961,8 @@ async function updateLoad(){
     const r=await fetch('/api/load-profile',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({type:document.getElementById('pfType').value,max_users:users,duration_seconds:duration})});
     const j=await r.json(); if(!r.ok) throw new Error('that load size is not valid');
-    planModel.load_profile=j.load_profile;
+    const arrival=planModel.load_profile.arrival_rate, vus=planModel.load_profile.pre_allocated_vus;
+    planModel.load_profile={...j.load_profile,arrival_rate:arrival,pre_allocated_vus:vus||10};
     _loadAsked={users,duration};                 // what was asked for, not the rounded total
     status.className='statusline'; status.textContent='';
     renderLoad(); renderSummary();
@@ -2002,14 +2389,14 @@ const CHECK_TYPES=[
 function assertRowHtml(si,sti,ai,a){
   const typeOpts=CHECK_TYPES.map(t=>`<option value="${t.k}" ${t.k===a.kind?'selected':''}>${t.label}</option>`).join('');
   const ct=CHECK_TYPES.find(t=>t.k===a.kind)||CHECK_TYPES[0];
-  const ops=['eq','ne','gt','lt','contains'];
+  const ops=['eq','ne','gt','lt','contains','exists'];
   const opOpts=ops.map(o=>`<option ${o===a.op?'selected':''}>${o}</option>`).join('');
   return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;flex-wrap:wrap;background:#f7faf8;padding:6px 8px;border-radius:8px">`+
     `<span style="color:var(--teal-d)">✔</span>`+
     `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'kind',this.value);renderPlanForm()">${typeOpts}</select>`+
     (ct.path?`<input style="width:100px;padding:4px 7px" value="${esc(a.path||'')}" placeholder="field" oninput="setAssert(${si},${sti},${ai},'path',this.value)"/>`+
-      `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'op',this.value)">${opOpts}</select>`:'')+
-    `<input style="width:130px;padding:4px 7px" value="${esc(a.value||'')}" placeholder="${ct.vph}" oninput="setAssert(${si},${sti},${ai},'value',this.value)"/>`+
+      `<select style="width:auto;padding:4px 7px" onchange="setAssert(${si},${sti},${ai},'op',this.value);renderPlanForm()">${opOpts}</select>`:'')+
+    (ct.path&&a.op==='exists'?'':`<input style="width:130px;padding:4px 7px" value="${esc(a.value||'')}" placeholder="${ct.vph}" oninput="setAssert(${si},${sti},${ai},'value',this.value)"/>`)+
     `<button class="iconbtn" style="padding:2px 7px" onclick="removeAssertion(${si},${sti},${ai})">×</button></div>`;
 }
 function setAssert(si,sti,ai,key,val){
@@ -2151,7 +2538,8 @@ async function doGenerate(){
     const hdrs=readHeaders(); planModel.headers=hdrs; if(Object.keys(hdrs).length) payload.headers=hdrs;
     const r=await fetch(`/api/plan/${currentPlanId}/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'generate failed');
-    currentScriptId=j.script_id;
+    currentScriptId=j.script_id; _scriptEdited=false;
+    document.getElementById('preflightResult').style.display='none';
     document.getElementById('scriptOut').textContent=j.content;
     document.getElementById('dlBtn').disabled=false;
     document.getElementById('runBtn').disabled=(j.tool!=='k6');
@@ -2194,9 +2582,8 @@ async function applyIntegrations(planId){
   try{
     const j=await (await fetch('/api/integrations'+(planId?`?plan_id=${encodeURIComponent(planId)}`:''))).json();
     if(seq!==integrationsSeq) return;            // a newer plan was opened meanwhile
-    setFields(GIT_FIELDS, j.git||{});
-    if(j.git && Array.isArray(j.git.ci) && j.git.ci.length)
-      document.querySelectorAll('.gitCi').forEach(c=>{ c.checked=j.git.ci.includes(c.value); });
+    const gitSettings={...projectGitDefaults(),...(j.git||{})};setFields(GIT_FIELDS,gitSettings);
+    if(Array.isArray(gitSettings.ci))document.querySelectorAll('.gitCi').forEach(c=>c.checked=gitSettings.ci.includes(c.value));
     const jv={...(j.jenkins||{})};
     if(!jv.repo_url && j.git && j.git.repo_url) jv.repo_url=j.git.repo_url;
     if(!jv.framework && j.git && j.git.framework) jv.framework=j.git.framework;
@@ -2324,7 +2711,7 @@ function renderJenkinsResults(results){
       <div class="tile"><div class="v">${fmt(r.max_ms,' ms')}</div><div class="l">Max</div></div>
     </div>
     ${r.thresholds.length?'<table><thead><tr><th>Metric</th><th>Threshold</th><th>Result</th></tr></thead><tbody>'+
-      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed?'pass':'fail'}">${t.passed?'passed':'failed'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
+      r.thresholds.map(t=>`<tr><td>${esc(t.metric)}</td><td><code class="k">${esc(t.threshold)}</code></td><td><span class="pill ${t.passed===true?'pass':t.passed===false?'fail':'na'}">${t.passed===true?'passed':t.passed===false?'failed':'unavailable'}</span></td></tr>`).join('')+'</tbody></table>':''}`).join('');
   el.style.display='block';
 }
 async function jenkinsStop(){
@@ -2432,7 +2819,7 @@ async function gitBrowse(){
 function renderGitScan(){
   const out=document.getElementById('impResults'); let h='';
   gitScan.frameworks.forEach((f,fi)=>{
-    h+=`<h3 style="margin:16px 0 4px;font-size:14px">${esc(f.name)} <span class="pill ghost">${esc(f.tool)}</span> ${f.path!==f.name?`<span class="muted" style="font-weight:400">${esc(f.path)}</span>`:''}</h3>
+    h+=`<h3 style="margin:16px 0 4px;font-size:14px">${esc(f.name)} <button class="btn ghost sm" onclick="importWholeFramework(${fi})">Import / sync all tests</button> <span class="pill ghost">${esc(f.tool)}</span> ${f.path!==f.name?`<span class="muted" style="font-weight:400">${esc(f.path)}</span>`:''}</h3>
       <table><thead><tr><th>Test</th><th>Target</th><th>Load</th><th>Needs</th><th>Status</th><th></th></tr></thead><tbody>`;
     f.tests.forEach((t,ti)=>{
       const load=t.error?'':`${esc(t.profile)} · ${t.peak_users} users · ${t.duration_seconds}s`;
@@ -2472,7 +2859,7 @@ async function gitImport(fi,ti){
   const secrets={}; row.querySelectorAll('.impSecret').forEach(i=>{ if(i.value.trim()) secrets[i.dataset.name]=i.value.trim(); });
   st.className='statusline'; st.textContent=`Importing ${f.name}/${t.test}…`;
   try{
-    const j=await gitPost('/api/git/import',{...gitSource(), framework_path:f.path, test:t.test, secrets, expected_commit:gitScan.commit});
+    const j=await gitPost('/api/git/import',{...gitSource(), project_id:currentProject?.project_id,framework_path:f.path, test:t.test, secrets, expected_commit:gitScan.commit});
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=''; currentScriptId=null;
     const toolSel=document.getElementById('tool'); if([...toolSel.options].some(o=>o.value==='k6')) toolSel.value='k6';
     applyIntegrations(j.plan_id);
@@ -2488,8 +2875,21 @@ async function gitImport(fi,ti){
     note.style.display='flex';
     st.className='statusline ok'; st.textContent=`Imported ${j.framework}/${j.test}.`;
     loadPlans();
-    goStep(2);
-  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message; }
+    goStep(2);return true;
+  }catch(e){ st.className='statusline err'; st.textContent='Error: '+e.message;return false; }
+}
+async function importWholeFramework(fi){
+  if(!currentProject)return;
+  const framework=gitScan.frameworks[fi];let imported=0,failed=0;
+  try{
+    currentProject=await projectApi('/api/projects/'+currentProject.project_id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...currentProject,framework_name:framework.name,repo_url:gitSource().repo_url,branch:gitSource().branch})});
+    for(let ti=0;ti<framework.tests.length;ti++){
+      if(framework.tests[ti].error){failed++;continue;}
+      if(await gitImport(fi,ti))imported++;else failed++;
+    }
+    await loadProjects();showView('history');
+    if(failed)showError('Imported '+imported+' tests; '+failed+' tests need attention. Reopen Git import to inspect them.');
+  }catch(e){showError(e.message);}
 }
 async function gitViewScript(i){
   const o=gitScan.other_scripts[i], st=document.getElementById('impStatus');
@@ -2533,19 +2933,25 @@ async function gitUseScript(){
 
 /* ---------- editable script ---------- */
 let _scriptEdited=false;
+let scriptEditorSourceId=null;
 function toggleEditScript(){
   const pre=document.getElementById('scriptOut'); const ta=document.getElementById('scriptEdit');
   const editing = ta.style.display==='none';
   if(editing){
+    scriptEditorSourceId=currentScriptId;
+    document.getElementById('preflightResult').style.display='none';
     ta.value=pre.textContent; ta.style.display='block'; pre.style.display='none';
     document.getElementById('editNote').style.display='block';
     document.getElementById('editBtn').textContent='✓ Done editing';
     document.getElementById('regenBtn').style.display='inline-flex';
   } else {
-    pre.textContent=ta.value; ta.style.display='none'; pre.style.display='block';
+    if(scriptEditorSourceId===currentScriptId){
+      _scriptEdited=_scriptEdited || ta.value!==pre.textContent;
+      pre.textContent=ta.value;
+    }
+    ta.style.display='none'; pre.style.display='block';
     document.getElementById('editNote').style.display='none';
     document.getElementById('editBtn').textContent='✏️ Edit script';
-    _scriptEdited=true;
   }
 }
 async function regenScript(){
@@ -2560,44 +2966,55 @@ async function regenScript(){
 }
 function currentScriptText(){
   const ta=document.getElementById('scriptEdit');
-  return (ta.style.display!=='none') ? ta.value : document.getElementById('scriptOut').textContent;
+  return (ta.style.display!=='none' && scriptEditorSourceId===currentScriptId) ? ta.value : document.getElementById('scriptOut').textContent;
 }
-// If the script was edited, upload it as an existing script and return the new id.
+// Save edits as a new version of the current script.
 async function ensureScriptId(){
-  if(!_scriptEdited) return currentScriptId;
+  if(!currentScriptId) return currentScriptId;
+  const output=document.getElementById('scriptOut');
   const content=currentScriptText();
-  const target=(planModel&&planModel.target_base_url)||document.getElementById('target').value||'';
-  const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({content, target_base_url:target, tool:'k6'})});
-  const j=await r.json(); if(!r.ok) throw new Error(j.detail||'could not save edited script');
+  if(!_scriptEdited && content===output.textContent) return currentScriptId;
+  const j=await gitPost(`/api/scripts/${currentScriptId}/edit`, {content});
+  output.textContent=content;
+  if(scriptEditorSourceId===currentScriptId) scriptEditorSourceId=j.script_id;
   currentScriptId=j.script_id; _scriptEdited=false;
   return currentScriptId;
 }
 
-async function runScript(){
-  if(!currentScriptId) return;
-  try{ await ensureScriptId(); }catch(e){ alert(e.message); return; }
+async function runScript(smoke=false){
+  if(pollTimer||runStarting){showError("Wait for the active run to finish first.");return;}
+  runStarting=true;
+  try{
+  if(!currentScriptId){showError('Generate or import a script before running.');return;}
+  try{ await ensureScriptId(); }catch(e){ showError(e.message); return; }
   goStep(4);
   const rs=document.getElementById('runStatus'); rs.className='statusline'; rs.textContent='Starting run…';
   try{ const av=await (await fetch('/api/run/available')).json();
     if(!av.k6){ rs.className='statusline err'; rs.textContent='The load engine is not available on this platform. Ask your administrator to set PERFAGENT_K6_PATH.'; return; } }catch(e){}
   try{
-    const r=await fetch(`/api/scripts/${currentScriptId}/run`,{method:'POST'}); const j=await r.json();
+    const r=await fetch(`/api/scripts/${currentScriptId}/run`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({smoke,release_label:document.getElementById('releaseLabel').value,baseline_id:smoke?null:getSelectedBaseline()})}); const j=await r.json();
     if(!r.ok) throw new Error(j.detail||'run failed');
     currentRunId=j.run_id; resetChart(); document.getElementById('runBtn').disabled=true;
     document.getElementById('stopBtn').disabled=false; pollTimer=setInterval(pollRun,500);
   }catch(e){ rs.className='statusline err'; rs.textContent='Error: '+e.message; }
+  }finally{runStarting=false;}
 }
 async function pollRun(){
   if(!currentRunId) return;
   try{
-    const j=await (await fetch(`/api/runs/${currentRunId}`)).json();
+    const response=await fetch(`/api/runs/${currentRunId}`);
+    if(!response.ok)throw new Error('Unable to refresh run status.');
+    const j=await response.json();
     const rs=document.getElementById('runStatus'); const pill=document.getElementById('runPill');
     pill.textContent=j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':j.status==='error'?'fail':'ghost');
     const s=j.snapshot||{}; const lat=s.latency||{}; window._lastSnap=s; window._lastElapsed=j.elapsed_s;
     document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
     document.getElementById('mReqs').textContent=s.requests??0;
     document.getElementById('mRps').textContent=s.rps??0;
+    const planned=j.planned_load||{};
+    document.getElementById('mActiveVus').textContent=(s.active_vus??'—')+' / '+(planned.peak_users??'—');
+    document.getElementById('mIterationRate').textContent=(s.iterations_per_second??'—')+' / '+(planned.iterations_per_second??'—');
+    document.getElementById('mDroppedIterations').textContent=s.dropped_iterations??'—';
     document.getElementById('mErr').textContent=((s.error_rate??0)*100).toFixed(2)+'%';
     document.getElementById('mP95').textContent=(lat.p95_ms??0)+' ms';
     document.getElementById('mP99').textContent=(lat.p99_ms??0)+' ms';
@@ -2619,20 +3036,20 @@ async function pollRun(){
       clearInterval(pollTimer); pollTimer=null;
       document.getElementById('runBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
       if(j.status==='finished'){ rs.className='statusline ok'; rs.textContent='Run finished.'; loadReport(); }
-      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent='Run stopped.'; loadReport(); }
+      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent=j.message||'Run stopped.'; loadReport(); }
       else{ rs.className='statusline err'; rs.textContent='Run error: '+(j.message||'unknown'); }
     }
-  }catch(e){}
+  }catch(e){const status=document.getElementById('runStatus');status.className='statusline err';status.textContent='Status update failed: '+e.message+' Retrying...';}
 }
-async function stopRun(){ if(currentRunId){ try{await fetch(`/api/runs/${currentRunId}/stop`,{method:'POST'})}catch(e){} } }
+async function stopRun(){if(!currentRunId)return;try{const r=await fetch(`/api/runs/${currentRunId}/stop`,{method:'POST'});if(!r.ok)throw Error('Stop request failed.');}catch(e){showError(e.message);}}
 
 /* ---------- report ---------- */
 async function loadReport(){
   if(!currentRunId) return;
   try{
-    const r=await fetch(`/api/runs/${currentRunId}/report`); const j=await r.json(); if(!r.ok) return;
+    const r=await fetch(`/api/runs/${currentRunId}/report`); const j=await r.json(); if(!r.ok)throw Error(j.detail||'Report could not be loaded.');
     renderReport(j);
-  }catch(e){}
+  }catch(e){showError(e.message+' Reopen the run from History to retry.');}
 }
 
 
@@ -2643,6 +3060,7 @@ function _lineChart(canvas, series, opts){
   const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=150;
   c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
   const pad=30;
+  series=series.map(s=>({...s,data:s.data.filter(p=>p.y!=null&&Number.isFinite(Number(p.y)))}));
   const allY=series.flatMap(s=>s.data.map(p=>p.y));
   const allX=series.flatMap(s=>s.data.map(p=>p.x));
   if(allY.length<1){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('no data yet',10,20); return; }
@@ -2661,19 +3079,26 @@ function _lineChart(canvas, series, opts){
     if(s.data.length<=12){ x.fillStyle=s.color; s.data.forEach(p=>{ x.beginPath(); x.arc(sx(p.x),sy(p.y),2.5,0,7); x.fill(); }); }
   });
 }
-function drawTsChart(){
-  const c=document.getElementById('tsChart'); if(!c||!chartData||!chartData.length) return;
+function drawTsChart(samples){
+  const c=document.getElementById('tsChart'); if(!c)return;
+  const chartData=samples||[];
+  if(!chartData.length){_lineChart(c,[]);return;}
   _lineChart(c,[
     {data:chartData.map(d=>({x:d.t,y:d.rps})),  color:'#0f7a5f'},
     {data:chartData.map(d=>({x:d.t,y:d.p95})),  color:'#9a6412'},
     {data:chartData.map(d=>({x:d.t,y:d.err||0})),color:'#b4342b'},
   ]);
 }
-async function loadTrend(){
+async function loadTrend(planId){
   const c=document.getElementById('trendChart'); if(!c) return;
   try{
-    const pid=currentPlanId||'';
-    const j=await (await fetch('/api/runs/trend?limit=10'+(pid?('&plan_id='+encodeURIComponent(pid)):''))).json();
+    const pid=planId||'';
+    if(!pid){_lineChart(c,[]);document.getElementById('trendNote').textContent='No plan recorded for this report.';return;}
+    const version=reportContext.workloadVersion,mode=reportContext.mode;
+    const response=await fetch('/api/runs/trend?'+new URLSearchParams({limit:'10',plan_id:pid,workload_version:version,mode}));
+    if(!response.ok)throw Error('Plan trend could not be loaded.');
+    const j=await response.json();
+    if(reportContext?.planId!==pid||reportContext.workloadVersion!==version)return;
     const pts=j.points||[];
     if(pts.length<2){ document.getElementById('trendNote').textContent='Run this plan again to see a trend across runs.'; }
     else { document.getElementById('trendNote').textContent='p95 latency (amber) · error % (red) across the last '+pts.length+' runs'; }
@@ -2681,26 +3106,30 @@ async function loadTrend(){
       {data:pts.map((p,i)=>({x:i,y:p.p95_ms})),         color:'#9a6412'},
       {data:pts.map((p,i)=>({x:i,y:(p.error_rate||0)*100})), color:'#b4342b'},
     ]);
-  }catch(e){}
+  }catch(e){_lineChart(c,[]);document.getElementById('trendNote').textContent='Trend unavailable. Reopen the report to retry.';}
 }
 
 function renderReport(j){
+  reportContext={planId:j.plan_id||null,scriptId:j.script_id||null,runId:j.run_id||null,savedId:j.saved_result_id||j.run_id||null,testName:j.execution?.test_name||'',workloadVersion:j.execution?.workload_version||'',mode:j.execution?.mode||'full'};
+  renderReportDetails(j);
+  document.getElementById('rerunBtn').disabled=!reportContext.planId;
+  document.getElementById('rerunNote').textContent=reportContext.scriptId?'Uses the script saved with this report.':reportContext.planId?'Older report: opens the saved plan for review before running.':'This report has no saved plan to rerun.';
   try{
     const v=j.verdict.overall_passed;
     const hero=document.getElementById('verdictHero');
     hero.className='rpt-hero '+(v===true?'pass':v===false?'fail':'na');
     document.getElementById('verdictEmoji').textContent=v===true?'✅':v===false?'❌':'⚠️';
-    // KPI tiles — from the report's snapshot (saved) or the last live snapshot
-    const s=j.snapshot||window._lastSnap||{}; const lat=s.latency||{};
+    // Metrics belong to this report; older reports can have unavailable fields.
+    const s=j.snapshot||{}; const lat=s.latency||{};
     const setK=(id,val)=>{const el=document.getElementById(id); if(el) el.textContent=val;};
-    setK('kRequests', (s.requests??0).toLocaleString());
-    const er=((s.error_rate??0)*100); const erEl=document.getElementById('kErr');
-    if(erEl){ erEl.textContent=er.toFixed(2)+'%'; erEl.classList.toggle('bad', er>0); }
-    setK('kRps', (s.rps??0).toFixed(2)+'/s');
-    setK('kP95', (lat.p95_ms??0)+' ms');
-    setK('kP99', (lat.p99_ms??0)+' ms');
-    setK('kAvg', (lat.avg_ms??0)+' ms');
-    drawTsChart(); loadTrend();
+    setK('kRequests', s.requests==null?'Unavailable':s.requests.toLocaleString());
+    const er=s.error_rate==null?null:s.error_rate*100; const erEl=document.getElementById('kErr');
+    if(erEl){ erEl.textContent=er==null?'Unavailable':er.toFixed(2)+'%'; erEl.classList.toggle('bad', er>0); }
+    setK('kRps', s.rps==null?'Unavailable':s.rps.toFixed(2)+'/s');
+    setK('kP95', lat.p95_ms==null?'Unavailable':lat.p95_ms+' ms');
+    setK('kP99', lat.p99_ms==null?'Unavailable':lat.p99_ms+' ms');
+    setK('kAvg', lat.avg_ms==null?'Unavailable':lat.avg_ms+' ms');
+    drawTsChart(j.samples||[]); loadTrend(reportContext.planId);
 
     // run logs panel (persisted with the report)
     window._reportLogs = j.logs || (j.snapshot&&j.snapshot.logs) || [];
@@ -2712,13 +3141,13 @@ function renderReport(j){
 
 
     // response checks / assertions panel
-    const chk=(j.snapshot||window._lastSnap||{}).checks||[];
+    const chk=(j.snapshot||{}).checks||[];
     const cc=document.getElementById('checksCard'); const cb=document.getElementById('checksBody');
     if(cc&&cb&&chk.length){
       cc.style.display='block';
       const failing=chk.filter(c=>c.failed>0).length;
       const head=failing
-        ? `<div class="note err" style="margin:0 0 8px">${failing} check${failing>1?'s':''} failing — these count as errors and fail the run.</div>`
+        ? `<div class="note err" style="margin:0 0 8px">${failing} check${failing>1?'s':''} failing — check the threshold results for their effect on the verdict.</div>`
         : `<div class="note ok" style="margin:0 0 8px">All response checks passed.</div>`;
       cb.innerHTML=head+'<table><thead><tr><th>Check</th><th>Passed</th><th>Result</th></tr></thead><tbody>'+
         chk.map(c=>{
@@ -2776,7 +3205,7 @@ function renderReport(j){
       else{ el.className='note warn'; el.innerHTML=`⚠ ${ev.hallucinated} figure(s) could not be verified: ${(ev.unsupported||[]).join(', ')}`; } }
     else el.style.display='none';
     goStep(5);
-  }catch(e){}
+  }catch(e){showError("Could not render the complete report: "+e.message);}
 }
 
 function downloadRunLogs(){
@@ -2787,14 +3216,14 @@ function downloadRunLogs(){
   a.download='run_logs.txt'; a.click(); URL.revokeObjectURL(a.href);
 }
 
-function downloadReport(){ if(currentRunId) location=`/api/runs/${currentRunId}/report/download`; }
+function downloadReport(){const id=reportContext?.savedId;if(id)location='/api/runs/'+encodeURIComponent(id)+'/report/download';else showError('Open a report before downloading.');}
 
 
 
 /* ---------- AI call traces ---------- */
 async function loadTraces(){
   try{
-    const j=await (await fetch('/api/traces?limit=100')).json();
+    const response=await fetch('/api/traces?limit=100'); if(!response.ok)throw Error('Request failed ('+response.status+')'); const j=await response.json();
     const sc={plan:'#534ab7',chat:'#2563a8',dynamize:'#9a6412',narrate:'#0f7a5f'};
     const realTraces=(j.traces||[]).filter(t=>(t.total_tokens>0)||(t.model&&t.model.trim())||t.status==='error');
     document.querySelector('#tracesTable tbody').innerHTML=realTraces.map(t=>{
@@ -2808,14 +3237,14 @@ async function loadTraces(){
         `<td>${t.redactions||0}</td>`+
         `<td style="color:${stCol};font-weight:600">${esc(t.status)}${t.error?' — '+esc(t.error):''}</td></tr>`;
     }).join('')||'<tr><td colspan="7" class="muted">No AI calls yet.</td></tr>';
-  }catch(e){}
+  }catch(e){showError('AI traces could not be loaded: '+e.message);}
 }
 
 /* ---------- activity log ---------- */
 async function loadAudit(){
   refreshUsage();
   try{
-    const j=await (await fetch('/api/audit?limit=100')).json();
+    const response=await fetch('/api/audit?limit=100'); if(!response.ok)throw Error('Request failed ('+response.status+')'); const j=await response.json();
     const colors={'plan.created':'#2563a8','plan.approved':'#9a6412','script.generated':'#0f6e56',
       'script.downloaded':'#6b7280','run.started':'#9a6412','run.finished':'#0f6e56'};
     document.querySelector('#auditTable tbody').innerHTML=(j.events||[]).map(e=>{
@@ -2826,43 +3255,211 @@ async function loadAudit(){
              `<td>${esc(e.target||'')}</td><td>${esc(e.summary||'')}</td>`+
              `<td style="color:var(--muted);white-space:nowrap">${tok}</td></tr>`;
     }).join('')||'<tr><td colspan="5" class="muted">No activity yet.</td></tr>';
-  }catch(e){}
+  }catch(e){showError('Activity could not be loaded: '+e.message);}
 }
 
 /* ---------- history ---------- */
 
+/* ---------- stakeholder dashboard ---------- */
+/* Reads /api/reporting/runs (role-scoped) and /api/reporting/trend.
+   Columns shown depend on the role, so switching role visibly changes
+   what that stakeholder can see. Reuses .tile/.pill/table styles. */
+let dashboardRequest=0, dashboardRuns=[], reportContext=null, runStarting=false, dashboardOffset=0, dashboardFilterTimer=null;
+const SD_COLS=[
+  ['created_at','When'],['test_name','Test'],['script_name','Script'],['endpoint_summary','Endpoints'],['target','Target'],['verdict','Verdict'],
+  ['requests','Requests'],['error_rate','Errors'],['p95_ms','p95'],['p99_ms','p99'],
+  ['avg_ms','Avg'],['rps','RPS'],['environment','Environment'],['release_label','Release'],['mode','Mode'],['run_id','Run'],
+];
+function sdFmt(k,v){
+  if(v===null||v===undefined) return '';
+  if(k==='created_at') return new Date(v).toLocaleString();
+  if(k==='error_rate') return (v*100).toFixed(2)+'%';
+  if(k==='p95_ms'||k==='p99_ms'||k==='avg_ms') return (+v).toFixed(2)+' ms';
+  if(k==='rps') return (+v).toFixed(2)+'/s';
+  if(k==='run_id') return String(v).slice(0,8);
+  return v;
+}
+function sdVerdict(v){
+  const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
+  return '<span class="pill '+m[0]+'">'+m[1]+'</span>';
+}
+async function loadStakeholder(offset=0){
+  const request=++dashboardRequest;
+  const role=document.getElementById('sdRole').value;
+  const head=document.getElementById('sdHead');
+  const body=document.querySelector('#sdTable tbody');
+  const empty=document.getElementById('sdEmpty');
+  const tiles=document.getElementById('sdTiles');
+  let runs=[], overview=null;
+  const targetField=document.getElementById('sdTarget');
+  targetField.disabled=role==='viewer';
+  if(targetField.disabled) targetField.value='';
+  const from=document.getElementById('sdFrom').value,to=document.getElementById('sdTo').value;
+  if(from&&to&&from>to){showError('From date must be before the through date.');return;}
+  dashboardOffset=offset;
+  document.getElementById('sdPage').textContent='Loading runs...';
+  try{
+    const query=new URLSearchParams({role,limit:'50',offset:String(offset),project_id:currentProject.project_id,include_overview:'true'});
+    if(document.getElementById('sdTest').value)query.set('plan_id',document.getElementById('sdTest').value);
+    if(targetField.value.trim())query.set('target',targetField.value.trim());
+    if(document.getElementById('sdVerdict').value)query.set('verdict',document.getElementById('sdVerdict').value);
+    if(from)query.set('since',new Date(from+'T00:00:00').toISOString());
+    if(to){const end=new Date(to+'T00:00:00');end.setDate(end.getDate()+1);query.set('until',end.toISOString());}
+    const response=await fetch('/api/reporting/runs?'+query);
+    if(!response.ok) throw new Error('Runs could not be loaded. Please refresh to try again.');
+    const j=await response.json();
+    if(request!==dashboardRequest)return;
+    runs=j.runs||[];
+    overview=j.overview||null;
+    const total=j.total??runs.length;
+    document.getElementById('sdPage').textContent=total?(offset+1)+' - '+(offset+runs.length)+' of '+total+' runs':'No matching runs';
+    document.getElementById('sdPrev').disabled=offset===0;
+    document.getElementById('sdNext').disabled=offset+runs.length>=total;
+  }catch(e){ if(request!==dashboardRequest)return; document.getElementById('sdPage').textContent='Could not load runs'; tiles.innerHTML=''; document.getElementById('sdComparison').textContent='Comparison unavailable. Refresh to retry.'; dashboardRuns=[]; empty.style.display='none'; ['sdTrend','sdErrTrend','sdDonut','sdBars'].forEach(id=>_lineChart(document.getElementById(id),[])); document.getElementById('sdPrev').disabled=true;document.getElementById('sdNext').disabled=true; body.innerHTML='<tr><td class="muted">Could not load: '+esc(e.message)+'</td></tr>'; return; }
+
+  if(request!==dashboardRequest) return;
+  document.getElementById('sdFilterNote').textContent=overview
+    ? 'Totals include all matching saved runs. Trends show up to 120 recent matches.'
+    : 'History is paginated. Full-history summary is unavailable.';
+  dashboardRuns=runs;
+  populateRunComparison();
+  const present = runs.length ? new Set(Object.keys(runs[0])) : new Set();
+  const cols = SD_COLS.filter(([k])=>present.has(k));
+  head.innerHTML = cols.map(([,l])=>'<th>'+l+'</th>').join('')+'<th>Report</th>';
+
+  if(!runs.length){ body.innerHTML=''; empty.style.display='block'; }
+  else{
+    empty.style.display='none';
+    body.innerHTML = runs.map(r=>'<tr>'+cols.map(([k])=>
+      '<td>'+(k==='verdict'?sdVerdict(r[k]):esc(sdFmt(k,r[k])))+'</td>').join('')+
+      '<td><button class="btn ghost sm" data-report-id="'+esc(r.run_id)+'" '+(r.has_report===false?'disabled':'')+'>Open report</button></td></tr>').join('');
+    body.querySelectorAll('[data-report-id]').forEach(button=>{
+      button.addEventListener('click',async()=>{
+        button.disabled=true; button.textContent='Opening…';
+        try{ await openSavedReport(button.dataset.reportId); }
+        finally{ button.disabled=false; button.textContent='Open report'; }
+      });
+    });
+  }
+
+  const total=overview?.total??0;
+  const passes=overview?.passed??0;
+  const worst=overview?.worst_p95_ms;
+  tiles.innerHTML=
+    '<div class="tile"><div class="v">'+(overview?total.toLocaleString():'—')+'</div><div class="l">Matching runs</div></div>'+
+    '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total)+'%':'—')+'</div><div class="l">Pass rate</div></div>'+
+    '<div class="tile"><div class="v">'+(overview?overview.requests.toLocaleString():'—')+'</div><div class="l">Total requests</div></div>'+
+    '<div class="tile"><div class="v">'+(worst!=null?worst.toFixed(2)+' ms':'—')+'</div><div class="l">Worst p95</div></div>';
+
+  const fails=overview?.failed??0;
+  const inconc=overview?.inconclusive??0;
+  _donut(document.getElementById('sdDonut'),[
+    {l:'Pass',v:passes,c:'#0f7a5f'},{l:'Fail',v:fails,c:'#b4342b'},{l:'Inconc.',v:inconc,c:'#9a6412'}]);
+  // latency bars from the most recent run (first row, since newest-first)
+  const latest=overview?.latest||{};
+  _bars(document.getElementById('sdBars'),[
+    {l:'p50',v:latest.p50_ms!=null?latest.p50_ms:null,c:'#2f7d5b'},
+    {l:'p95',v:latest.p95_ms!=null?latest.p95_ms:null,c:'#9a6412'},
+    {l:'p99',v:latest.p99_ms!=null?latest.p99_ms:null,c:'#b4342b'}]);
+  const chronological=overview?.trend||[];
+  _lineChart(document.getElementById('sdTrend'),[{data:chronological.map((r,i)=>({x:i,y:r.p95_ms})),color:'#9a6412'}]);
+  _lineChart(document.getElementById('sdErrTrend'),[{data:chronological.map((r,i)=>({x:i,y:r.error_rate==null?null:r.error_rate*100})),color:'#b4342b'}]);
+}
+async function sdDrawTrend(){
+  const c=document.getElementById('sdTrend');
+  let p95=[], err=[];
+  try{ const j=await (await fetch('/api/reporting/trend?metric=p95_ms&limit=30')).json(); p95=j.points||[]; }catch(e){}
+  try{ const j=await (await fetch('/api/reporting/trend?metric=error_rate&limit=30')).json(); err=j.points||[]; }catch(e){}
+  if(c) _lineChart(c,[{data:p95.map((p,i)=>({x:i,y:p.value})),color:'#9a6412'}]);
+  const ce=document.getElementById('sdErrTrend');
+  if(ce) _lineChart(ce,[{data:err.map((p,i)=>({x:i,y:(p.value||0)*100})),color:'#b4342b'}]);
+}
+
+
+function resetDashboardFilters(){
+  ['sdTest','sdTarget','sdVerdict','sdFrom','sdTo'].forEach(id=>document.getElementById(id).value='');
+  loadStakeholder();
+}
+function populateRunComparison(){
+  ['sdCompareA','sdCompareB'].forEach((id,index)=>{
+    const el=document.getElementById(id),previous=el.value;
+    el.innerHTML='<option value="">Select a run</option>'+dashboardRuns.map(r=>'<option value="'+esc(r.run_id)+'">'+esc((r.test_name||r.script_name||'Test')+' | '+(r.mode||'full')+' | '+new Date(r.created_at).toLocaleString()+' | '+r.run_id.slice(0,8))+'</option>').join('');
+    el.value=dashboardRuns.some(r=>r.run_id===previous)?previous:((dashboardRuns[index]||{}).run_id||'');
+  });
+  renderRunComparison();
+}
+function renderRunComparison(){
+  const host=document.getElementById('sdComparison');
+  const a=dashboardRuns.find(r=>r.run_id===document.getElementById('sdCompareA').value);
+  const b=dashboardRuns.find(r=>r.run_id===document.getElementById('sdCompareB').value);
+  if(!a||!b||a.run_id===b.run_id){host.textContent='Select two different runs to compare.';return;}
+  const metrics=[['requests','Requests'],['error_rate','Errors'],['p95_ms','p95 latency'],['p99_ms','p99 latency'],['avg_ms','Average latency'],['rps','Throughput']].filter(([k])=>k in a&&k in b);
+  host.innerHTML=(a.workload_version&&b.workload_version&&a.workload_version!==b.workload_version?'<p class="note warn">Different workload versions: these runs may use different loads, thresholds or data.</p>':'')+(a.target&&b.target&&a.target!==b.target?'<p class="note warn">These runs use different targets.</p>':'')+'<table><thead><tr><th>Metric</th><th>Baseline</th><th>Comparison</th><th>Change</th></tr></thead><tbody>'+metrics.map(([k,label])=>{
+    let change='Unavailable';
+    if(a[k]!=null&&b[k]!=null){const delta=Number(b[k])-Number(a[k]);change=(delta>0?'+':'')+(k==='error_rate'?(delta*100).toFixed(2)+' percentage points':delta.toFixed(2)+(k.endsWith('_ms')?' ms':k==='rps'?'/s':''));}
+    return '<tr><td>'+label+'</td><td>'+esc(sdFmt(k,a[k]))+'</td><td>'+esc(sdFmt(k,b[k]))+'</td><td>'+change+'</td></tr>';
+  }).join('')+'</tbody></table><p class="muted">Lower latency and errors are better; higher throughput is better. Compare similar load profiles.</p>';
+}
+async function rerunReport(){
+  if(!reportContext||!reportContext.planId) return;
+  const context={...reportContext},button=document.getElementById('rerunBtn');
+  button.disabled=true;
+  try{
+    if(!context.scriptId){await openPlan(context.planId);return;}
+    if(pollTimer) throw new Error('Wait for the active run to finish before starting another.');
+    const response=await fetch('/api/scripts/'+encodeURIComponent(context.scriptId)+'/download');
+    if(!response.ok) throw new Error('The original script is no longer available. Open the saved plan in History.');
+    const content=await response.text();
+    currentScriptId=context.scriptId; currentPlanId=context.planId; currentDataFileId=null; _scriptEdited=false;
+    document.getElementById('scriptOut').textContent=content;
+    document.getElementById('scriptEdit').style.display='none';
+    document.getElementById('scriptOut').style.display='block';
+    for(const id of ['runBtn','preflightBtn','validateBtn','dlBtn']){
+      document.getElementById(id).disabled=false;
+    }
+    document.getElementById('releaseLabel').value='';
+    goStep(3);
+    document.getElementById('releaseLabel').focus();
+  }catch(e){document.getElementById('rerunNote').textContent=e.message;}
+  finally{button.disabled=false;}
+}
+
 /* ---------- runs & reports history ---------- */
 async function loadRuns(){
   try{
-    const j=await (await fetch('/api/runs?limit=50')).json();
+    const response=await fetch('/api/runs?limit=50'+projectQuery()); if(!response.ok)throw Error('Request failed ('+response.status+')'); const j=await response.json();
     const badge=(v)=>{const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
       return '<span class="pill '+m[0]+'">'+m[1]+'</span>';};
     document.querySelector('#runsTable tbody').innerHTML=(j.runs||[]).map(r=>
       `<tr><td>${new Date(r.created_at).toLocaleString()}</td>`+
       `<td>${badge(r.verdict)}</td>`+
-      `<td>${esc(r.target||'')}</td><td>${esc(r.goal||'')}</td>`+
+      `<td>${esc(r.target||'')}</td><td><b>${esc(r.test_name||r.goal||'Unnamed test')}</b><br>${esc(r.script_name||'Not recorded')}<br><span class="muted">${esc(r.mode||'full')} | ${esc(r.endpoint_summary||'')}</span></td>`+
       `<td>${(r.requests||0).toLocaleString()}</td>`+
       `<td>${((r.error_rate||0)*100).toFixed(2)}%</td>`+
       `<td>${(r.p95_ms||0)} ms</td>`+
       `<td>${r.has_report?`<button class="btn sec sm" onclick="openSavedReport('${r.run_id}')">Open report</button>`:''}</td></tr>`
     ).join('') || '<tr><td colspan="8" class="muted">No runs yet — run a test to see it here.</td></tr>';
-  }catch(e){}
+  }catch(e){showError('Run history could not be loaded: '+e.message);}
 }
 async function openSavedReport(id){
   try{
     const r=await fetch(`/api/runs/${id}/saved-report`); const j=await r.json();
     if(!r.ok){ alert('Could not open report: '+(j.detail||'not found')); return; }
-    renderReport(j);
+    renderReport({...j,saved_result_id:id});
     goStep(5);
   }catch(e){ alert('Error opening report: '+e.message); }
 }
 
 async function loadPlans(){
-  const j=await (await fetch('/api/plans')).json();
+  try{
+  if(!currentProject)return;
+  const response=await fetch('/api/plans?project_id='+encodeURIComponent(currentProject.project_id));if(!response.ok)throw Error('Plans could not be loaded.');
+  const j=await response.json();
   document.querySelector('#plansTable tbody').innerHTML=j.plans.map(p=>
     `<tr class="histrow"><td>${new Date(p.created_at).toLocaleString()}</td><td>${esc(p.target)}</td>
      <td>${esc(p.goal||'')}</td><td>${p.script_count}</td>
      <td><button class="btn ghost sm" onclick="openPlan('${p.plan_id}')">Open</button></td></tr>`).join('');
+  }catch(e){showError(e.message);}
 }
 async function openPlan(id){
   document.getElementById('importNote').style.display='none';
@@ -2877,7 +3474,7 @@ async function openPlan(id){
   // If this plan already has a generated script, load the latest one so the user can
   // go straight to the Script / Run steps without regenerating.
   currentScriptId=null;
-  const scripts=j.scripts||[];
+  const scripts=(j.scripts||[]).filter(script=>script.mode!=='smoke');
   if(scripts.length){
     const latest=scripts[scripts.length-1];   // most recent
     try{
@@ -2959,8 +3556,11 @@ async function uploadExisting(){
   if(!content){ st.className='statusline err'; st.textContent='Paste or choose a script first.'; return; }
   st.className='statusline'; st.textContent='Uploading…';
   try{
-    const body={filename:(document.getElementById('exFile').files[0]||{}).name||'loadtest.js',
+    if(!currentProject){showError('Open a project before importing a script.');return;}
+    const body={project_id:currentProject.project_id,filename:(document.getElementById('exFile').files[0]||{}).name||'loadtest.js',
+                test_name:document.getElementById('exTestName').value.trim(),
                 content, target_base_url:document.getElementById('exTarget').value.trim(), tool:'k6'};
+    if(!document.getElementById('exFile').files.length&&body.test_name){body.filename=(body.test_name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,100)||'test')+'.js';}
     const r=await fetch('/api/scripts/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'upload failed');
     currentScriptId=j.script_id; currentPlanId=j.plan_id; currentDataFileId=null;
@@ -2998,25 +3598,70 @@ async function doValidate(){
   }catch(e){ el.className='note err'; el.textContent='Validation error: '+e.message; }
 }
 
+async function loadSavedVerification(scriptId, el){
+  try{
+    const response=await fetch('/api/scripts/'+encodeURIComponent(scriptId)+'/readiness');
+    if(!response.ok) return;
+    const {verification}=await response.json();
+    if(!verification || currentScriptId!==scriptId || _scriptEdited ||
+      el.dataset.scriptId===scriptId || document.getElementById('preflightBtn').disabled ||
+      currentScriptText()!==document.getElementById('scriptOut').textContent) return;
+    el.dataset.scriptId=scriptId;
+    el.style.display='flex';
+    el.className=verification.all_ok?'note ok':'note warn';
+    const date=new Date(verification.verified_at*1000).toLocaleString();
+    const count=verification.journeys_checked;
+    el.textContent=(verification.all_ok?'Verification passed':'Verification needs review')+
+      ' · '+count+(count===1?' journey':' journeys')+' · '+date;
+  }catch(e){
+    // A saved result is optional. The Verify test action remains available.
+  }
+}
+
 /* ---------- pre-flight check ---------- */
 async function doPreflight(){
+  const button=document.getElementById('preflightBtn');
+  if(button.disabled) return;
+  button.disabled=true;
+  let scriptId=currentScriptId;
   const el=document.getElementById('preflightResult'); el.style.display='flex'; el.className='note info';
-  el.textContent='Pre-flight: sending one request per endpoint…';
+  el.textContent='Verifying test…';
   try{
-    const payload={ load_model: planModel, headers: readHeaders() };
-    if(currentDataFileId) payload.data_file_id=currentDataFileId;
+    await ensureScriptId();
+    scriptId=currentScriptId;
+    const payload={script_id:scriptId};
     const r=await fetch('/api/preflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'preflight failed');
+    if(scriptId!==currentScriptId || _scriptEdited || currentScriptText()!==document.getElementById('scriptOut').textContent){
+      el.textContent='The script changed. Verify the current version.';
+      return;
+    }
+    el.dataset.scriptId=scriptId;
+    if(j.mode==='script'){
+      const verifiedAt=j.verified_at?new Date(j.verified_at*1000).toLocaleString():'';
+      el.className=j.all_ok?'note ok':'note warn';
+      el.innerHTML='<div><strong>'+esc(j.message)+'</strong>'+(verifiedAt?'<p>'+esc(verifiedAt)+'</p>':'')+j.journeys.map(journey=>{
+        const requests=journey.requests.map((request,index)=>
+          '<li>'+esc((request.method||'Request')+' '+(index+1)+' · '+(request.status||'No HTTP response'))+'</li>');
+        const checks=journey.checks.map(check=>'<li>'+esc(check.name)+' · '+(check.ok?'Passed':'Failed')+'</li>');
+        return '<details'+(journey.ok?'':' open')+'><summary>'+esc(journey.name.replaceAll('_',' '))+' · '+
+          (journey.ok?'Passed':'Needs review')+'</summary>'+
+          (journey.completed?'':'<p>Journey did not complete.</p>')+
+          '<ul>'+requests.concat(checks).join('')+'</ul></details>';
+      }).join('')+'</div>';
+      return;
+    }
     const rows=j.results.map(x=>{
       const dot = x.ok ? '🟢' : '🔴';
-      const st = x.status!==null ? x.status : (x.error||'no response');
-      return `${dot} <b>${x.method}</b> ${esc(x.path)} → ${st}`;
+      const status = [x.status, x.error].filter(Boolean).join(' · ') || 'no response';
+      return `${dot} <b>${esc(x.method)}</b> ${esc(x.path)} → ${esc(status)}`;
     }).join('<br>');
     el.className = j.all_ok ? 'note ok' : 'note warn';
     el.innerHTML = `<div><b>Pre-flight: ${j.ok}/${j.total} endpoints responded OK</b>` +
-      (j.all_ok ? ' — all good, safe to run.' : ' — check the failures below before a full run.') +
+      (j.all_ok ? ' — endpoint requests succeeded; review authentication and response checks before running.' : ' — check the failures below before a full run.') +
       `<div style="margin-top:6px">${rows}</div></div>`;
-  }catch(e){ el.className='note err'; el.textContent='Pre-flight error: '+e.message; }
+  }catch(e){ el.className='note err'; el.textContent='Verification error: '+e.message; }
+  finally{ if(currentScriptId===scriptId) button.disabled=false; }
 }
 
 /* ---------- live chart ---------- */
@@ -3045,6 +3690,304 @@ function drawChart(){
   x.fillText('RPS (teal) · p95 ms (amber)',pad,12);
 }
 
+/* ---------- sidebar navigation ---------- */
+const VIEW_META={
+  projects:['Projects','Create a project, open its test library, or import an existing Git framework'],
+  admin:['Administrator overview','Run and workload summaries across every project'],
+  create:['Create a performance test','AI drafts the plan · you approve · code generates, runs & reports'],
+  dashboard:['Stakeholder dashboard','Run history, trends and coverage — scoped to a role'],
+  history:['History','Saved plans and every finished run'],
+  monitoring:['Monitoring','Your Grafana, Datadog and other dashboards in one place'],
+  activity:['Activity','Audit log and AI call traces'],
+};
+function showView(v){
+  if(['dashboard','history'].includes(v)&&!currentProject){showError('Open a project first.');v='projects';}
+  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-'+v));
+  document.querySelectorAll('.sb-item').forEach(b=>b.classList.toggle('active', b.dataset.view===v));
+  const m=VIEW_META[v]||VIEW_META.create;
+  document.getElementById('viewTitle').textContent=m[0];
+  document.getElementById('viewSub').textContent=m[1];
+  if(v==='projects')loadProjects();
+  if(v==='dashboard'){loadProjectSummary();loadDashboardTests();loadStakeholder();}
+  if(v==='history'){ loadPlans(); loadRuns(); }
+  if(v==='activity'){ loadAudit(); loadTraces(); }
+  if(v==='monitoring') monRender();
+  closeMobNav();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function toggleSidebar(){
+  const sidebar=document.getElementById('sidebar');
+  const collapsed=sidebar.classList.toggle('collapsed');
+  const toggle=sidebar.querySelector('.sb-toggle');
+  toggle.setAttribute('aria-expanded',String(!collapsed));
+  toggle.setAttribute('aria-label',collapsed?'Expand sidebar':'Collapse sidebar');
+  toggle.title=collapsed?'Expand sidebar':'Collapse sidebar';
+  try{ localStorage.setItem('perfagent.sidebarCollapsed',String(collapsed)); }catch(e){}
+  sidebar.querySelectorAll('.sb-item').forEach(item=>{
+    if(collapsed) item.title=item.querySelector('.sb-lbl').textContent;
+    else item.removeAttribute('title');
+  });
+}
+function openMobNav(){ document.getElementById('sidebar').classList.add('mobopen'); document.getElementById('sbBackdrop').classList.add('show'); }
+function closeMobNav(){ document.getElementById('sidebar').classList.remove('mobopen'); document.getElementById('sbBackdrop').classList.remove('show'); }
+
+/* ---------- monitoring tools (Grafana / Datadog / etc) ---------- */
+const MON_KEY='perfagent.monitors';
+function monLoad(){ try{ return JSON.parse(localStorage.getItem(MON_KEY)||'[]'); }catch(e){ return []; } }
+function monSave(a){ try{ localStorage.setItem(MON_KEY, JSON.stringify(a)); }catch(e){} }
+function monAdd(){
+  const tool=document.getElementById('monTool').value;
+  const url=document.getElementById('monUrl').value.trim();
+  const st=document.getElementById('monStatus');
+  if(!/^https?:\/\//.test(url)){ st.className='statusline err'; st.textContent='Enter a full URL starting with http:// or https://'; return; }
+  const a=monLoad(); a.push({tool,url}); monSave(a);
+  document.getElementById('monUrl').value='';
+  st.className='statusline ok'; st.textContent=tool+' dashboard added.';
+  monRender();
+}
+function monRemove(i){ const a=monLoad(); a.splice(i,1); monSave(a); monRender(); }
+function monRender(){
+  const host=document.getElementById('monList'); if(!host) return;
+  const a=monLoad();
+  if(!a.length){
+    host.innerHTML='<div class="monitor-card"><div class="monitor-empty">No dashboards linked yet. Add your Grafana or other monitoring URL above — it will embed right here.</div></div>';
+    return;
+  }
+  host.innerHTML=a.map((m,i)=>
+    '<div class="monitor-card"><div class="monitor-head">'+
+      '<span class="tool-chip">'+esc(m.tool)+'</span>'+
+      '<span class="url" title="'+esc(m.url)+'">'+esc(m.url)+'</span>'+
+      '<div class="spacer"></div>'+
+      '<a class="btn ghost sm" href="'+esc(m.url)+'" target="_blank" rel="noopener">Open ↗</a>'+
+      '<button class="btn danger sm" onclick="monRemove('+i+')">Remove</button>'+
+    '</div>'+
+    '<iframe class="monitor-frame" src="'+esc(m.url)+'" loading="lazy" referrerpolicy="no-referrer"></iframe>'+
+    '</div>').join('');
+}
+
+/* ---------- extra dashboard charts (donut, bars, error trend) ---------- */
+function _donut(canvas, segs){
+  const c=canvas; if(!c) return;
+  const dpr=window.devicePixelRatio||1, W=c.clientWidth||300, H=140;
+  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const total=segs.reduce((a,s)=>a+s.v,0);
+  if(!total){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('no runs yet',10,20); return; }
+  const cx=70, cy=H/2, r=48, rin=28; let ang=-Math.PI/2;
+  segs.forEach(s=>{ if(!s.v) return; const a2=ang+(s.v/total)*Math.PI*2;
+    x.beginPath(); x.moveTo(cx,cy); x.arc(cx,cy,r,ang,a2); x.closePath(); x.fillStyle=s.c; x.fill(); ang=a2; });
+  x.beginPath(); x.arc(cx,cy,rin,0,Math.PI*2); x.fillStyle='#fff'; x.fill();
+  x.fillStyle='#16201c'; x.font='700 15px system-ui'; x.textAlign='center'; x.fillText(total, cx, cy+5); x.textAlign='left';
+  let ly=20; segs.forEach(s=>{
+    x.fillStyle=s.c; x.fillRect(150, ly-9, 10, 10);
+    x.fillStyle='#16201c'; x.font='11px system-ui'; x.fillText(s.l+'  '+s.v, 166, ly); ly+=18; });
+}
+function _bars(canvas, bars){
+  const c=canvas; if(!c) return;
+  const dpr=window.devicePixelRatio||1, W=c.clientWidth||300, H=140;
+  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const max=Math.max(1,...bars.map(b=>b.v)); const pad=28, bw=(W-pad*2)/bars.length*0.6, gap=(W-pad*2)/bars.length;
+  bars.forEach((b,i)=>{ const h=(b.v/max)*(H-pad*1.6); const bx=pad+i*gap+(gap-bw)/2, by=H-pad-h;
+    x.fillStyle=b.c||'#0f7a5f'; x.fillRect(bx,by,bw,h);
+    x.fillStyle='#16201c'; x.font='700 11px system-ui'; x.textAlign='center'; x.fillText(b.v!=null?(+b.v).toFixed(0):'—', bx+bw/2, by-5);
+    x.fillStyle='#6a7570'; x.font='10px system-ui'; x.fillText(b.l, bx+bw/2, H-10); x.textAlign='left'; });
+}
+
+function projectQuery(){return currentProject?'&project_id='+encodeURIComponent(currentProject.project_id):'';}
+function projectGitDefaults(){
+  return currentProject?{repo_url:currentProject.repo_url||'',branch:currentProject.branch||'main',framework:currentProject.framework_name||'',ci:currentProject.ci||['jenkins'],test:(planModel?.test_name||newTestName||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}:{};
+}
+async function projectApi(url,options){
+  const response=await fetch(url,options);const body=await response.json();
+  if(!response.ok)throw Error(typeof body.detail==='string'?body.detail:'Request failed; check the form values.');return body;
+}
+async function loadProjects(){
+  try{
+    const j=await projectApi('/api/projects');projects=j.projects||[];
+    if(currentProject)currentProject=projects.find(p=>p.project_id===currentProject.project_id)||null;
+    document.getElementById('projectPicker').innerHTML='<option value="">Select project</option>'+projects.map(p=>'<option value="'+esc(p.project_id)+'">'+esc(p.name)+'</option>').join('');
+    document.getElementById('projectPicker').value=currentProject?.project_id||'';
+    document.getElementById('projectCards').innerHTML=projects.map(p=>'<div class="card project-card"><h3>'+esc(p.name)+'</h3><p>'+esc(p.description||'Performance test project')+'</p><p>'+esc(p.tests??0)+' tests · '+esc(p.environment||'No default environment')+'</p><button class="btn ghost" data-project-id="'+esc(p.project_id)+'">Open project</button></div>').join('')||'<div class="card"><p>No projects yet. Create a project or import a framework to get started.</p></div>';
+    document.querySelectorAll('#projectCards [data-project-id]').forEach(button=>button.onclick=()=>selectProject(button.dataset.projectId));
+    renderProjectContext();
+  }catch(e){showError(e.message);}
+}
+function renderProjectContext(){
+  document.getElementById('activeProject').style.display=currentProject?'block':'none';
+  document.getElementById('activeProjectName').textContent=currentProject?.name||'';
+  document.getElementById('activeProjectDescription').textContent=currentProject?.description||'';
+  document.getElementById('testProjectContext').textContent=currentProject?'Project: '+currentProject.name:'Open a project to organize this test.';
+}
+function selectProject(id){
+  if(pollTimer||convBusy||document.getElementById('planBtn').disabled){showError('A test is running or planning. Wait for it to finish before switching project.');return;}
+  currentProject=projects.find(p=>p.project_id===id)||null;
+  document.getElementById('projectPicker').value=currentProject?.project_id||'';
+  currentPlanId=null;currentScriptId=null;planModel=null;newTestName='';
+  document.getElementById('newTestForm').style.display='none';
+  renderProjectContext();showView('projects');
+}
+function editProject(project=null){
+  editingProjectId=project?.project_id||null;showView('projects');
+  document.getElementById('projectForm').style.display='block';
+  document.getElementById('projectFormTitle').textContent=project?'Project settings':'Create project';
+  const fields={projectName:'name',projectDescription:'description',projectTarget:'target_url',projectEnvironment:'environment',projectRepo:'repo_url',projectBranch:'branch',projectFramework:'framework_name'};
+  Object.entries(fields).forEach(([id,key])=>document.getElementById(id).value=project?.[key]??({environment:'staging',branch:'main'}[key]||''));
+  document.querySelectorAll('.projectCi').forEach(c=>c.checked=(project?.ci||['jenkins']).includes(c.value));
+  document.getElementById('projectSaveStatus').textContent='';
+}
+function beginFrameworkImport(){importAfterProject=true;editProject();document.getElementById('projectFormTitle').textContent='Create a project for your Git framework';}
+async function saveProject(){
+  const status=document.getElementById('projectSaveStatus');status.textContent='Saving project…';
+  try{
+    const body={name:document.getElementById('projectName').value.trim(),description:document.getElementById('projectDescription').value.trim(),target_url:document.getElementById('projectTarget').value.trim(),environment:document.getElementById('projectEnvironment').value.trim(),repo_url:document.getElementById('projectRepo').value.trim(),branch:document.getElementById('projectBranch').value.trim()||'main',framework_name:document.getElementById('projectFramework').value.trim(),ci:[...document.querySelectorAll('.projectCi:checked')].map(c=>c.value)};
+    if(!body.name)throw Error('Enter a project name.');
+    currentProject=await projectApi('/api/projects'+(editingProjectId?'/'+editingProjectId:''),{method:editingProjectId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    document.getElementById('projectForm').style.display='none';await loadProjects();
+    if(importAfterProject){importAfterProject=false;startProjectImport('git');}
+  }catch(e){status.textContent=e.message;}
+}
+function showNewTestForm(){
+  if(!currentProject){showError('Create or open a project first.');showView('projects');return;}
+  showView('projects');document.getElementById('newTestForm').style.display='block';
+  document.getElementById('newTestName').focus();
+}
+function startNamedTest(){
+  if(!currentProject)return;
+  const name=document.getElementById('newTestName').value.trim();if(!name){showError('Give this test a name first.');return;}
+  if(pollTimer){showError('Wait for the current run to finish before creating another test.');return;}
+  convNew();newTestName=name;currentPlanId=null;currentScriptId=null;planModel=null;currentDataFileId=null;_scriptEdited=false;
+  document.getElementById('target').value=currentProject.target_url||'';
+  document.getElementById('draftP95').value='';
+  document.getElementById('draftErrorRate').value='';
+  document.getElementById('endpoints').replaceChildren();
+  addEndpoint();
+  document.getElementById('goal').value=document.getElementById('newTestPurpose').value.trim();
+  document.querySelector('#panel1 > .card > h2').textContent=name+' — choose how to build the test';
+  document.querySelector('#panel1 .modeswitch').style.display='inline-flex';
+  document.getElementById('modeScriptBtn').style.display='none';document.getElementById('modeGitBtn').style.display='none';
+  setMode('manual');goStep(1);
+}
+function startProjectImport(mode){
+  if(!currentProject){showError('Create or open the destination project first.');showView('projects');return;}
+  if(pollTimer){showError('Wait for the current run to finish before importing a test.');return;}
+  newTestName='';currentPlanId=null;currentScriptId=null;planModel=null;currentDataFileId=null;_scriptEdited=false;
+  document.querySelector('#panel1 > .card > h2').textContent=mode==='script'?'Import an existing script':'Import or synchronize a Git framework';
+  document.querySelector('#panel1 .modeswitch').style.display='none';
+  if(mode==='script')document.getElementById('exTarget').value=currentProject.target_url||'http://127.0.0.1:8000';
+  else{document.getElementById('impRepo').value=currentProject.repo_url||'';document.getElementById('impBranch').value=currentProject.branch||'main';}
+  setMode(mode);goStep(1);
+}
+async function attachCurrentTest(id){
+  try{await projectApi('/api/plans/'+id+'/project',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:currentProject.project_id,test_name:planModel?.test_name||newTestName})});}
+  catch(e){showError(e.message);}
+}
+async function loadProjectSummary(){
+  if(!currentProject)return;
+  try{const j=await projectApi('/api/projects/'+currentProject.project_id+'/dashboard'),s=j.summary;
+    document.getElementById('projectDashboardSummary').textContent=currentProject.name+' · '+s.tests+' tests · '+s.runs+' runs · '+Number(s.requests).toLocaleString()+' requests · pass rate '+(s.pass_rate==null?'unavailable':s.pass_rate+'%');}
+  catch(e){document.getElementById('projectDashboardSummary').textContent=e.message;}
+}
+async function loadAdminOverview(){
+  const host=document.getElementById('adminOverview');host.textContent='Loading all-project overview…';
+  try{const j=await projectApi('/api/admin/dashboard',{headers:{'X-Perfagent-Admin':document.getElementById('adminToken').value}});
+    host.innerHTML='<p>'+j.summary.tests+' tests · '+j.summary.runs+' runs · '+Number(j.summary.requests).toLocaleString()+' requests</p><div class="table-scroll"><table><thead><tr><th>Project</th><th>Tests</th><th>Runs</th><th>Requests</th><th>Pass rate</th></tr></thead><tbody>'+j.projects.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+p.tests+'</td><td>'+p.runs+'</td><td>'+p.requests+'</td><td>'+(p.pass_rate==null?'Unavailable':p.pass_rate+'%')+'</td></tr>').join('')+'</tbody></table></div>';
+  }catch(e){host.textContent=e.message;}
+}
+async function loadWorkloadProfiles(){
+  const planId=currentPlanId;if(!planId)return;
+  try{const j=await projectApi('/api/plans/'+planId+'/workloads');if(planId!==currentPlanId)return;savedWorkloads=j.workloads||[];
+    document.getElementById('savedWorkload').innerHTML='<option value="">Saved workload profiles</option>'+savedWorkloads.map(w=>'<option value="'+esc(w.workload_id)+'">'+esc(w.name)+'</option>').join('');}
+  catch(e){showError(e.message);}
+}
+async function saveWorkloadProfile(){
+  if(!currentPlanId||!planModel){showError('Draft a test plan first.');return;}
+  const name=document.getElementById('workloadName').value.trim();if(!name){showError('Name the workload profile.');return;}
+  try{await projectApi('/api/plans/'+currentPlanId+'/workloads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,load_profile:planModel.load_profile,thresholds:planModel.thresholds||[]})});await loadWorkloadProfiles();}
+  catch(e){showError(e.message);}
+}
+function applySavedWorkload(){
+  const workload=savedWorkloads.find(w=>w.workload_id===document.getElementById('savedWorkload').value);if(!workload||!planModel)return;
+  planModel.load_profile=JSON.parse(JSON.stringify(workload.load_profile));planModel.thresholds=JSON.parse(JSON.stringify(workload.thresholds));_loadAsked=null;renderPlanForm();renderRawFromModel();
+}
+function suggestScriptFilename(){
+  if(!planModel||document.getElementById('pfScriptFilename').value.trim())return;
+  const name=document.getElementById('pfTestName').value.trim();if(!name)return;
+  const extension={k6:'.js',locust:'.py',jmeter:'.jmx',gatling:'.scala'}[document.getElementById('tool').value]||'.js';
+  const filename=(name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,100)||'test')+extension;
+  planModel.script_filename=filename;document.getElementById('pfScriptFilename').value=filename;
+}
+async function loadDashboardTests(){
+  try{
+    const response=await fetch('/api/plans?project_id='+encodeURIComponent(currentProject.project_id));if(!response.ok)throw Error('Test list could not be loaded.');
+    const j=await response.json(),select=document.getElementById('sdTest'),selected=select.value;
+    select.innerHTML='<option value="">All tests</option>'+(j.plans||[]).map(p=>'<option value="'+esc(p.plan_id)+'">'+esc((p.test_name||p.goal||'Test')+' | '+p.plan_id.slice(0,8))+'</option>').join('');
+    select.value=selected;
+  }catch(e){showError(e.message);}
+}
+function showError(message){
+  document.getElementById('appNoticeText').textContent=message;
+  document.getElementById('appNotice').style.display='flex';
+}
+function getSelectedBaseline(){try{return localStorage.getItem('perfagent.baseline')||null;}catch(e){return null;}}
+function selectReportBaseline(){
+  if(!reportContext?.savedId)return;
+  try{localStorage.setItem('perfagent.baseline',reportContext.savedId);document.getElementById('baselineSelection').textContent='Selected baseline: '+reportContext.savedId.slice(0,8);}
+  catch(e){showError('Baseline preference could not be saved.');}
+}
+function clearSelectedBaseline(){
+  try{localStorage.removeItem('perfagent.baseline');document.getElementById('baselineSelection').textContent='Automatic baseline: previous matching workload.';}
+  catch(e){showError('Could not clear the selected baseline.');}
+}
+function setTrafficRate(){
+  if(!planModel)return;
+  const raw=document.getElementById('pfArrival').value,rate=Number(raw),vus=Number(document.getElementById('pfArrivalVus').value);
+  if((raw&&(!Number.isInteger(rate)||rate<1||rate>1000000))||!Number.isInteger(vus)||vus<1||vus>1000000){showError('Use positive whole numbers up to 1,000,000 for iteration rate and preallocated users.');return;}
+  planModel.load_profile.arrival_rate=raw?rate:null;
+  planModel.load_profile.pre_allocated_vus=vus;renderRawFromModel();
+}
+function environmentPresets(){try{return JSON.parse(localStorage.getItem('perfagent.environments')||'{}');}catch(e){return {};}}
+function renderEnvironmentPresets(){
+  document.getElementById('environmentPreset').innerHTML='<option value="">Saved environments</option>'+Object.keys(environmentPresets()).map(name=>'<option value="'+esc(name)+'">'+esc(name)+'</option>').join('');
+}
+function saveEnvironmentPreset(){
+  if(!planModel)return;
+  const name=document.getElementById('environment').value.trim(),target=document.getElementById('pfTarget').value.trim();
+  if(!name||!/^https?:\/\//.test(target)){showError('Enter an environment name and full target URL first.');return;}
+  const presets=environmentPresets();presets[name]={target};
+  try{localStorage.setItem('perfagent.environments',JSON.stringify(presets));renderEnvironmentPresets();}
+  catch(e){showError('Could not save the environment.');}
+}
+function useEnvironmentPreset(){
+  const name=document.getElementById('environmentPreset').value,preset=environmentPresets()[name];
+  if(!preset||!planModel)return;
+  planModel.environment=name;planModel.target_base_url=preset.target;renderPlanForm();
+}
+async function checkReadiness(){
+  const el=document.getElementById('readinessResult');el.style.display='block';el.className='note info';el.textContent='Checking execution inputs…';
+  try{
+    await ensureScriptId();if(!currentScriptId)throw Error('Generate or import a script first.');
+    const r=await fetch('/api/scripts/'+encodeURIComponent(currentScriptId)+'/readiness'),j=await r.json();if(!r.ok)throw Error(j.detail||'Readiness check failed.');
+    el.innerHTML='<b>Before you run</b><ul>'+j.checks.map(c=>'<li>'+esc(c.name)+': '+(c.ok?'Ready':'Review')+' — '+esc(c.detail)+'</li>').join('')+'</ul><p>'+esc(j.execution.duration_seconds)+' seconds · '+esc(j.execution.peak_users)+' peak users'+(j.execution.arrival_rate?' · '+esc(j.execution.arrival_rate)+' target iterations/s':'')+'</p><p>Verify test exercises the configured k6 journeys and checks with one virtual user. Validate checks script syntax without sending traffic.</p>';
+  }catch(e){el.className='note err';el.textContent=e.message;}
+}
+function renderReportDetails(j){
+  const x=j.execution||{},snap=j.snapshot||{},lat=snap.latency||{};
+  document.getElementById('reportContext').textContent=(x.test_name||'Unnamed test')+' | '+(x.script_name||'Script not recorded')+' | '+(x.endpoint_summary||'Endpoints not recorded')+' | '+(j.status||'Recorded')+' · '+(x.mode||'full')+' · environment: '+(x.environment||'unlabeled')+' · release: '+(x.release_label||'unlabeled')+' · workload: '+(x.workload_version?.slice(0,12)||'not recorded')+' · baseline: '+(j.baseline_id?.slice(0,8)||'none')+(j.message?' · '+j.message:'');
+  document.getElementById('baselineSelection').textContent=getSelectedBaseline()?'Selected baseline: '+getSelectedBaseline().slice(0,8):'Automatic baseline: previous matching workload.';
+  const endpoints=[...(snap.per_endpoint||[])].sort((a,b)=>(b.p95_ms||0)-(a.p95_ms||0));
+  const formatThreshold=(metric,value)=>{
+    if(value==null) return 'Unavailable';
+    if(metric==='error_rate') return Number((value*100).toPrecision(15))+'%';
+    if(metric.endsWith('_ms')) return value+' ms';
+    return value;
+  };
+  const rules=(j.verdict?.checks||[]).map(c=>'<tr><td>'+esc(c.metric)+'</td><td>'+esc(c.target==null?'':c.op+' '+formatThreshold(c.metric,c.target))+'</td><td>'+esc(formatThreshold(c.metric,c.actual))+'</td><td>'+(c.passed===true?'Pass':c.passed===false?'Fail':'Inconclusive')+'</td></tr>').join('');
+  const journeyRows=(snap.per_journey||[]).map(journey=>'<tr>'+
+    [journey.name,journey.requests,journey.failed,journey.iterations,journey.dropped_iterations,journey.checks_failed]
+      .map(value=>'<td>'+esc(value)+'</td>').join('')+'</tr>').join('');
+  const journeyTable=journeyRows?'<h3>Journey results</h3><div class="table-scroll"><table><thead><tr><th scope="col">Journey</th><th scope="col">Requests</th><th scope="col">HTTP failures</th><th scope="col">Iterations</th><th scope="col">Dropped iterations</th><th scope="col">Failed checks</th></tr></thead><tbody>'+journeyRows+'</tbody></table></div>':'';
+  document.getElementById('reportDetails').innerHTML='<h2>Measured workload</h2><p>'+esc(lat.samples??'Unavailable')+' latency samples · '+esc(snap.iterations??'Unavailable')+' completed iterations · '+esc(snap.iterations_per_second??'Unavailable')+' achieved iterations/s · '+esc(snap.dropped_iterations??'Unavailable')+' dropped iterations'+(x.arrival_rate?' · '+esc(x.arrival_rate)+' requested iterations/s':'')+(snap.observed_peak_vus!=null?' · '+esc(snap.observed_peak_vus)+' observed peak VUs':'')+'</p>'+(j.status&&j.status!=='finished'?'<p class="note warn">The run did not complete. These are partial measurements, not a passing full test.</p>':'')+'<h3>Threshold results</h3><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Rule</th><th>Measured</th><th>Result</th></tr></thead><tbody>'+rules+'</tbody></table></div><h3>Slowest endpoints</h3><div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Requests</th><th>HTTP failures</th><th>HTTP status counts</th><th>p95</th></tr></thead><tbody>'+endpoints.slice(0,10).map(e=>'<tr><td>'+esc(e.name)+'</td><td>'+esc(e.requests)+'</td><td>'+esc(e.failed)+'</td><td>'+esc(Object.entries(e.status_codes||{}).map(([status,count])=>status+' × '+count).join(', ')||'Unavailable')+'</td><td>'+esc(e.p95_ms)+' ms</td></tr>').join('')+'</tbody></table></div>';+journeyTable
+}
+
 /* ---------- init ---------- */
 loadTools();
 addEndpoint("GET","/products");
@@ -3052,14 +3995,13 @@ addEndpoint("POST","/login",'{"user":"demo","password":"x"}');
 addEndpoint("POST","/cart",'{"product_id":1}');
 addEndpoint("POST","/checkout",'{"pay":"card"}');
 loadPlans();
-loadRuns();
-loadAudit();
 refreshUsage();
+try{ if(localStorage.getItem('perfagent.sidebarCollapsed')==='true') toggleSidebar(); }catch(e){}
+showView('projects');
 setMode('manual');
 initConversation();
 loadSlaProfiles();
 loadTraces();
-goStep(1);
 </script>
 
 <!-- BODY EDITOR MODAL -->

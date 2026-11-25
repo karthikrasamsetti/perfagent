@@ -39,3 +39,20 @@ def test_append_log_bounds_and_skips_empty():
 def test_logs_download_404_when_none(client):
     r = client.get("/api/runs/nonexistent/logs/download")
     assert r.status_code == 404
+
+
+def test_console_logs_mask_configured_secrets_and_authorization_headers():
+    import json
+
+    from perfagent.runner.k6_runner import RunState, _append_log, _request_log_secrets
+
+    run = RunState(run_id="run", script_id="script", tool="k6", target="https://fixture.test")
+    run._log_secrets = _request_log_secrets(json.dumps({"headers": {
+        "Authorization": "Token fixture-short-value", "Cookie": "session=fixture-cookie",
+    }}))
+    _append_log(run, "Request to https://fixture.test/items echoed fixture-short-value and fixture-cookie")
+    _append_log(run, "Authorization: Basic another-fixture-value")
+    assert "https://fixture.test/items" in run.logs[0]
+    assert "fixture-short-value" not in run.logs[0]
+    assert "fixture-cookie" not in run.logs[0]
+    assert "another-fixture-value" not in run.logs[1]

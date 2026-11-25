@@ -64,6 +64,11 @@ def build_user_prompt(request: PlanRequest) -> str:
     lines.append(f"Goal: {request.goal}")
     lines.append(f"Guard rails: max_users={request.max_users}, "
                  f"duration_seconds={request.duration_seconds}")
+    if request.target_request_rate is not None:
+        lines.append(f"Schedule {request.target_request_rate} HTTP requests per second. "
+                     "Use one journey with all supplied endpoints in the supplied order.")
+    elif request.target_iteration_rate is not None:
+        lines.append(f"Schedule {request.target_iteration_rate} journey starts per second in total.")
     lines.append("")
     lines.append("Endpoints:")
     for e in request.endpoints:

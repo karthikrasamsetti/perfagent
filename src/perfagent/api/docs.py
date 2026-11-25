@@ -5,8 +5,8 @@ module. Each endpoint gets:
 
   - a GROUP (tag), so the docs read as a handful of areas instead of one long list;
   - a one-line summary and a plain-English description;
-  - an ACCESS LEVEL — what kind of thing the call does. There is no login or
-    permission check in the agent today (that belongs to the hub that hosts it), but
+  - an ACCESS LEVEL — what kind of thing the call does. Project membership and account login are not provided by the agent;
+    the admin overview separately requires a configured token.
     the levels are published in the OpenAPI file as `x-access`, so a gateway or a
     future role system can decide who may call what without re-reading the code;
   - whether it USES AI (spends tokens), published as `x-uses-ai`.
@@ -65,7 +65,8 @@ TAGS: list[dict] = [
     {"name": "Runs",
      "description": "Start, watch and stop a live k6 run."},
     {"name": "Reports & history",
-     "description": "The verdict and report of a run, saved reports, and trends across runs."},
+     "description": "The verdict and report of a run, saved reports, trends across runs, "
+                    "role-scoped run history, metric trends and flow coverage."},
     {"name": "SLA profiles",
      "description": "Reusable sets of pass/fail thresholds."},
     {"name": "Git",
@@ -77,7 +78,7 @@ TAGS: list[dict] = [
     {"name": "Integrations",
      "description": "The non-secret Git and Jenkins details remembered per plan."},
     {"name": "Observability",
-     "description": "Audit log, AI token usage and AI call traces."},
+     "description": "Audit log, AI token usage, AI call traces and Prometheus metrics."},
     {"name": "System",
      "description": "Health of the app and its database, and what it can do."},
 ]
@@ -105,6 +106,22 @@ def _e(tag, summary, description, access="read", uses_ai=False, returns="Success
 
 
 ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
+    ("GET", "/api/projects"): _e("Planning", "List performance projects",
+        "List project names, non-secret repository settings and test counts."),
+    ("POST", "/api/projects"): _e("Planning", "Create a performance project",
+        "Create a named project with target, environment and optional Git framework settings.", "write"),
+    ("PUT", "/api/projects/{project_id}"): _e("Planning", "Update project settings",
+        "Update project identity, default target and non-secret Git configuration.", "write"),
+    ("GET", "/api/projects/{project_id}/dashboard"): _e("Reports & history", "Project dashboard summary",
+        "Aggregate test counts, runs, requests and pass rate within one project."),
+    ("GET", "/api/admin/dashboard"): _e("Reports & history", "Administrator overview of all projects",
+        "Cross-project summaries. Requires X-Perfagent-Admin matching ADMIN_API_TOKEN on the server."),
+    ("PUT", "/api/plans/{plan_id}/project"): _e("Planning", "Assign a test to a project",
+        "Attach an existing plan and its execution history to the selected project.", "write"),
+    ("GET", "/api/plans/{plan_id}/workloads"): _e("Planning", "List saved workload profiles",
+        "List named load shapes and threshold sets saved for this reusable test."),
+    ("POST", "/api/plans/{plan_id}/workloads"): _e("Planning", "Save a named workload profile",
+        "Save or update a named load shape and threshold set without changing completed runs.", "write"),
     # ------------------------------------------------------------ Conversation
     ("GET", "/api/chat/config"): _e(
         "Conversation", "Is conversation mode on, and its limits",
@@ -162,7 +179,7 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         returns="`endpoints` (method, path, example body), `source`, `base_url`, `warnings`."),
     ("GET", "/api/plans"): _e(
         "Planning", "List saved plans",
-        "Every saved plan, newest first, with its target, goal and how many scripts it has.",
+        "Saved plans, newest first, with target, goal, script count, and the latest stored report when available.",
         returns="`plans`."),
     ("GET", "/api/plans/{plan_id}"): _e(
         "Planning", "Open a saved plan",
@@ -224,23 +241,25 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
     ("POST", "/api/scripts/upload"): _e(
         "Scripts", "Use your own script",
         "Stores a hand-written or existing k6 script so it can be validated and run, "
-        "skipping planning. Also used when the generated script is edited.",
+        "skipping planning.",
         "write", returns="`script_id`, `plan_id`, `tool`, `filename`, `content`."),
     ("GET", "/api/scripts/{script_id}/download"): _e(
         "Scripts", "Download a script",
         "The script as a file.", returns="The script text, as an attachment."),
+    ("POST", "/api/scripts/{script_id}/edit"): _e(
+        "Scripts", "Save an edited script version",
+        "Keeps the source plan, environment and frozen data with the edited content.",
+        "write", returns="`script_id`, `plan_id`, and `script_edited` for a modified version."),
     ("POST", "/api/scripts/{script_id}/validate"): _e(
         "Scripts", "Check a script without running it",
         "Asks k6 to load the script and its options (`k6 inspect`). Catches syntax "
         "errors and bad options. No request is sent to the target.",
         returns="`ok`, `status`, `message`, `detail`."),
     ("POST", "/api/preflight"): _e(
-        "Scripts", "Send one request per endpoint",
-        "Before a full run, sends exactly ONE request to each endpoint of the plan — "
-        "with the custom headers, a real data row and sample generated values — and "
-        "reports the status of each. Answers 'will we get valid responses?'. This is "
-        "not load, but it does touch the target.",
-        "run", returns="`total`, `ok`, `failed`, `all_ok`, and the status per endpoint."),
+        "Scripts", "Verify k6 journeys or check plan endpoints",
+        "Exercises each journey of a saved k6 script once with a single virtual user. "
+        "Using a plan directly checks endpoint reachability.",
+        "run", returns="Journey requests and checks, or endpoint reachability results."),
 
     # -------------------------------------------------------------------- Runs
     ("GET", "/api/run/available"): _e(
@@ -252,12 +271,21 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "Starts the script with k6 and returns at once. The run continues in the "
         "background; poll the run for live metrics. This sends real load to the target.",
         "run", returns="`run_id`, `status`, `message`."),
+    ("GET", "/api/scripts/{script_id}/readiness"): _e(
+        "Runs", "Execution readiness checklist",
+        "Check frozen inputs, engine availability, planned load and the latest verification "
+        "of this version without sending traffic.",
+        returns="`checks`, `execution`, `target`, `smoke_supported`, `verification`."),
     ("GET", "/api/runs/{run_id}"): _e(
         "Runs", "Live status of a run",
         "The run's status and the metrics measured so far (requests, error rate, "
         "throughput, percentiles), all computed in code from k6's raw output, plus the "
         "recent log lines.",
-        returns="`run_id`, `status`, `message`, `elapsed_s`, `snapshot`, `logs`."),
+        returns="`run_id`, `status`, `message`, `elapsed_s`, `planned_load`, `snapshot`, `logs`."),
+    ("POST", "/api/projects/{project_id}/runs/recover"): _e(
+        "Runs", "Recover interrupted project runs",
+        "Save partial reports from expired local checkpoints. Recovery never starts or stops load.",
+        access="write", returns="`recovered`, `failed`, `more`."),
     ("POST", "/api/runs/{run_id}/stop"): _e(
         "Runs", "Stop a run",
         "Stops a run in progress. The metrics measured up to that point are kept.",
@@ -282,7 +310,7 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
     ("GET", "/api/runs/{run_id}/report/download"): _e(
         "Reports & history", "Download the report",
         "The full report as a self-contained HTML file.",
-        uses_ai=True, returns="An HTML file, as an attachment."),
+        returns="An HTML file, as an attachment."),
     ("GET", "/api/runs"): _e(
         "Reports & history", "List past runs",
         "Runs that have a saved report, newest first.",
@@ -295,6 +323,22 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "Reports & history", "Reopen a saved report",
         "A previously saved report, exactly as it was produced.",
         returns="The saved report."),
+    ("PUT", "/api/runs/{run_id}/release-policy"): _e(
+        "Reports & history", "Approve a release baseline",
+        "Set the reference run and release budgets for its test environment.", access="write"),
+    ("GET", "/api/reporting/runs"): _e(
+        "Reports & history", "Run history for a stakeholder role",
+        "Past runs, newest first, with each run's fields limited to what the given role "
+        "may see (executive, qa_lead, engineer, viewer). Optionally filtered by target "
+        "or verdict. The optional overview aggregates all matching runs independently "
+        "of pagination and includes up to 120 recent trend points. Reads stored data only.",
+        returns="`role`, `count`, `total`, `runs` and optional `overview`."),
+    ("GET", "/api/reporting/trend"): _e(
+        "Reports & history", "A metric's trend across runs",
+        "The chosen metric (p95, p99, error rate, avg or RPS) across recent runs, "
+        "oldest to newest, as points for a trend chart. Optionally filtered by target "
+        "or plan. Reads stored data only; no AI.",
+        returns="`metric`, `target`, `plan_id`, `points`."),
 
     # ------------------------------------------------------------ SLA profiles
     ("GET", "/api/sla"): _e(
@@ -396,6 +440,12 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "whether it succeeded and how many values were redacted. For debugging and "
         "cost review; prompts are stored redacted.",
         returns="`traces`."),
+    ("GET", "/api/metrics"): _e(
+        "Observability", "Prometheus metrics",
+        "Live run metrics in Prometheus text format for a Prometheus server to scrape "
+        "and Grafana to chart. Deterministic; no AI. Series are grouped by scenario, "
+        "environment and load tool; per-run detail lives in the run history, not here.",
+        returns="Prometheus exposition text (not JSON)."),
 
     # ------------------------------------------------------------------ System
     ("GET", "/api/health"): _e(
@@ -404,6 +454,10 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "(SQLite or Postgres) and whether its tables are up to date. Returns 503 if the "
         "database cannot be reached. Suitable as a container health check.",
         returns="`status`, `database` (backend, host, name, schema state)."),
+    ("GET", "/api/workspace/session"): _e(
+        "System", "Workspace session mode",
+        "Reports whether the current workspace request was authenticated by the managed gateway.",
+        returns="`managed`."),
     ("GET", "/api/tools"): _e(
         "System", "Supported load tools",
         "The load tools a script can be generated for.", returns="`tools`."),

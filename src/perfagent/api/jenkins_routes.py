@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, SecretStr
 
 from perfagent import audit, integrations
+from perfagent.api.access import require_local_execution
 from perfagent.api.docs import doc
 from perfagent.ci.jenkins import (
     JenkinsClient,
@@ -98,6 +99,7 @@ def jenkins_settings() -> dict:
 
 @router.post("/api/jenkins/trigger", **doc("POST", "/api/jenkins/trigger"))
 def jenkins_trigger(body: TriggerBody) -> dict:
+    require_local_execution()
     client, warnings = _client(body)
     params = {"TEST": (body.test or "all").strip(), "PERF_ENV": (body.environment or "dev").strip()}
     try:

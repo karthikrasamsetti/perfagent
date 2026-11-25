@@ -53,9 +53,11 @@ field's value to the matching generator token:
 Leave fixed values alone. Values shown as <..._REDACTED> were masked for safety: keep \
 them exactly as they are and never guess what they were. Do not invent passwords or tokens.
 
-Do not ask for information that is already in the draft. Do not ask about the load \
-ramp shape, thresholds or correlation — those are handled after the plan is drafted. \
-Return only the structured result.\
+Do not ask for information that is already in the draft. Do not ask about ramp \
+shape or correlation. Preserve explicit pass rules and response checks. Convert \
+percentages for error_rate to fractions without changing the operator. Use json_path \
+with op=exists and the dotted field path for JSON presence checks. Leave unspecified \
+thresholds as null. Return only the structured result.\
 """
 
 _MISSING_LABELS = {

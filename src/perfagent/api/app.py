@@ -28,23 +28,39 @@ Then open:   http://127.0.0.1:8080
 from __future__ import annotations
 
 import json
+import threading
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.convertors import Convertor, register_url_convertor
 from pydantic import BaseModel, Field
 
 from perfagent import __version__, audit, tracing
-from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline
-from perfagent.analyzer.diagnostics import diagnose
+from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline, refresh_baseline_display
+from perfagent.analyzer.diagnostics import Finding, diagnose
+from perfagent.observability.correlation import correlate
+from perfagent.analyzer.verdict import evaluate_k6_summary
+from perfagent.analyzer.report_evidence import report_evidence
+from perfagent.api import access
+from perfagent.api.access import (
+    MANAGED_EXECUTION_DETAIL, WorkspaceAccess, managed_execution_blocked, require_local_execution,
+)
+from perfagent.api.browser_security import BrowserWriteProtection
 from perfagent.api.chat_routes import router as chat_router
 from perfagent.api.docs import API_DESCRIPTION, API_TITLE, TAGS, doc
 from perfagent.api.export_routes import router as export_router
 from perfagent.api.git_import_routes import router as git_import_router
 from perfagent.api.integration_routes import router as integration_router
 from perfagent.api.jenkins_routes import router as jenkins_router
+from perfagent.api.project_access import enforce_project_access
+from perfagent.api.release_policies import release_readiness, router as release_policy_router
+from perfagent.api.reporting_routes import router as reporting_router
 from perfagent.check_suggest import (
     CHECK_SUGGEST_SYSTEM_PROMPT,
     SuggestedChecks,
@@ -57,7 +73,8 @@ from perfagent.contracts.load_model import (
     LoadModel,
     LoadProfileType,
 )
-from perfagent.data import DataValidationError, load_data
+from perfagent.data import load_data
+from perfagent.data.filenames import safe_filename, safe_runner_data_filename
 from perfagent.db import DataFileRow, PlanRow, RunResultRow, ScriptRow, SlaProfileRow, get_session
 from perfagent.dynamize import DYNAMIZE_SYSTEM_PROMPT, DynamizedBody, build_dynamize_user_prompt
 from perfagent.evaluation import evaluate_plan, evaluate_report
@@ -75,28 +92,55 @@ from perfagent.plan_summary import (
     usage_summary as _usage_summary,
 )
 from perfagent.planner import PlanRequest, draft_plan
+from perfagent.planner.planner import DraftEndpointMismatch
 from perfagent.planner.profile import build_profile
+from perfagent.planner.review_sources import draft_review_sources, update_review_sources
 from perfagent.preflight import preflight
 from perfagent.providers import build_provider
 from perfagent.request_data import preview_requests
+from perfagent.api.run_checkpoints import checkpoint_run, discard_launch, expired_project_runs, record_launch, saved_checkpoint
+from perfagent.api.run_inputs import freeze_script, planned_phases, script_workload_version
+from perfagent.api.test_identity import saved_identity
+from perfagent.api.projects import begin_name_write, check_test_name, require_project, router as projects_router
+from perfagent.db.models import RunCheckpointRow, ScriptSnapshotRow, ScriptVerificationRow
 from perfagent.runner import get_run, k6_available, start_run, stop_run
-from perfagent.runner.validator import validate_script
+from perfagent.runner.k6_runner import RunCapacityExceeded
+from perfagent.runner.admission import admission_checks
+from perfagent.runner.isolated_validation import validate_isolated
+from perfagent.runner.validator import preflight_script, validate_script
 
 app = FastAPI(
     title=API_TITLE,
     description=API_DESCRIPTION,
     version=__version__,
     openapi_tags=TAGS,
+    dependencies=[Depends(enforce_project_access)],
 )
+app.add_middleware(WorkspaceAccess)
+app.add_middleware(BrowserWriteProtection)
 app.include_router(export_router)
 app.include_router(git_import_router)
 app.include_router(jenkins_router)
 app.include_router(integration_router)
 app.include_router(chat_router)
+app.include_router(reporting_router)
+app.include_router(release_policy_router)
+app.include_router(projects_router)
 _configure_logging()
 _log = get_logger("perfagent.api")
 
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+_SPA_DIR = _WEB_DIR / "spa"
+
+
+class _FrontendAssets(StaticFiles):
+    async def check_config(self) -> None:
+        if self.directory and not Path(self.directory).is_dir():
+            return  # A source checkout without a frontend build still uses /legacy.
+        await super().check_config()
+
+
+app.mount("/assets", _FrontendAssets(directory=str(_SPA_DIR / "assets"), check_dir=False), name="spa-assets")
 
 
 # ---------- request/response models ----------
@@ -151,12 +195,37 @@ def health() -> dict:
 
 # ---------- UI ----------
 
+def _spa_html() -> str:
+    html = (_SPA_DIR / "index.html").read_text(encoding="utf-8")
+    mode = access.get_settings().perfagent_access_mode
+    return html.replace('name="perfagent-access-mode" content="local"',
+                        f'name="perfagent-access-mode" content="{mode}"', 1)
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index() -> str:
+    if (_SPA_DIR / "index.html").is_file():
+        return _spa_html()
+    return (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/legacy", response_class=HTMLResponse, include_in_schema=False)
+def legacy_workspace() -> str:
+    """Preserved fallback during the React migration."""
     return (_WEB_DIR / "index.html").read_text(encoding="utf-8")
 
 
 # ---------- API ----------
+
+class WorkspaceSession(BaseModel):
+    managed: bool
+
+
+@app.get("/api/workspace/session", response_model=WorkspaceSession, **doc("GET", "/api/workspace/session"))
+def workspace_session(request: Request) -> WorkspaceSession:
+    """Report whether the current workspace request was authenticated by the gateway."""
+    return WorkspaceSession(managed=isinstance(getattr(request.state, "principal", None), access.Principal))
+
 
 @app.get("/api/tools", **doc("GET", "/api/tools"))
 def tools() -> dict:
@@ -183,14 +252,18 @@ def get_traces(limit: int = 100) -> dict:
 
 
 @app.get("/api/runs", **doc("GET", "/api/runs"))
-def list_runs(limit: int = 50) -> dict:
+def list_runs(limit: int = 50, project_id: str | None = None) -> dict:
     """List past runs (with their saved report) — newest first, for the Runs history."""
     with get_session() as s:
-        rows = (s.query(RunResultRow)
+        query = s.query(RunResultRow)
+        if project_id:
+            query = query.join(PlanRow, PlanRow.id == RunResultRow.plan_id).filter(PlanRow.project_id == project_id)
+        rows = (query
                 .order_by(RunResultRow.created_at.desc())
                 .limit(limit).all())
         return {"runs": [
             {
+                **saved_identity(r, s),
                 "run_id": r.id,
                 "created_at": r.created_at.isoformat(),
                 "target": r.target_base_url,
@@ -201,6 +274,7 @@ def list_runs(limit: int = 50) -> dict:
                 "p95_ms": r.p95_ms,
                 "rps": r.rps,
                 "has_report": bool(r.report_json),
+                "mode": json.loads(r.report_json or "{}").get("execution", {}).get("mode", "full"),
             }
             for r in rows
         ]}
@@ -252,13 +326,24 @@ def delete_sla(sla_id: str) -> dict:
 
 
 @app.get("/api/runs/trend", **doc("GET", "/api/runs/trend"))
-def runs_trend(plan_id: str = "", limit: int = 10) -> dict:
+def runs_trend(plan_id: str = "", limit: int = 10,
+               workload_version: str = "", mode: str = "full") -> dict:
     """Return recent runs' key metrics for a plan (oldest->newest) for the trend chart."""
     with get_session() as s:
         q = s.query(RunResultRow)
         if plan_id:
             q = q.filter(RunResultRow.plan_id == plan_id)
-        rows = q.order_by(RunResultRow.created_at.desc()).limit(limit).all()
+        q = q.order_by(RunResultRow.created_at.desc(), RunResultRow.id.desc())
+        if workload_version:
+            rows = []
+            for row in q.yield_per(100):
+                execution = json.loads(row.report_json or "{}").get("execution", {})
+                if execution.get("workload_version") == workload_version and execution.get("mode", "full") == mode:
+                    rows.append(row)
+                    if len(rows) >= max(1, min(limit, 500)):
+                        break
+        else:
+            rows = q.limit(max(1, min(limit, 500))).all()
         rows = list(reversed(rows))  # oldest first for a left-to-right chart
         return {"points": [
             {
@@ -280,11 +365,41 @@ def get_saved_report(result_id: str) -> dict:
         if r is None or not r.report_json:
             raise HTTPException(status_code=404, detail="saved report not found")
         try:
-            return json.loads(r.report_json)
+            report = json.loads(r.report_json)
+            report.setdefault("plan_id", r.plan_id)
+            plan = s.get(PlanRow, r.plan_id)
+            report["project_id"] = plan.project_id if plan else None
+            report["execution"] = {**saved_identity(r, s), **report.get("execution", {})}
+            if report.get("baseline"):
+                report["baseline"] = refresh_baseline_display(report["baseline"])
+            return {**report, "evidence": report_evidence(report),
+                    "release_readiness": release_readiness(s, r, report, comparison_details=True)}
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=500, detail="corrupt saved report") from e
 
 
+
+
+_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+async def _read_text_upload(file: UploadFile, default: str, extensions: set[str]) -> tuple[str, str]:
+    try:
+        filename = safe_filename(file.filename or default)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if Path(filename).suffix.lower() not in extensions:
+        raise HTTPException(415, "Unsupported file extension.")
+    raw = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Files must be 5 MiB or smaller.")
+    try:
+        content = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(400, "File must be UTF-8 text.") from None
+    if "\x00" in content:
+        raise HTTPException(400, "File must be UTF-8 text.")
+    return filename, content
 
 
 @app.post("/api/data", **doc("POST", "/api/data"))
@@ -295,17 +410,14 @@ async def upload_data(file: UploadFile) -> dict:
     runner but never sent to the LLM — only the column names (schema) are used in
     planning.
     """
-    raw = await file.read()
+    filename, content = await _read_text_upload(
+        file, "data.csv", {".csv", ".tsv", ".txt", ".json", ".jsonl", ".ndjson"}
+    )
     try:
-        content = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="file must be UTF-8 text") from None
-
-    filename = file.filename or "data.csv"
-    try:
+        safe_runner_data_filename(filename)
         dataset = load_data(filename, content)
-    except DataValidationError as e:
-        raise HTTPException(status_code=400, detail=f"invalid data file: {e}") from e
+    except (ValueError, RecursionError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid data file: {str(e)[:200]}") from e
 
     with get_session() as s:
         row = DataFileRow(
@@ -362,13 +474,11 @@ def get_data_file(data_file_id: str) -> dict:
 @app.post("/api/import-endpoints", **doc("POST", "/api/import-endpoints"))
 async def import_endpoints_api(file: UploadFile) -> dict:
     """Import endpoints from an OpenAPI/Swagger JSON, Postman collection, or HAR file."""
-    raw = await file.read()
+    filename, content = await _read_text_upload(
+        file, "import.json", {".json", ".har", ".yaml", ".yml"}
+    )
     try:
-        content = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="file must be UTF-8 text") from None
-    try:
-        result = import_endpoints(file.filename or "import.json", content)
+        result = import_endpoints(filename, content)
     except ImportError_ as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return result.to_dict()
@@ -378,21 +488,36 @@ async def import_endpoints_api(file: UploadFile) -> dict:
 @app.post("/api/plan", **doc("POST", "/api/plan"))
 def create_plan(request: PlanRequest) -> dict:
     """AI drafts a LoadModel from the endpoints, saved; returns it for review."""
+    if request.project_id and request.test_name.strip():
+        with get_session() as s:
+            require_project(s, request.project_id)
+            check_test_name(s, request.project_id, request.test_name)
     try:
         provider = build_provider()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     tracing.set_step("plan")
-    plan: PlanArtifact = draft_plan(request, provider)
+    try:
+        plan = draft_plan(request, provider)
+    except DraftEndpointMismatch as exc:
+        raise HTTPException(422, str(exc)) from exc
+    plan.load_model.test_name = request.test_name.strip() or plan.load_model.test_name
+    review_sources = draft_review_sources(request, plan.load_model)
     redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
 
     with get_session() as s:
+        begin_name_write(s)
+        project_id = require_project(s, request.project_id)
+        if request.project_id:
+            check_test_name(s, project_id, plan.load_model.test_name or request.goal)
         row = PlanRow(
+            project_id=project_id,
             id=plan.id,
             target_base_url=plan.load_model.target_base_url,
             goal=request.goal,
             load_model_json=plan.load_model.model_dump_json(),
+            review_sources_json=json.dumps(review_sources),
         )
         s.add(row)
         s.commit()
@@ -410,6 +535,7 @@ def create_plan(request: PlanRequest) -> dict:
         "plan_id": plan.id,
         "provider": provider.name,
         "load_model": plan.load_model.model_dump(),
+        "review_sources": review_sources,
         "guardrail": _summarize_redactions(redaction_counts),
         "evaluation": plan_eval,
         "rationale": _plan_rationale(plan.load_model),
@@ -505,6 +631,7 @@ def _attach_data_file(model: LoadModel, data_row, row_mode: str | None) -> DataF
     """
     previous = model.data_file.row_mode if model.data_file else "random"
     return DataFile(
+        data_file_id=data_row.id,
         filename=data_row.filename,
         fields=data_row.columns,
         row_count=data_row.row_count,
@@ -554,7 +681,7 @@ def request_preview(body: RequestPreviewBody) -> dict:
     elif model.data_file is not None:
         # A plan reopened later: find its file by name, as the runner does.
         with get_session() as s:
-            data_row = (s.query(DataFileRow)
+            data_row = s.get(DataFileRow, model.data_file.data_file_id) if model.data_file.data_file_id else (s.query(DataFileRow)
                         .filter(DataFileRow.filename == model.data_file.filename)
                         .order_by(DataFileRow.created_at.desc()).first())
             rows = _data_rows(data_row) if data_row is not None else []
@@ -572,11 +699,20 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
     generated script is parameterized from that data file.
     """
     with get_session() as s:
-        row = s.get(PlanRow, plan_id)
+        begin_name_write(s)
+        row = s.query(PlanRow).filter_by(id=plan_id).with_for_update().one_or_none()
         if row is None:
             raise HTTPException(status_code=404, detail="plan not found")
 
         model = body.load_model or LoadModel.model_validate_json(row.load_model_json)
+        model.test_name = model.test_name.strip()
+        saved_name = json.loads(row.load_model_json).get("test_name") or ""
+        if row.project_id not in (None, "legacy") and saved_name.strip() and not model.test_name.strip():
+            raise HTTPException(400, "Enter a test name before approving the plan.")
+        previous_name = saved_name or row.goal
+        new_name = model.test_name or row.goal
+        if row.project_id not in (None, "legacy") and previous_name.strip().casefold() != new_name.strip().casefold():
+            check_test_name(s, row.project_id, new_name, plan_id=row.id)
 
         # Attach the uploaded data file's schema to the model (values stay in the DB).
         if body.data_file_id:
@@ -592,6 +728,13 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
         if body.headers:
             model.headers = {k: v for k, v in body.headers.items() if k and v}
 
+        # Persist source labels independently of the frozen execution model.
+        review_sources = None
+        if row.review_sources_json:
+            review_sources = update_review_sources(
+                json.loads(row.review_sources_json), LoadModel.model_validate_json(row.load_model_json), model,
+            )
+            row.review_sources_json = json.dumps(review_sources)
         # Persist the (possibly edited / data-attached) model.
         row.load_model_json = model.model_dump_json()
         row.target_base_url = model.target_base_url
@@ -609,40 +752,89 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
             filename=script.filename,
             content=script.content,
         )
-        s.add(script_row)
+        latest = next((entry for entry in reversed(_plan_script_versions(s, row))
+                       if entry["mode"] != "smoke"), None)
+        previous = s.get(ScriptSnapshotRow, latest["script_id"]) if latest else None
+        previous_version = json.loads(previous.metadata_json).get("workload_version") if previous else None
+        frozen = freeze_script(s, script_row, model, generated=True)
+        current_version = json.loads(frozen.metadata_json)["workload_version"]
+        reused = bool(latest and latest["source"] == "generated" and latest["tool"] == script.tool
+                      and previous_version == current_version)
+        s.expunge(frozen)
+        if not reused:
+            s.add(script_row)
+            s.flush()
+            s.add(frozen)
         s.commit()
 
         audit.record("plan.approved", entity="plan", entity_id=plan_id,
                      target=model.target_base_url, summary="Plan approved by user")
-        audit.record("script.generated", entity="script", entity_id=script.id,
-                     target=model.target_base_url,
-                     summary=f"Generated {script.tool} script {script.filename}")
+        if not reused:
+            audit.record("script.generated", entity="script", entity_id=script.id,
+                         target=model.target_base_url,
+                         summary=f"Generated {script.tool} script {script.filename}")
 
         return {
-            "script_id": script.id,
+            "script_id": latest["script_id"] if reused else script.id,
             "plan_id": plan_id,
             "tool": script.tool,
             "filename": script.filename,
             "content": script.content,
+            "reused": reused,
+            "review_sources": review_sources,
         }
 
 
 @app.get("/api/plans", **doc("GET", "/api/plans"))
-def list_plans() -> dict:
+def list_plans(project_id: str | None = None) -> dict:
     with get_session() as s:
-        rows = s.query(PlanRow).order_by(PlanRow.created_at.desc()).all()
+        latest_id = (
+            select(RunResultRow.id)
+            .where(RunResultRow.plan_id == PlanRow.id, RunResultRow.report_json != "")
+            .order_by(RunResultRow.created_at.desc(), RunResultRow.id.desc())
+            .limit(1)
+            .correlate(PlanRow)
+            .scalar_subquery()
+        )
+        query = s.query(PlanRow, RunResultRow.id, RunResultRow.verdict).outerjoin(
+            RunResultRow, RunResultRow.id == latest_id
+        )
+        if project_id:
+            query = query.filter(PlanRow.project_id == project_id)
+        rows = query.order_by(PlanRow.created_at.desc()).all()
         return {
             "plans": [
                 {
                     "plan_id": r.id,
+                    "project_id": r.project_id,
+                    "test_name": LoadModel.model_validate_json(r.load_model_json).test_name or r.goal or "Test " + r.id[:8],
                     "target": r.target_base_url,
                     "goal": r.goal,
                     "created_at": r.created_at.isoformat(),
                     "script_count": len(r.scripts),
+                    "latest_report": {"run_id": run_id, "verdict": verdict} if run_id else None,
                 }
-                for r in rows
+                for r, run_id, verdict in rows
             ]
         }
+
+
+def _plan_script_versions(session, plan) -> list[dict]:
+    rows = (session.query(ScriptRow.id, ScriptRow.tool, ScriptRow.filename, ScriptRow.created_at,
+                          ScriptSnapshotRow.metadata_json)
+            .outerjoin(ScriptSnapshotRow, ScriptSnapshotRow.script_id == ScriptRow.id)
+            .filter(ScriptRow.plan_id == plan.id)
+            .order_by(ScriptRow.created_at, ScriptRow.id).all())
+    versions = []
+    for script_id, tool, filename, created_at, metadata_json in rows:
+        metadata = json.loads(metadata_json) if metadata_json else {}
+        source = ("edited" if metadata.get("script_edited") else
+                  "generated" if metadata.get("generated") else
+                  "imported" if plan.goal.startswith("Uploaded script") else "saved")
+        versions.append({"script_id": script_id, "tool": tool, "filename": filename,
+                         "created_at": created_at.isoformat(), "mode": metadata.get("mode", "full"),
+                         "source": source})
+    return versions
 
 
 @app.get("/api/plans/{plan_id}", **doc("GET", "/api/plans/{plan_id}"))
@@ -653,18 +845,12 @@ def get_plan(plan_id: str) -> dict:
             raise HTTPException(status_code=404, detail="plan not found")
         return {
             "plan_id": row.id,
+            "project_id": row.project_id,
             "target": row.target_base_url,
             "goal": row.goal,
             "load_model": LoadModel.model_validate_json(row.load_model_json).model_dump(),
-            "scripts": [
-                {
-                    "script_id": sc.id,
-                    "tool": sc.tool,
-                    "filename": sc.filename,
-                    "created_at": sc.created_at.isoformat(),
-                }
-                for sc in row.scripts
-            ],
+            "review_sources": json.loads(row.review_sources_json) if row.review_sources_json else None,
+            "scripts": _plan_script_versions(s, row),
         }
 
 
@@ -686,15 +872,44 @@ def download_script(script_id: str) -> PlainTextResponse:
 # ---------- pre-flight check ----------
 
 class PreflightBody(BaseModel):
-    load_model: LoadModel
+    load_model: LoadModel | None = None
+    script_id: str | None = None
     data_file_id: str | None = None
     headers: dict[str, str] | None = None
 
 
 @app.post("/api/preflight", **doc("POST", "/api/preflight"))
 def api_preflight(body: PreflightBody) -> dict:
-    """Fire one request per endpoint and report status codes (no load)."""
+    """Verify every k6 journey or check a plan’s endpoint reachability."""
+    require_local_execution()
     model = body.load_model
+    if body.script_id:
+        with get_session() as s:
+            saved = s.get(ScriptSnapshotRow, body.script_id)
+            if saved is None:
+                raise HTTPException(400, "No frozen plan for this script. Validate the imported script instead.")
+            script = s.get(ScriptRow, body.script_id)
+            metadata = json.loads(saved.metadata_json)
+            model = LoadModel.model_validate_json(saved.load_model_json)
+            if not metadata.get("generated") and model.scenarios[0].name == "uploaded":
+                raise HTTPException(400, "Pre-flight requires a generated script. Validate the imported script instead.")
+            data_filename, data_content = saved.data_filename, saved.data_content
+            script_content = script.content if script is not None and script.tool == "k6" else None
+        if script_content is not None:
+            started_at = time.time()
+            result = preflight_script(script_content, data_filename, data_content)
+            completed_at = time.time()
+            with get_session() as s:
+                s.add(ScriptVerificationRow(
+                    script_id=body.script_id, started_at=started_at, completed_at=completed_at,
+                    all_ok=result["all_ok"], journeys_checked=len(result["journeys"]),
+                ))
+                s.commit()
+            return {**result, "script_id": body.script_id, "verified_at": completed_at}
+        rows = load_data(data_filename, data_content).rows if data_filename else []
+        return preflight(model, sample_row=rows[0] if rows else None)
+    if model is None:
+        raise HTTPException(400, "A plan or script version is required.")
     if body.headers:
         model.headers = {k: v for k, v in body.headers.items() if k and v}
 
@@ -720,22 +935,68 @@ def api_preflight(body: PreflightBody) -> dict:
 
 @app.post("/api/scripts/{script_id}/validate", **doc("POST", "/api/scripts/{script_id}/validate"))
 def api_validate_script(script_id: str) -> dict:
-    """Smoke-test a generated script with 1 VU / 1 iteration before a full run."""
+    """Parse a script's syntax and configuration with k6 inspect; sends no traffic."""
+    managed = managed_execution_blocked()
+    image = access.get_settings().perfagent_managed_k6_image if managed else ""
+    if managed and not image:
+        require_local_execution()
     with get_session() as s:
         row = s.get(ScriptRow, script_id)
         if row is None:
             raise HTTPException(status_code=404, detail="script not found")
         data_filename, data_content = "", ""
         plan = s.get(PlanRow, row.plan_id)
-        if plan is not None:
+        frozen = s.get(ScriptSnapshotRow, row.id)
+        if frozen is not None:
+            data_filename, data_content = frozen.data_filename, frozen.data_content
+        elif plan is not None:
             data_filename, data_content = _data_for_plan(s, plan)
-        return validate_script(row.content, data_filename=data_filename,
-                               data_content=data_content)
+        content = row.content
+    if managed:
+        return validate_isolated(image, content, data_filename, data_content)
+    return validate_script(content, data_filename=data_filename, data_content=data_content)
 
+
+
+class EditScriptBody(BaseModel):
+    content: str
+
+
+@app.post("/api/scripts/{script_id}/edit", **doc("POST", "/api/scripts/{script_id}/edit"))
+def edit_script(script_id: str, body: EditScriptBody) -> dict:
+    """Save an edited version with the original plan and frozen test data."""
+    if not body.content.strip():
+        raise HTTPException(400, "Script content is empty.")
+    with get_session() as s:
+        source = s.get(ScriptRow, script_id)
+        if source is None:
+            raise HTTPException(404, "Script not found.")
+        saved = s.get(ScriptSnapshotRow, script_id)
+        if saved is None:
+            plan = s.get(PlanRow, source.plan_id)
+            if plan is None:
+                raise HTTPException(400, "The script's plan is missing.")
+            model = LoadModel.model_validate_json(plan.load_model_json)
+            saved = freeze_script(s, source, model, generated=plan.goal != "Uploaded script (no AI plan)")
+        if body.content == source.content:
+            return {"script_id": source.id, "plan_id": source.plan_id}
+        edited = ScriptRow(id=uuid.uuid4().hex, plan_id=source.plan_id, tool=source.tool,
+                           filename=source.filename, content=body.content)
+        metadata = json.loads(saved.metadata_json)
+        metadata.update(script_edited=True, workload_version=script_workload_version(
+            body.content, saved.load_model_json, saved.data_content))
+        s.add(edited)
+        s.add(ScriptSnapshotRow(script_id=edited.id, load_model_json=saved.load_model_json,
+                                data_filename=saved.data_filename, data_content=saved.data_content,
+                                metadata_json=json.dumps(metadata)))
+        s.commit()
+        return {"script_id": edited.id, "plan_id": edited.plan_id, "script_edited": True}
 
 
 class UploadScriptBody(BaseModel):
-    filename: str = "loadtest.js"
+    project_id: str | None = None
+    test_name: str = Field(default="", max_length=120)
+    filename: str = ""
     content: str
     target_base_url: str = ""
     tool: str = "k6"
@@ -753,17 +1014,31 @@ def upload_script(body: UploadScriptBody) -> dict:
     tool = body.tool or "k6"
     if tool not in supported_tools():
         raise HTTPException(status_code=400, detail=f"unsupported tool {tool!r}")
+    extension = {"k6": ".js", "locust": ".py", "jmeter": ".jmx", "gatling": ".scala"}[tool]
+    filename = body.filename.strip() or "loadtest" + extension
+    try:
+        LoadModel.safe_script_filename(filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if len(filename) > 120 or not filename.endswith(extension):
+        raise HTTPException(400, f"Use a script filename of up to 120 characters ending in {extension}.")
 
     target = body.target_base_url.strip() or "http://127.0.0.1:8000"
-    # a minimal LoadModel so the report/verdict path has something to read
-    minimal = (
-        '{"target_base_url":"' + target + '",'
-        '"scenarios":[{"name":"uploaded","steps":[{"name":"request","path":"/"}]}],'
-        '"load_profile":{"stages":[{"duration_seconds":1,"target_users":1}]},'
-        '"thresholds":[{"metric":"error_rate","op":"<","value":0.05}]}'
-    )
+    uploaded_model = {
+        "target_base_url": target,
+        "scenarios": [{"name": "uploaded", "steps": [{"name": "request", "path": "/"}]}],
+        "load_profile": {"stages": [{"duration_seconds": 1, "target_users": 1}]},
+        "thresholds": [],
+    }
+    uploaded_model["test_name"] = body.test_name.strip() or Path(filename).stem
+    minimal = json.dumps(uploaded_model)
     with get_session() as s:
+        begin_name_write(s)
+        project_id = require_project(s, body.project_id)
+        if body.project_id:
+            check_test_name(s, project_id, uploaded_model["test_name"])
         plan_row = PlanRow(
+            project_id=project_id,
             target_base_url=target,
             goal="Uploaded script (no AI plan)",
             load_model_json=minimal,
@@ -775,7 +1050,7 @@ def upload_script(body: UploadScriptBody) -> dict:
         script_row = ScriptRow(
             plan_id=plan_id,
             tool=tool,
-            filename=body.filename or "loadtest.js",
+            filename=filename,
             content=body.content,
         )
         s.add(script_row)
@@ -794,6 +1069,8 @@ def upload_script(body: UploadScriptBody) -> dict:
 @app.get("/api/run/available", **doc("GET", "/api/run/available"))
 def run_available() -> dict:
     """Tell the UI whether k6 is installed so it can show a helpful message."""
+    if managed_execution_blocked():
+        return {"k6": False, "reason": MANAGED_EXECUTION_DETAIL}
     return {"k6": k6_available()}
 
 
@@ -805,6 +1082,11 @@ def _data_for_plan(session, plan_row) -> tuple[str, str]:
         return "", ""
     if not model.data_file:
         return "", ""
+    if model.data_file.data_file_id:
+        data = session.get(DataFileRow, model.data_file.data_file_id)
+        if data is None:
+            raise HTTPException(400, "The selected test data version is missing.")
+        return data.filename, data.content
     fname = model.data_file.filename
     # find the most recent uploaded data file with this filename
     dr = (
@@ -818,40 +1100,145 @@ def _data_for_plan(session, plan_row) -> tuple[str, str]:
     return dr.filename, dr.content
 
 
+def _latest_verification(session, script_id: str) -> dict | None:
+    verification = (
+        session.query(ScriptVerificationRow).filter_by(script_id=script_id)
+        .order_by(ScriptVerificationRow.started_at.desc(), ScriptVerificationRow.id.desc()).first()
+    )
+    if verification is None:
+        return None
+    return {
+        "script_id": script_id,
+        "verified_at": verification.completed_at,
+        "all_ok": verification.all_ok,
+        "journeys_checked": verification.journeys_checked,
+    }
+
+
+@app.get("/api/scripts/{script_id}/readiness", **doc("GET", "/api/scripts/{script_id}/readiness"))
+def execution_readiness(script_id: str) -> dict:
+    with get_session() as s:
+        script = s.get(ScriptRow, script_id)
+        if script is None:
+            raise HTTPException(404, "script not found")
+        saved = s.get(ScriptSnapshotRow, script_id)
+        plan = s.get(PlanRow, script.plan_id)
+        if saved is None and plan is None:
+            raise HTTPException(400, "The script's plan is missing.")
+        model = LoadModel.model_validate_json(saved.load_model_json if saved else plan.load_model_json)
+        metadata = json.loads(saved.metadata_json) if saved else {}
+        filename, content = ((saved.data_filename, saved.data_content) if saved else
+                             _data_for_plan(s, plan))
+        blocked = managed_execution_blocked()
+        checks = [
+            {"name": "Load engine", "ok": not blocked and script.tool == "k6" and k6_available(),
+             "detail": MANAGED_EXECUTION_DETAIL if blocked else "k6 installed or available for first-run setup"},
+            {"name": "Target", "ok": bool(model.target_base_url), "detail": model.target_base_url},
+            {"name": "Test data", "ok": not model.data_file or bool(content),
+             "detail": filename or "No data file required"},
+            {"name": "Execution version", "ok": bool(saved),
+             "detail": "Frozen plan and data" if saved else "Legacy script: inputs freeze on its next run"},
+        ]
+        if blocked:
+            settings = access.get_settings()
+            checks.extend(admission_checks(
+                model, metadata, settings.perfagent_managed_target_origins.get(
+                    plan.project_id if plan else "", []),
+                max_vus=settings.perfagent_managed_max_vus,
+                max_seconds=settings.perfagent_managed_max_seconds,
+                max_requests_per_second=settings.perfagent_managed_max_rps,
+            ))
+        return {"checks": checks, "target": model.target_base_url,
+                "verification": _latest_verification(s, script_id) if saved is not None else None,
+                "execution": {**metadata, "duration_seconds": model.load_profile.total_seconds,
+                              "peak_users": model.load_profile.peak_users,
+                              "arrival_rate": model.planned_iteration_rate},
+                "smoke_supported": not blocked and script.tool == "k6" and bool(metadata.get("generated")) and not metadata.get("script_edited")}
+
+
+class RunOptions(BaseModel):
+    smoke: bool = False
+    baseline_id: str | None = None
+    release_label: str = Field(default="", max_length=100)
+
+
 @app.post("/api/scripts/{script_id}/run", **doc("POST", "/api/scripts/{script_id}/run"))
-def run_script(script_id: str) -> dict:
-    """Launch a script as a live run. Returns a run_id the UI polls for status."""
+def run_script(script_id: str, body: RunOptions | None = None) -> dict:
+    """Execute a frozen script version; smoke runs create a separate bounded version."""
+    require_local_execution()
+    body = body or RunOptions()
     with get_session() as s:
         row = s.get(ScriptRow, script_id)
         if row is None:
-            raise HTTPException(status_code=404, detail="script not found")
-        target = ""
-        data_filename, data_content = "", ""
-        plan = s.get(PlanRow, row.plan_id)
-        if plan is not None:
-            target = plan.target_base_url
-            data_filename, data_content = _data_for_plan(s, plan)
+            raise HTTPException(404, "script not found")
+        if row.tool != "k6":
+            raise HTTPException(400, "Live execution currently supports k6 scripts only.")
+        saved = s.get(ScriptSnapshotRow, row.id)
+        if saved is None:
+            plan = s.get(PlanRow, row.plan_id)
+            if plan is None:
+                raise HTTPException(400, "The script's plan is missing.")
+            saved = freeze_script(s, row, LoadModel.model_validate_json(plan.load_model_json))
+        metadata = json.loads(saved.metadata_json)
+        if body.smoke:
+            if not metadata.get("generated") or metadata.get("script_edited"):
+                raise HTTPException(400, "Smoke mode requires an unedited generated k6 script. Use Validate for imported scripts.")
+            model = LoadModel.model_validate_json(saved.load_model_json)
+            smoke_filename = Path(row.filename).stem[:111] + ".smoke.js"
+            model.script_filename = smoke_filename
+            from perfagent.contracts.load_model import LoadProfile
+            smoke_users = len(model.scenarios)
+            model.load_profile = LoadProfile.model_validate({"type": "ramp", "graceful_stop_seconds": 0,
+                "start_users": smoke_users, "stages": [{"duration_seconds": 10, "target_users": smoke_users}]})
+            model = LoadModel.model_validate(model.model_dump())
+            smoke_script = generate_script(PlanArtifact(load_model=model), tool="k6")
+            row = ScriptRow(id=smoke_script.id, plan_id=row.plan_id, tool="k6",
+                            filename=smoke_filename, content=smoke_script.content)
+            s.add(row)
+            # Clone the exact data version from the source snapshot.
+            saved = ScriptSnapshotRow(script_id=row.id, load_model_json=model.model_dump_json(),
+                                      data_filename=saved.data_filename, data_content=saved.data_content,
+                                      metadata_json=json.dumps({**metadata, "duration_seconds": 10,
+                                          "script_name": smoke_filename,
+                                          "peak_users": model.load_profile.peak_users, "arrival_rate": None,
+                                          "mode": "smoke", "target_request_rate": None,
+                                          "executor": model.load_profile.executor, "planned_iterations": None,
+                                          "planned_iteration_rate": None, "requests_per_iteration": None}))
+            s.add(saved)
+            metadata = json.loads(saved.metadata_json)
+        if body.baseline_id:
+            previous = s.get(RunResultRow, body.baseline_id)
+            if previous is None:
+                raise HTTPException(400, "Selected baseline no longer exists.")
+            previous_report = json.loads(previous.report_json or "{}")
+            previous_meta = previous_report.get("execution", {})
+            if (previous_report.get("status") != "finished" or previous.plan_id != row.plan_id or
+                    previous_meta.get("workload_version") != metadata.get("workload_version") or
+                    previous_meta.get("mode", "full") != metadata.get("mode", "full")):
+                raise HTTPException(400, "Baseline must use the same plan, workload version and run mode.")
+        s.commit()
+        model = LoadModel.model_validate_json(saved.load_model_json)
+        execution = {**metadata, "baseline_id": body.baseline_id,
+                     "release_label": body.release_label, "plan_id": row.plan_id,
+                     "verification": _latest_verification(s, row.id)}
+        if row.tool == "k6" and metadata.get("generated") and not metadata.get("script_edited"):
+            execution["planned_phases"] = planned_phases(model)
         run_id = uuid.uuid4().hex
-        run = start_run(
-            run_id=run_id,
-            script_id=script_id,
-            tool=row.tool,
-            target=target,
-            content=row.content,
-            load_model_json=(plan.load_model_json if plan is not None else ""),
-            data_filename=data_filename,
-            data_content=data_content,
-        )
-    peak = ""
-    try:
-        if plan is not None:
-            from perfagent.contracts.load_model import LoadModel as _LM
-            peak = _LM.model_validate_json(plan.load_model_json).load_profile.peak_users
-    except Exception:  # noqa: BLE001
-        peak = ""
-    audit.record("run.started", entity="run", entity_id=run.run_id, target=target,
-                 summary=f"Load run started against {target}"
-                         + (f" (peak {peak} VUs)" if peak != "" else ""))
+        record_launch(run_id, row.id, model.target_base_url, execution)
+        try:
+            run = start_run(run_id=run_id, script_id=row.id, tool=row.tool,
+                            target=model.target_base_url, content=row.content,
+                            load_model_json=saved.load_model_json,
+                            data_filename=saved.data_filename, data_content=saved.data_content,
+                            metadata=execution, on_complete=_save_completed_run, on_checkpoint=checkpoint_run)
+        except RunCapacityExceeded as exc:
+            discard_launch(run_id)
+            raise HTTPException(429, str(exc)) from exc
+        except Exception:
+            discard_launch(run_id)
+            raise
+    audit.record("run.started", entity="run", entity_id=run.run_id, target=run.target,
+                 summary="Load run started (" + execution.get("mode", "full") + ")")
     return {"run_id": run.run_id, "status": run.status, "message": run.message}
 
 
@@ -860,7 +1247,10 @@ def run_status(run_id: str) -> dict:
     """Live status + aggregated metrics snapshot for a run."""
     run = get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="run not found")
+        checkpoint = saved_checkpoint(run_id)
+        if checkpoint is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        run = checkpoint.run
     return {
         "run_id": run.run_id,
         "script_id": run.script_id,
@@ -869,9 +1259,48 @@ def run_status(run_id: str) -> dict:
         "status": run.status,
         "message": run.message,
         "elapsed_s": round((run.ended_at or time.time()) - run.started_at, 1),
+        "mode": run.metadata.get("mode", "full"),
+        "planned_load": {
+            "duration_seconds": run.metadata.get("duration_seconds") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") else None,
+            "iterations": run.metadata.get("planned_iterations") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") else None,
+            "peak_users": run.metadata.get("peak_users") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") and not run.metadata.get("arrival_rate") else None,
+            "iterations_per_second": run.metadata.get("planned_iteration_rate", run.metadata.get("arrival_rate")) if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") else None,
+            "requests_per_second": run.metadata.get("target_request_rate") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") else None,
+        },
         "snapshot": run.snapshot,
         "logs": list(getattr(run, "logs", []) or [])[-200:],   # recent k6 output lines
     }
+
+
+@app.post("/api/projects/{project_id}/runs/recover", **doc("POST", "/api/projects/{project_id}/runs/recover"))
+def recover_interrupted_runs(project_id: str) -> dict:
+    """Finalize expired local checkpoints without launching or stopping traffic."""
+    require_local_execution()
+    with get_session() as session:
+        require_project(session, project_id)
+    batch_size = 25
+    candidates = expired_project_runs(project_id, batch_size + 1)
+    recovered = 0
+    failed = 0
+    for run_id in candidates[:batch_size]:
+        try:
+            with _report_lock:
+                if get_run(run_id) is not None:
+                    continue
+                _finish_report(run_id)
+            recovered += 1
+        except HTTPException as error:
+            if error.status_code not in {400, 404}:
+                failed += 1
+        except Exception as error:
+            failed += 1
+            _log.warning("run.recovery_failed", run_id=run_id, error_type=type(error).__name__)
+    return {"recovered": recovered, "failed": failed, "more": len(candidates) > batch_size}
 
 
 @app.post("/api/runs/{run_id}/stop", **doc("POST", "/api/runs/{run_id}/stop"))
@@ -879,7 +1308,7 @@ def run_stop(run_id: str) -> dict:
     ok = stop_run(run_id)
     if not ok:
         raise HTTPException(status_code=400, detail="run not running")
-    return {"run_id": run_id, "status": "stopped"}
+    return {"run_id": run_id, "status": "stopping"}
 
 
 # ---------- analyze + report ----------
@@ -900,10 +1329,12 @@ def _build_report(run) -> tuple[dict, str]:
 
     verdict = evaluate(model, run.snapshot)
 
-    try:
-        provider = build_provider()
-    except ValueError:
-        provider = None
+    provider = None
+    if not run.metadata.get("script_edited") and not (model and model.scenarios[0].name == "uploaded"):
+        try:
+            provider = build_provider()
+        except ValueError:
+            pass
     tracing.set_step('narrate')
     narrative = narrate(run.target, run.snapshot, verdict, provider)
 
@@ -915,16 +1346,62 @@ def _build_report(run) -> tuple[dict, str]:
         narrative=narrative,
         plan_id="",
         run_id=run.run_id,
+        samples=run.samples,
     )
     return verdict, report_html
 
 
+_report_lock = threading.RLock()
+
+
+def _saved_report(session, run_id):
+    row = session.get(RunResultRow, run_id)
+    if row is None:
+        # Compatibility with older rows whose IDs differed from their live run IDs.
+        for candidate in session.query(RunResultRow).filter(RunResultRow.report_json.contains(run_id)):
+            if json.loads(candidate.report_json).get("run_id") == run_id:
+                row = candidate
+                break
+    return row
+
+
 @app.get("/api/runs/{run_id}/report", **doc("GET", "/api/runs/{run_id}/report"))
 def run_report(run_id: str) -> dict:
-    """Return the verdict + narrative for a finished run (for the UI panel)."""
+    with _report_lock:
+        payload = _finish_report(run_id)
+    with get_session() as s:
+        row = _saved_report(s, run_id)
+        readiness = release_readiness(s, row, payload, comparison_details=True) if row else None
+    if payload.get("baseline"):
+        payload = {**payload, "baseline": refresh_baseline_display(payload["baseline"])}
+    return {**payload, "evidence": report_evidence(payload), "release_readiness": readiness}
+
+
+def _save_completed_run(run_id: str) -> None:
+    """Persist the report even when no browser is polling the run."""
+    try:
+        with _report_lock:
+            _finish_report(run_id)
+    except Exception as error:
+        # The report endpoint still retries finalization when opened.
+        get_logger(__name__).warning("run.report_save_failed", run_id=run_id,
+                                     error_type=type(error).__name__)
+
+
+def _finish_report(run_id: str) -> dict:
+    with get_session() as s:
+        existing = _saved_report(s, run_id)
+        if existing is not None and existing.report_json:
+            return json.loads(existing.report_json)
     run = get_run(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="run not found")
+    recovered = run is None
+    if recovered:
+        checkpoint = saved_checkpoint(run_id)
+        if checkpoint is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if not checkpoint.owner_expired:
+            raise HTTPException(status_code=400, detail="run has not finished yet")
+        run = checkpoint.run
     if run.status not in ("finished", "stopped", "error"):
         raise HTTPException(status_code=400, detail="run has not finished yet")
 
@@ -935,11 +1412,21 @@ def run_report(run_id: str) -> dict:
     else:
         model = None
 
-    verdict = evaluate(model, run.snapshot) if model else {"overall_passed": None, "checks": []}
-    try:
-        provider = build_provider()
-    except ValueError:
-        provider = None
+    if run.summary_metrics is not None:
+        verdict = evaluate_k6_summary(run.summary_metrics)
+    elif (run.run_start_ts is None and model and not run.metadata.get("script_edited")
+          and model.scenarios[0].name != "uploaded"):
+        verdict = evaluate(model, run.snapshot)
+    else:
+        verdict = {"overall_passed": None, "checks": []}
+    if run.status != "finished":
+        verdict["overall_passed"] = None
+    provider = None
+    if not recovered and not run.metadata.get("script_edited") and not (model and model.scenarios[0].name == "uploaded"):
+        try:
+            provider = build_provider()
+        except ValueError:
+            pass
     tracing.set_step('narrate')
     narrative = narrate(run.target, run.snapshot, verdict, provider)
 
@@ -958,22 +1445,42 @@ def run_report(run_id: str) -> dict:
         except Exception:  # noqa: BLE001
             peak = None
     diag = diagnose(run.snapshot, peak_users=peak)
+    execution = {**run.metadata, "run_start_ts": run.run_start_ts, "run_end_ts": run.run_end_ts}
+    diagnostics = diag.to_dict()
+    telemetry = None if recovered else correlate(run.target, run.run_start_ts, run.run_end_ts)
+    if telemetry:
+        diagnostics["server_metrics"] = telemetry
+        for metric in telemetry["metrics"]:
+            before, during = metric["baseline_mean"], metric["run_mean"]
+            baseline_text = f"{before:.3g}" if before is not None else "unavailable"
+            run_text = f"{during:.3g}" if during is not None else "unavailable"
+            diagnostics["findings"].append(vars(Finding(
+                "info", metric["name"],
+                f"Two-minute baseline mean {baseline_text}. Run mean {run_text}.",
+            )))
 
     # ----- baseline / regression: compare to the previous run of this plan -----
     cur_metrics = metrics_from_snapshot(run.snapshot)
     plan_id = ""
+    prev = None
     with get_session() as s:
         sc = s.get(ScriptRow, run.script_id)
         if sc is not None:
             plan_id = sc.plan_id
         baseline_summary = no_baseline()
         if plan_id:
-            prev = (
+            candidates = (
                 s.query(RunResultRow)
                 .filter(RunResultRow.plan_id == plan_id)
                 .order_by(RunResultRow.created_at.desc())
-                .first()
+                .all()
             )
+            previous_id = run.metadata.get("baseline_id")
+            prev = next((item for item in candidates
+                if (not previous_id or item.id == previous_id)
+                and json.loads(item.report_json or "{}").get("status") == "finished"
+                and json.loads(item.report_json or "{}").get("execution", {}).get("workload_version") == run.metadata.get("workload_version")
+                and json.loads(item.report_json or "{}").get("execution", {}).get("mode", "full") == run.metadata.get("mode", "full")), None)
             if prev is not None:
                 baseline_summary = compare(cur_metrics, {
                     "error_rate": prev.error_rate, "p95_ms": prev.p95_ms,
@@ -989,12 +1496,20 @@ def run_report(run_id: str) -> dict:
                                  f"{cur_metrics['error_rate']*100:.2f}% errors")
             # Full report payload — persisted so it can be reopened later.
             report_payload = {
+                "plan_id": plan_id,
+                "tool": run.tool,
+                "status": run.status,
+                "message": run.message,
+                "samples": run.samples,
+                "execution": execution,
+                "baseline_id": prev.id if prev else None,
+                "script_id": run.script_id,
                 "run_id": run.run_id,
                 "target": run.target,
                 "verdict": verdict,
                 "narrative": narrative.model_dump(),
                 "evaluation": report_eval,
-                "diagnostics": diag.to_dict(),
+                "diagnostics": diagnostics,
                 "baseline": baseline_summary,
                 "snapshot": run.snapshot,
                 "logs": list(getattr(run, "logs", []) or []),   # persisted run logs
@@ -1004,21 +1519,32 @@ def run_report(run_id: str) -> dict:
             if prow is not None:
                 goal = prow.goal or ""
             s.add(RunResultRow(
-                plan_id=plan_id, target_base_url=run.target, verdict=vtxt,
+                id=run.run_id, plan_id=plan_id, target_base_url=run.target, verdict=vtxt,
                 requests=cur_metrics["requests"], error_rate=cur_metrics["error_rate"],
                 rps=cur_metrics["rps"], p95_ms=cur_metrics["p95_ms"],
                 p99_ms=cur_metrics["p99_ms"], avg_ms=cur_metrics["avg_ms"],
                 goal=goal, report_json=json.dumps(report_payload),
             ))
-            s.commit()
+            s.execute(delete(RunCheckpointRow).where(RunCheckpointRow.run_id == run_id))
+            try:
+                s.commit()
+            except IntegrityError:
+                s.rollback()
+                existing = s.get(RunResultRow, run.run_id)
+                if existing is None:
+                    raise
+                return json.loads(existing.report_json)
+            return report_payload
 
     return {
         "run_id": run.run_id,
+        "plan_id": plan_id,
+        "script_id": run.script_id,
         "target": run.target,
         "verdict": verdict,
         "narrative": narrative.model_dump(),
         "evaluation": report_eval,
-        "diagnostics": diag.to_dict(),
+        "diagnostics": diagnostics,
         "baseline": baseline_summary,
         "logs": list(getattr(run, "logs", []) or [])[-500:],
     }
@@ -1050,12 +1576,55 @@ def run_logs_download(run_id: str):
 
 @app.get("/api/runs/{run_id}/report/download", response_class=HTMLResponse, **doc("GET", "/api/runs/{run_id}/report/download"))
 def run_report_download(run_id: str) -> HTMLResponse:
-    """Download the full HTML report."""
-    run = get_run(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="run not found")
-    _, report_html = _build_report(run)
-    return HTMLResponse(
-        report_html,
-        headers={"Content-Disposition": f'attachment; filename="report_{run_id[:8]}.html"'},
-    )
+    """Render the persisted report; works after a restart without AI calls."""
+    from perfagent.analyzer import render_report_html
+    from perfagent.analyzer.narrator import Narrative
+    with get_session() as s:
+        row = _saved_report(s, run_id)
+        payload = json.loads(row.report_json) if row is not None else None
+        if row is not None:
+            payload["release_readiness"] = release_readiness(s, row, payload, comparison_details=True)
+    if payload is None:
+        payload = run_report(run_id)
+    report_html = render_report_html(
+        target=payload.get("target", ""), tool=payload.get("tool", "k6"),
+        snapshot=payload.get("snapshot", {}), verdict=payload["verdict"],
+        narrative=Narrative.model_validate(payload["narrative"]),
+        plan_id=payload.get("plan_id", ""), run_id=payload.get("run_id", run_id),
+        execution=payload.get("execution"), status=payload.get("status"),
+        samples=payload.get("samples"), release_readiness=payload.get("release_readiness"))
+    return HTMLResponse(report_html, headers={
+        "Content-Disposition": f'attachment; filename="report_{run_id[:8]}.html"',
+        "Cache-Control": "no-store"})
+
+
+@app.get("/api/metrics", **doc("GET", "/api/metrics"))
+def metrics() -> Response:
+    """Prometheus scrape endpoint (deterministic, no AI)."""
+    from perfagent.observability.metrics import render_latest
+    payload, content_type = render_latest()
+    return Response(content=payload, media_type=content_type)
+
+
+class _FrontendPath(Convertor[str]):
+    # Leave API, static assets and the fallback to Starlette's own 404/405 routing.
+    regex = r"(?!api(?:/|$)|assets(?:/|$)|legacy(?:/|$)).*"
+
+    def convert(self, value: str) -> str:
+        return value
+
+    def to_string(self, value: str) -> str:
+        return value
+
+
+register_url_convertor("perfagent_frontend", _FrontendPath())
+
+
+@app.get("/{spa_path:perfagent_frontend}", response_class=HTMLResponse, include_in_schema=False)
+def spa_route(spa_path: str) -> str:
+    """History fallback for client-side routes; API and asset errors remain 404s."""
+    if spa_path in ("api", "assets") or spa_path.startswith(("api/", "assets/", "legacy/")):
+        raise HTTPException(404, "Not found")
+    if not (_SPA_DIR / "index.html").is_file():
+        raise HTTPException(404, "Build the frontend first with npm run build in frontend/.")
+    return _spa_html()

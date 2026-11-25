@@ -22,6 +22,7 @@ from perfagent.api.docs import doc
 from perfagent.config import get_settings
 from perfagent.contracts.load_model import LoadModel
 from perfagent.db import DataFileRow, PlanRow, ScriptRow, get_session
+from perfagent.db.models import ProjectRow, ScriptSnapshotRow
 from perfagent.generator import render
 from perfagent.gitexport import ALL_CI, ExportError, GitTarget, build_framework, publish, slugify
 from perfagent.gitexport.publisher import GitPublishError
@@ -45,8 +46,28 @@ class ExportBody(BaseModel):
     commit_message: str | None = None
 
 
+def _inherit_project(script_id, body):
+    with get_session() as s:
+        script = s.get(ScriptRow, script_id)
+        plan = s.get(PlanRow, script.plan_id) if script else None
+        project = s.get(ProjectRow, plan.project_id) if plan and plan.project_id else None
+        if project is None:
+            return
+        import json
+        settings = json.loads(project.settings_json)
+        body.framework_name = body.framework_name or settings.get("framework_name", "")
+        body.repo_url = body.repo_url or settings.get("repo_url", "")
+        if "ci" not in body.model_fields_set and "ci" in settings:
+            body.ci = settings["ci"]
+        if "branch" not in body.model_fields_set:
+            body.branch = settings.get("branch", "main")
+        frozen = s.get(ScriptSnapshotRow, script_id)
+        model = LoadModel.model_validate_json(frozen.load_model_json if frozen else plan.load_model_json)
+        body.test_name = body.test_name or model.test_name or plan.id[:8]
+
+
 def _load(script_id: str, body: ExportBody) -> tuple[LoadModel, str, tuple[str, str] | None]:
-    """Fetch the script's plan and verify the plan still produces this exact script."""
+    """Export the script's frozen inputs; legacy versions use their stored plan."""
     with get_session() as s:
         script = s.get(ScriptRow, script_id)
         if script is None:
@@ -62,10 +83,10 @@ def _load(script_id: str, body: ExportBody) -> tuple[LoadModel, str, tuple[str, 
                 detail="uploaded scripts can't be saved to Git yet - only scripts generated from a "
                        "plan, because PerfAgent can't reliably separate secrets from hand-written code",
             )
-        model = LoadModel.model_validate_json(plan.load_model_json)
+        frozen = s.get(ScriptSnapshotRow, script_id)
+        model = LoadModel.model_validate_json(frozen.load_model_json if frozen else plan.load_model_json)
 
-        # The plan row is updated on every Generate. If it no longer renders to this
-        # script, the user edited the plan afterwards: export only what they saw.
+        # Verify the frozen inputs still reproduce the approved script.
         if render(model, "k6")[1] != script.content:
             raise HTTPException(
                 status_code=409,
@@ -73,7 +94,9 @@ def _load(script_id: str, body: ExportBody) -> tuple[LoadModel, str, tuple[str, 
             )
 
         data = None
-        if model.data_file:
+        if frozen is not None and frozen.data_filename:
+            data = (frozen.data_filename, frozen.data_content)
+        elif model.data_file:
             row = s.get(DataFileRow, body.data_file_id) if body.data_file_id else None
             if row is None or row.filename != model.data_file.filename:
                 row = s.scalars(
@@ -116,6 +139,7 @@ def export_settings() -> dict:
 
 @router.post("/api/scripts/{script_id}/export/git", **doc("POST", "/api/scripts/{script_id}/export/git"))
 def export_git(script_id: str, body: ExportBody) -> dict:
+    _inherit_project(script_id, body)
     st = get_settings()
     try:
         fw, test = slugify(body.framework_name, "framework name"), slugify(body.test_name, "test name")
@@ -177,6 +201,7 @@ def export_git(script_id: str, body: ExportBody) -> dict:
 
 @router.post("/api/scripts/{script_id}/export/zip", **doc("POST", "/api/scripts/{script_id}/export/zip"))
 def export_zip(script_id: str, body: ExportBody) -> Response:
+    _inherit_project(script_id, body)
     try:
         slugify(body.framework_name, "framework name"), slugify(body.test_name, "test name")
     except ExportError as e:

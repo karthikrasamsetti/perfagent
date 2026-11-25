@@ -97,7 +97,7 @@ def _normalise_endpoints(endpoints: list[ChatEndpoint], base_url: str) -> list[C
         if key in seen:
             continue
         seen.add(key)
-        out.append(ChatEndpoint(method=ep.method, path=path, example_body=ep.example_body))
+        out.append(ep.model_copy(update={"path": path}))
     return out
 
 
@@ -111,11 +111,17 @@ def merge_intent(previous: ChatIntent, new: ChatIntent) -> ChatIntent:
     replaced as a whole when the model returns one, so "drop /checkout" works.
     """
     target = _normalise_base_url(new.target_base_url) or previous.target_base_url
-    endpoints = new.endpoints if new.endpoints else previous.endpoints
+    endpoints = _normalise_endpoints(new.endpoints or previous.endpoints, target)
+    previous_by_key = {(ep.method, ep.path): ep for ep in previous.endpoints}
+    for endpoint in endpoints:
+        prior = previous_by_key.get((endpoint.method, endpoint.path))
+        if prior and endpoint.assertions is None:
+            endpoint.assertions = prior.assertions
     return ChatIntent(
         target_base_url=target,
         goal=(new.goal or "").strip() or previous.goal,
-        endpoints=_normalise_endpoints(list(endpoints), target),
+        endpoints=endpoints,
+        thresholds=new.thresholds if new.thresholds is not None else previous.thresholds,
         max_users=new.max_users if new.max_users > 0 else previous.max_users,
         duration_seconds=(new.duration_seconds if new.duration_seconds > 0
                           else previous.duration_seconds),
@@ -160,10 +166,8 @@ def draft_view(intent: ChatIntent, readiness: Readiness) -> dict:
         "max_users": intent.max_users or DEFAULT_USERS,
         "duration_seconds": intent.duration_seconds or DEFAULT_DURATION_SECONDS,
         "assumed": readiness.assumed,
-        "endpoints": [
-            {"method": e.method.value, "path": e.path, "example_body": e.example_body}
-            for e in intent.endpoints
-        ],
+        "endpoints": [endpoint.model_dump(mode="json") for endpoint in intent.endpoints],
+        "thresholds": [rule.model_dump(mode="json") for rule in intent.thresholds or []],
         "notes": intent.notes,
         "secrets_masked": has_masked_values(intent),
     }

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from perfagent.analyzer.verdict import format_threshold_value
 from perfagent.providers.base import LLMProvider
 
 
@@ -34,7 +35,9 @@ change. Write a clear, honest, plain-language explanation.
 Rules:
 - Use ONLY the numbers provided. Never invent or estimate figures.
 - Be plain and non-alarmist. Explain what the numbers mean in practice.
-- If it passed, say so clearly. If it failed, explain which threshold and by how much.
+- Describe this run’s k6 thresholds. Release readiness and regression budgets are separate decisions.
+- Describe measured throughput. Only call it acceptable if a provided threshold evaluates it.
+- Error-rate targets and measurements include percent signs. Preserve their units.
 - Recommendations are hypotheses to investigate, not proven causes. Phrase them as \
 suggestions ("consider", "investigate"), never as certainties.
 - Keep it concise.
@@ -69,7 +72,8 @@ def _facts_block(target: str, snapshot: dict, verdict: dict) -> str:
     for c in verdict.get("checks", []):
         status = "PASS" if c["passed"] else "FAIL" if c["passed"] is False else "N/A"
         lines.append(
-            f"  - {c['metric']} {c['op']} {c['target']} | actual {c['actual']} | {status}"
+            f"  - {c['metric']} {c['op']} {format_threshold_value(c['metric'], c['target'])}"
+            f" | actual {format_threshold_value(c['metric'], c['actual'])} | {status}"
         )
     lines.append("")
     lines.append("Per-endpoint:")
@@ -99,15 +103,23 @@ def _fallback_narrative(target: str, snapshot: dict, verdict: dict) -> Narrative
         f"The system handled {reqs} requests with a {err:.2f}% error rate and a "
         f"95th-percentile latency of {p95} ms. "
     )
-    failed = [c for c in verdict.get("checks", []) if c["passed"] is False]
-    if failed:
-        parts = [
-            f"{c['metric']} was {c['actual']} (target {c['op']} {c['target']})"
-            for c in failed
-        ]
-        summary += "Thresholds missed: " + "; ".join(parts) + "."
-    else:
-        summary += "All configured thresholds were satisfied."
+    checks = verdict.get("checks", [])
+    failed_checks = [check for check in checks if check["passed"] is False]
+    display_checks = failed_checks if failed_checks else checks
+    for check in display_checks[:4]:
+        metric = check["metric"]
+        label = "Error rate" if metric == "error_rate" else metric.removesuffix("_ms")
+        target_value = format_threshold_value(metric, check["target"])
+        actual_value = format_threshold_value(metric, check["actual"])
+        outcome = {True: "passed", False: "failed", None: "was inconclusive"}[check["passed"]]
+        if check["target"] is None:
+            summary += f"{label} {outcome}. "
+        else:
+            summary += f"{label} {check['op']} {target_value} {outcome} (measured {actual_value}). "
+    if len(display_checks) > 4:
+        summary += "See threshold results for the remaining rules. "
+    if passed is None:
+        summary += "A final pass/fail verdict is unavailable."
 
     observations = []
     for e in snapshot.get("per_endpoint", []):
@@ -115,7 +127,7 @@ def _fallback_narrative(target: str, snapshot: dict, verdict: dict) -> Narrative
             observations.append(
                 f"{e['name']} had {e['failed']} failed request(s) out of {e['requests']}."
             )
-    if not observations:
+    if not observations and snapshot.get("per_endpoint"):
         observations.append("No endpoint returned errors during the run.")
 
     return Narrative(

@@ -10,12 +10,14 @@ explicitly imports (the plan and, if committed, its test-data file).
 """
 
 from __future__ import annotations
+import hashlib
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, SecretStr
 
 from perfagent import audit, integrations
 from perfagent.api.docs import doc
+from perfagent.api.projects import begin_name_write, check_test_name, require_project
 from perfagent.config import get_settings
 from perfagent.data import load_data
 from perfagent.db import DataFileRow, PlanRow, get_session
@@ -34,6 +36,7 @@ class GitSource(BaseModel):
 
 
 class ImportBody(GitSource):
+    project_id: str | None = None
     framework_path: str = ""
     test: str = ""
     # Values for the secrets the test needs, e.g. {"PERF_HEADER_AUTHORIZATION": "Bearer ..."}
@@ -115,6 +118,7 @@ def git_import(body: ImportBody) -> dict:
     model = imported.model
     source = f"{target.repo_url}@{target.branch} {imported.framework}/tests/{imported.test} ({sha[:8]})"
     with get_session() as s:
+        begin_name_write(s)
         data_id = data_fields = None
         if imported.data_file:
             fname, content = imported.data_file
@@ -126,10 +130,20 @@ def git_import(body: ImportBody) -> dict:
             s.flush()
             data_id, data_fields = row.id, ds.fields
 
-        plan = PlanRow(target_base_url=model.target_base_url,
-                       goal=f"Imported from Git: {source}"[:1000],
-                       load_model_json=model.model_dump_json())
-        s.add(plan)
+        project_id = require_project(s, body.project_id)
+        source_key = hashlib.sha256(f"{target.repo_url}|{imported.framework}|{imported.test}".encode()).hexdigest()
+        plan = s.query(PlanRow).filter_by(project_id=project_id, source_key=source_key).first() if body.project_id else None
+        model.test_name = model.test_name or imported.test
+        if body.project_id:
+            check_test_name(s, project_id, model.test_name, plan_id=plan.id if plan else None)
+        if plan is None:
+            plan = PlanRow(project_id=project_id, source_key=source_key)
+            s.add(plan)
+        if data_id and model.data_file:
+            model.data_file.data_file_id = data_id
+        plan.target_base_url = model.target_base_url
+        plan.goal = f"Imported from Git: {source}"[:1000]
+        plan.load_model_json = model.model_dump_json()
         s.commit()
         plan_id = plan.id
 

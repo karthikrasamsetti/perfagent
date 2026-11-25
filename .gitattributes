@@ -1,0 +1,6 @@
+# Generated bundles can contain significant whitespace inside template literals.
+src/perfagent/web/spa/assets/* text eol=lf linguist-generated=true whitespace=-blank-at-eol
+src/perfagent/web/spa/assets/*.woff -text
+src/perfagent/web/spa/assets/*.woff2 -text
+src/perfagent/web/spa/assets/*.png -text
+src/perfagent/web/spa/assets/*.jpg -text

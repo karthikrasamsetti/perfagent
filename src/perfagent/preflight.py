@@ -54,7 +54,7 @@ def preflight(model: LoadModel, sample_row: dict | None = None,
 
     results = []
     ok_count = 0
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+    with httpx.Client(timeout=timeout, follow_redirects=False) as client:
         for st in endpoints:
             method = st.method.value
             path = _fill_placeholders(st.path, sample_row)
@@ -69,17 +69,18 @@ def preflight(model: LoadModel, sample_row: dict | None = None,
                     resp = client.request(method, url, headers=req_headers,
                                           content=json.dumps(body or {}))
                 status = resp.status_code
-                ok = 200 <= status < 400
+                ok = 200 <= status < 300
                 results.append({
                     "method": method, "path": st.path, "status": status,
-                    "ok": ok, "error": "",
+                    "ok": ok, "error": "Redirect returned; use the final endpoint URL."
+                    if resp.has_redirect_location else "",
                 })
                 if ok:
                     ok_count += 1
             except Exception as e:  # noqa: BLE001
                 results.append({
                     "method": method, "path": st.path, "status": None,
-                    "ok": False, "error": type(e).__name__ + ": " + str(e)[:120],
+                    "ok": False, "error": f"Request failed ({type(e).__name__}).",
                 })
 
     total = len(results)

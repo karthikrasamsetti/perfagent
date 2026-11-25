@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 class SuggestedCheck(BaseModel):
     kind: str = Field(..., description="status | json_path | body_contains | not_contains | response_time")
-    op: str = Field(default="eq", description="eq | ne | contains | gt | lt")
+    op: str = Field(default="eq", description="eq | ne | contains | gt | lt | exists")
     path: str = Field(default="", description="For json_path: the field path.")
     value: str = Field(default="", description="Expected value / text / number.")
     reason: str = Field(default="", description="One short line: why this check.")
@@ -33,17 +33,17 @@ CHECK_SUGGEST_SYSTEM_PROMPT = """\
 You help a performance engineer write robust response validation. You are given a SAMPLE \
 response from an API (XML or JSON). Propose a set of assertions that validate a GOOD \
 response and catch a BAD one. Use these check kinds:
-  body_contains  — an element/field that should be present (e.g. "<Rate>", "orderId")
+  body_contains  — literal text that should be present (e.g. "<Rate>")
   not_contains   — text that signals an error and must NOT appear (e.g. "<Error>", "Invalid")
-  json_path      — a JSON field with an expected value or comparison (eq/ne/gt/lt)
+  json_path      — a JSON field with an existence check or comparison (exists/eq/ne/gt/lt)
   status         — the expected HTTP status (usually 200)
   response_time  — a reasonable max latency in ms (only if clearly useful)
 
 Guidance:
 - For XML, prefer body_contains on the key elements (e.g. the schema's important tags) and \
 not_contains on error markers you can infer (e.g. "<Error>", "Invalid", "Not Found").
-- For JSON, prefer json_path checks on the key fields; use gt for amounts that should be \
-positive (e.g. a total/price > 0).
+- For JSON, use json_path with op="exists" and a dotted path to check presence. \
+Use gt for amounts that should be positive (e.g. a total/price > 0).
 - Propose the checks that matter (the important schema elements and the error guards), not \
 one for every field. Aim for a tight, meaningful set.
 - Base checks on the STRUCTURE you see. Do not assume fields that aren't in the sample.

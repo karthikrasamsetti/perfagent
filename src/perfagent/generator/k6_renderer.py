@@ -48,6 +48,8 @@ _env = Environment(
 _METRIC_MAP = {
     "p95_ms": ("http_req_duration", "p(95)"),
     "p99_ms": ("http_req_duration", "p(99)"),
+    "p90_ms": ("http_req_duration", "p(90)"),
+    "max_ms": ("http_req_duration", "max"),
     "p50_ms": ("http_req_duration", "p(50)"),
     "median_ms": ("http_req_duration", "med"),
     "avg_ms": ("http_req_duration", "avg"),
@@ -71,23 +73,46 @@ def _func_name(name: str, index: int) -> str:
     return camel or f"scenario{index}"
 
 
-def _scale_stages(model: LoadModel, frac: float) -> list[dict]:
-    stages = []
-    for stage in model.load_profile.stages:
-        target = 0 if stage.target_users <= 0 else max(1, round(stage.target_users * frac))
-        stages.append({"duration": stage.duration_seconds, "target": target})
-    return stages
+def _allocate_users(total: int, fractions: list[float]) -> list[int]:
+    values = [int(total * fraction) for fraction in fractions]
+    highest = max(range(len(fractions)), key=fractions.__getitem__)
+    values[highest] += total - sum(values)
+    # Keep every journey active when the requested total can accommodate it.
+    if total >= len(values):
+        for i, value in enumerate(values):
+            if value == 0:
+                donor = max(range(len(values)), key=values.__getitem__)
+                values[donor] -= 1
+                values[i] = 1
+    return values
+
+
+def _allocate(total: int, fractions: list[float]) -> list[int]:
+    """Give every journey a slot, then distribute the rest by weight."""
+    if total < len(fractions):
+        raise ValueError("Iteration rate and preallocated users must each be at least the number of journeys.")
+    remainder = total - len(fractions)
+    values = [1 + int(remainder * fraction) for fraction in fractions]
+    order = sorted(range(len(fractions)), key=lambda i:
+                   remainder * fractions[i] - int(remainder * fractions[i]), reverse=True)
+    for i in order[:total - sum(values)]:
+        values[i] += 1
+    return values
 
 
 def _thresholds(model: LoadModel) -> list[dict]:
-    out = []
+    rules: dict[str, list[str]] = {}
     for th in model.thresholds:
         mapped = _METRIC_MAP.get(th.metric)
         if not mapped:
             continue
         metric, agg = mapped
-        out.append({"expr": f"'{metric}': ['{agg}{th.op}{th.value:g}'],"})
-    return out
+        rules.setdefault(metric, []).append(f"{agg}{th.op}{str(th.value).removesuffix('.0')}")
+    if model.load_profile.target_request_rate is not None:
+        expected = model.load_profile.target_request_rate * model.load_profile.total_seconds
+        rules["http_reqs"] = [f"count>={expected}"]
+        rules["dropped_iterations"] = ["count<1"]
+    return [{"expr": f"'{metric}': {expressions!r},"} for metric, expressions in rules.items()]
 
 
 def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEADERS") -> str:
@@ -135,24 +160,29 @@ def _step_js(step, cap, dynamic, has_headers, has_data, static_headers_ref="HEAD
     base_check = f"{json.dumps(name + ' status ok')}: (r) => r.status >= 200 && r.status < 400"
     extra = assertion_checks(step)
     all_checks = base_check + (", " + extra if extra else "")
-    lines.append(f"      const ok = check(res, {{ {all_checks} }});")
+    lines.append(f"      const ok = check(res, {{ {all_checks} }}, {{ perfagent_endpoint: {json.dumps(name)} }});")
     lines.append("      errorRate.add(res.status >= 400 || !ok);")
-    # Console logging on failure — so live logs explain WHY a request failed
-    # (which step, status, and a short body preview). Mirrors how engineers log.
+    # Response bodies may contain credentials or user data.
     sname = json.dumps(step.name)
     lines.append(
         "      if (res.status >= 400 || !ok) {\n"
-        f"        console.error(`[FAIL][VU ${{__VU}}] {step.name} — status ${{res.status}}` + "
-        "(res.body ? ` — body: ${String(res.body).replace(/\\s+/g,' ').slice(0,180)}` : ''));\n"
+        f"        console.error(`[FAIL][VU ${{__VU}}] ${{{sname}}} — status ${{res.status}}`);\n"
         "      }")
     if capture:
         lines.append(capture)
+        for extract in step.extract:
+            label = json.dumps(f"{step.name} captured {extract.var}")
+            value = f"vars.{extract.var}"
+            lines.append(
+                f"      if (__ENV.PERFAGENT_VERIFY === '1') check({value}, "
+                f"{{ {label}: (v) => v !== undefined && v !== null && v !== '' }});"
+            )
     lines.append("    }")
     return "\n".join(lines)
 
 
 def _scenario_js(sc, si, cap, data_on, corr_on, has_headers, dynamic,
-                 row_mode="random", scenario_count=1) -> str:
+                 row_mode="random", scenario_count=1, arrival=False) -> str:
     fn = _func_name(sc.name, si)
     out = [f"export function {fn}() {{"]
     if corr_on:
@@ -162,9 +192,10 @@ def _scenario_js(sc, si, cap, data_on, corr_on, has_headers, dynamic,
     out.append(f"  group({json.dumps(sc.name)}, function () {{")
     think = round(sc.think_time.max_seconds - sc.think_time.min_seconds, 3)
     lo = sc.think_time.min_seconds
-    for step in sc.steps:
+    for index, step in enumerate(sc.steps):
         out.append(_step_js(step, cap, dynamic, has_headers, data_on))
-        out.append(f"    sleep(Math.random() * {think} + {lo});")
+        if not arrival or index < len(sc.steps) - 1:
+            out.append(f"    sleep(Math.random() * {think} + {lo});")
     out.append("  });")
     out.append("}")
     return "\n".join(out)
@@ -178,19 +209,56 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
     has_headers = bool(headers)
     dynamic = has_headers and headers_dynamic(headers)
 
+    request_rate = model.load_profile.target_request_rate
+    if request_rate is not None and (
+        len(model.scenarios) != 1
+        or model.load_profile.arrival_rate != request_rate
+    ):
+        raise ValueError("An HTTP request-rate target needs one ordered journey and a matching rate.")
+
     fractions = model.normalised_weights()
+    rates = _allocate(model.load_profile.arrival_rate, fractions) if model.load_profile.arrival_rate else [0] * len(fractions)
+    vus = _allocate(model.load_profile.pre_allocated_vus, fractions) if model.load_profile.arrival_rate else [0] * len(fractions)
     scenarios_meta = []
     scenario_funcs = []
-    for i, (sc, frac) in enumerate(zip(model.scenarios, fractions, strict=False)):
+    profile = model.load_profile
+    executor = profile.executor
+    options = profile.executor_options
+    open_model = executor in {"constant-arrival-rate", "ramping-arrival-rate"}
+    if not profile.arrival_rate and max(profile.peak_users, profile.start_users) < len(fractions):
+        raise ValueError("Peak users must be at least the number of journeys. Increase users or combine journeys.")
+    targets = [_allocate_users(stage.target_users, fractions) for stage in profile.stages]
+    starts = _allocate_users(profile.start_users, fractions)
+    rate_starts = [0] * len(fractions)
+    rate_targets = []
+    iterations = [options.iterations if options else None] * len(fractions)
+    if executor == "ramping-arrival-rate":
+        vus = targets[0]
+        rate_starts = _allocate(options.start_rate, fractions) if options.start_rate else rate_starts
+        rate_targets = [_allocate(stage.target_rate, fractions) if stage.target_rate else [0] * len(fractions)
+                        for stage in options.rate_stages]
+    if executor == "shared-iterations":
+        spare = _allocate_users(options.iterations - profile.peak_users, fractions)
+        iterations = [users + extra for users, extra in zip(targets[0], spare, strict=True)]
+    for i, sc in enumerate(model.scenarios):
         scenarios_meta.append({
             "key": _identifier(sc.name, f"scenario_{i}").lower(),
             "func_name": _func_name(sc.name, i),
-            "stages": _scale_stages(model, frac),
+            "stages": [{"duration": stage.duration_seconds, "target": allocation[i]}
+                       for stage, allocation in zip(profile.stages, targets, strict=True)],
+            "rate": rates[i],
+            "vus": vus[i],
+            "start_vus": starts[i],
+            "fixed_vus": targets[0][i],
+            "iterations": iterations[i],
+            "start_rate": rate_starts[i],
+            "rate_stages": [{"duration": stage.duration_seconds, "target": allocation[i]}
+                            for stage, allocation in zip(options.rate_stages if options else [], rate_targets, strict=True)],
         })
         scenario_funcs.append(_scenario_js(
             sc, i, cap, data_on, corr_on, has_headers, dynamic,
             row_mode=model.data_file.row_mode if data_on else "random",
-            scenario_count=len(model.scenarios)))
+            scenario_count=len(model.scenarios), arrival=open_model))
 
     # extra imports (uuid generator) + headers declarations.
     # Build as a list and join, so the uuid import is never overwritten by the
@@ -213,11 +281,16 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
 
     template = _env.get_template("k6.js.j2")
     return template.render(
-        target_base_url=model.target_base_url,
-        filename=filename,
+        target_base_url=" ".join(model.target_base_url.splitlines()),
+        target_js=json.dumps(model.target_base_url),
+        filename=" ".join(filename.splitlines()),
         profile_type=model.load_profile.type.value,
         peak_users=model.load_profile.peak_users,
         total_seconds=model.load_profile.total_seconds,
+        executor=executor,
+        iteration_time_unit_seconds=model.iteration_time_unit_seconds,
+        request_rate=request_rate,
+        graceful_stop_seconds=model.load_profile.graceful_stop_seconds,
         scenarios=scenarios_meta,
         thresholds=_thresholds(model),
         data_on=data_on,

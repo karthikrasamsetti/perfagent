@@ -11,8 +11,10 @@ steps reference as ${var} (e.g. capture a login token, reuse it on protected cal
 from __future__ import annotations
 
 from enum import Enum
+import re
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
 
 class HttpMethod(str, Enum):
@@ -66,11 +68,11 @@ class Assertion(BaseModel):
       status        — the HTTP status code (value = expected code, e.g. 200)
       json_path     — a field in the JSON body (path = dotted field, value = expected)
       body_contains — the response body contains the given text (value = text)
-    op: eq | ne | contains | gt | lt  (status/json_path support eq/ne/gt/lt; body uses contains)
+    op: eq | ne | contains | gt | lt | exists (exists checks whether a JSON field is present)
     """
 
     kind: str = Field(..., description="status | json_path | body_contains | not_contains | response_time")
-    op: str = Field(default="eq", description="eq | ne | contains | gt | lt")
+    op: str = Field(default="eq", description="eq | ne | contains | gt | lt | exists")
     path: str = Field(default="", description="For json_path: dotted field, e.g. 'data.id'.")
     value: str = Field(default="", description="Expected value (as text).")
 
@@ -85,7 +87,7 @@ class Assertion(BaseModel):
     @field_validator("op")
     @classmethod
     def known_op(cls, v: str) -> str:
-        if v not in {"eq", "ne", "contains", "gt", "lt"}:
+        if v not in {"eq", "ne", "contains", "gt", "lt", "exists"}:
             raise ValueError(f"unsupported assertion op {v!r}")
         return v
 
@@ -153,9 +155,77 @@ class Stage(BaseModel):
     target_users: int = Field(..., ge=0)
 
 
+class RateStage(BaseModel):
+    duration_seconds: int = Field(gt=0)
+    target_rate: int = Field(ge=0, le=1_000_000)
+
+
+class ExecutorOptions(BaseModel):
+    executor: Literal["constant-vus", "ramping-arrival-rate", "shared-iterations", "per-vu-iterations"]
+    iterations: int | None = Field(default=None, ge=1, le=1_000_000)
+    start_rate: int = Field(default=0, ge=0, le=1_000_000)
+    rate_stages: list[RateStage] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def check_options(self):
+        fixed = self.executor in {"shared-iterations", "per-vu-iterations"}
+        if fixed != (self.iterations is not None):
+            raise ValueError("Set an iteration count only for fixed-iteration workloads.")
+        if self.executor == "ramping-arrival-rate":
+            if not self.rate_stages or not (self.start_rate or any(stage.target_rate for stage in self.rate_stages)):
+                raise ValueError("Set arrival-rate stages with at least one positive rate.")
+        elif self.start_rate or self.rate_stages:
+            raise ValueError("Rate stages are only available for ramping arrival rate.")
+        return self
+
+
 class LoadProfile(BaseModel):
     type: LoadProfileType = LoadProfileType.RAMP
     stages: list[Stage] = Field(..., min_length=1)
+    arrival_rate: int | None = Field(default=None, ge=1, le=1_000_000,
+                                    description="Constant arrival numerator. HTTP rate goals use a time unit of one second per request in the journey.")
+    target_request_rate: int | None = Field(default=None, ge=1, le=1_000_000,
+                                            description="HTTP requests per second for one ordered k6 journey.")
+    pre_allocated_vus: int = Field(default=10, ge=1, le=1_000_000)
+    graceful_stop_seconds: int = Field(default=30, ge=0, le=3600)
+    start_users: int = Field(default=0, ge=0, le=1_000_000)
+    executor_options: ExecutorOptions | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_profile(self, serialize):
+        data = serialize(self)
+        if self.executor_options is None:
+            # Preserve the serialized identity of existing frozen workloads.
+            data.pop("executor_options", None)
+        return data
+
+    @model_validator(mode="after")
+    def check_executor(self):
+        options = self.executor_options
+        if not options:
+            return self
+        if self.arrival_rate or self.target_request_rate or len(self.stages) != 1 or not self.peak_users:
+            raise ValueError("This executor uses one duration and one positive VU allocation.")
+        if options.executor == "shared-iterations" and options.iterations < self.peak_users:
+            raise ValueError("Shared iterations must be at least the number of virtual users.")
+        if options.executor == "ramping-arrival-rate" and sum(
+            stage.duration_seconds for stage in options.rate_stages
+        ) != self.total_seconds:
+            raise ValueError("Arrival-rate stages must add up to the test duration.")
+        return self
+
+    @property
+    def executor(self) -> str:
+        if self.executor_options:
+            return self.executor_options.executor
+        return "constant-arrival-rate" if self.arrival_rate else "ramping-vus"
+
+    @property
+    def planned_iterations(self) -> int | None:
+        options = self.executor_options
+        if not options or options.iterations is None:
+            return None
+        return options.iterations * self.peak_users if options.executor == "per-vu-iterations" else options.iterations
 
     @property
     def peak_users(self) -> int:
@@ -183,6 +253,7 @@ ROW_MODES = ("random", "sequential", "unique")
 
 
 class DataFile(BaseModel):
+    data_file_id: str | None = None
     filename: str = Field(..., description="e.g. 'users.csv'.")
     fields: list[str] = Field(..., min_length=1)
     row_count: int = Field(default=0, ge=0)
@@ -203,6 +274,8 @@ class DataFile(BaseModel):
 
 
 class LoadModel(BaseModel):
+    test_name: str = Field(default="", max_length=120)
+    script_filename: str = Field(default="", max_length=120)
     target_base_url: str
     scenarios: list[Scenario] = Field(..., min_length=1)
     load_profile: LoadProfile
@@ -211,6 +284,24 @@ class LoadModel(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     environment: str = Field(default="", description="Environment label (dev/staging/prod).")
     insecure_tls: bool = Field(default=False, description="Skip TLS verification (test hosts only).")
+
+    @property
+    def iteration_time_unit_seconds(self) -> int:
+        if self.load_profile.target_request_rate and len(self.scenarios) == 1:
+            return len(self.scenarios[0].steps)
+        return 1
+
+    @property
+    def planned_iteration_rate(self) -> float | None:
+        rate = self.load_profile.arrival_rate
+        return rate / self.iteration_time_unit_seconds if rate is not None else None
+
+    @field_validator("script_filename")
+    @classmethod
+    def safe_script_filename(cls, value: str) -> str:
+        if value and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value) or ".." in value):
+            raise ValueError("Use a filename without folders, spaces or '..'.")
+        return value
 
     @field_validator("target_base_url")
     @classmethod

@@ -444,11 +444,16 @@ def test_api_full_flow(client):
     assert v["status"] == "planned"
     plan_id = v["plan"]["plan_id"]
     # the plan flows into the existing pipeline unchanged
-    assert client.get(f"/api/plans/{plan_id}").status_code == 200
-    g = client.post(f"/api/plan/{plan_id}/generate", json={"tool": "k6"})
+    saved = client.get(f"/api/plans/{plan_id}").json()
+    assert saved["review_sources"] == v["plan"]["review_sources"]
+    assert saved["review_sources"]["journeys"][0]["steps"][0]["endpoint"] == "user"
+    saved["load_model"]["thresholds"][0]["value"] = 0.007
+    g = client.post(f"/api/plan/{plan_id}/generate", json={"tool": "k6", "load_model": saved["load_model"]})
     assert g.status_code == 200 and "/login" in g.json()["content"]
 
-    assert client.get(f"/api/chat/sessions/{sid}").json()["plan"]["plan_id"] == plan_id
+    reopened = client.get(f"/api/chat/sessions/{sid}").json()["plan"]
+    assert reopened["plan_id"] == plan_id
+    assert reopened["review_sources"]["thresholds"] == "edited"
     sessions = client.get("/api/chat/sessions").json()["sessions"]
     assert sessions[0]["session_id"] == sid and sessions[0]["plan_id"] == plan_id
 
@@ -457,6 +462,23 @@ def test_api_full_flow(client):
     actions = [e["action"] for e in client.get("/api/audit").json()["events"]]
     for a in ("chat.started", "chat.turn", "plan.created", "chat.deleted"):
         assert a in actions
+
+
+def test_api_conversation_stays_in_named_project(client):
+    a = client.post('/api/projects', json={'name': 'Commerce'}).json()['project_id']
+    b = client.post('/api/projects', json={'name': 'Payments'}).json()['project_id']
+    response = client.post('/api/chat/sessions', json={
+        'message': 'test login', 'project_id': a, 'test_name': 'Login journey'})
+    assert response.status_code == 200, response.text
+    sid = response.json()['session_id']
+    assert client.get('/api/chat/sessions?project_id='+b).json()['sessions'] == []
+    assert client.get('/api/chat/sessions?project_id='+a).json()['sessions'][0]['session_id'] == sid
+    client.post(f'/api/chat/sessions/{sid}/messages', json={'message': 'https://shop.test'})
+    view = client.post(f'/api/chat/sessions/{sid}/build').json()
+    plan_id = view['plan']['plan_id']
+    assert view['plan']['load_model']['test_name'] == 'Login journey'
+    saved = client.get('/api/plans/'+plan_id).json()
+    assert saved['project_id'] == a and saved['load_model']['test_name'] == 'Login journey'
 
 
 def test_api_errors(client):

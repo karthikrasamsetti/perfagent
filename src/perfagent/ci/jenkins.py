@@ -281,21 +281,23 @@ def k6_results(client: JenkinsClient, number: int) -> list[dict]:
 
 
 def summarize_k6(summary: dict) -> dict:
-    """Turn a k6 --summary-export file into PerfAgent's metrics + verdict.
+    """Read archived k6 metrics and threshold outcomes."""
+    from perfagent.analyzer.k6_summary import metric_values, threshold_result
 
-    In this format a threshold value of true means the threshold FAILED."""
     m = summary.get("metrics") or {}
-    dur = m.get("http_req_duration") or {}
-    reqs = m.get("http_reqs") or {}
-    failed = m.get("http_req_failed") or {}
+    dur = metric_values(m.get("http_req_duration") or {})
+    reqs = metric_values(m.get("http_reqs") or {})
+    failed = metric_values(m.get("http_req_failed") or {})
     thresholds = []
     for metric, data in m.items():
-        for expr, crossed in ((data or {}).get("thresholds") or {}).items():
-            thresholds.append({"metric": metric, "threshold": expr, "passed": not bool(crossed)})
-    if not thresholds:
-        verdict = "inconclusive"
+        for expr, outcome in ((data or {}).get("thresholds") or {}).items():
+            thresholds.append({"metric": metric, "threshold": expr, "passed": threshold_result(outcome)})
+    if any(t["passed"] is False for t in thresholds):
+        verdict = "fail"
+    elif thresholds and all(t["passed"] is True for t in thresholds):
+        verdict = "pass"
     else:
-        verdict = "fail" if any(not t["passed"] for t in thresholds) else "pass"
+        verdict = "inconclusive"
 
     def ms(key: str) -> float | None:
         v = dur.get(key)
@@ -304,7 +306,7 @@ def summarize_k6(summary: dict) -> dict:
     return {
         "requests": int(reqs.get("count") or 0),
         "rps": round(float(reqs.get("rate") or 0), 2),
-        "error_rate": round(float(failed.get("value") or 0), 4),
+        "error_rate": round(float(failed.get("rate", failed.get("value")) or 0), 4),
         "avg_ms": ms("avg"), "p90_ms": ms("p(90)"), "p95_ms": ms("p(95)"),
         "p99_ms": ms("p(99)"), "max_ms": ms("max"),
         "thresholds": thresholds,

@@ -1,0 +1,36 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "title": "PerfAgent - History & Coverage",
+  "uid": "perfagent-history",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-90d", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "p95 over time (per run)",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "PerfAgent-Postgres" },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        {
+          "rawSql": "SELECT started_at AS \"time\", scenario AS metric, p95_ms AS value FROM run_records WHERE environment = 'prod' AND $__timeFilter(started_at) ORDER BY started_at",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Recent runs (prod)",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "datasource": { "type": "postgres", "uid": "PerfAgent-Postgres" },
+      "targets": [
+        {
+          "rawSql": "SELECT started_at, scenario, verdict, p95_ms, error_rate, rps, max_vus FROM run_records WHERE environment = 'prod' ORDER BY started_at DESC LIMIT 50",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}

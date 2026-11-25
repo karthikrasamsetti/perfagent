@@ -399,3 +399,15 @@ def test_run_that_the_script_stops_itself_is_reported_clearly(tmp_path, monkeypa
     assert run.status == "stopped"
     assert "ran out of rows" in run.message
     k6_runner._RUNS.pop(rid, None)
+
+
+@pytest.mark.parametrize(("filename", "content", "status"), [
+    ("../users.csv", b"name\nAlice\n", 400),
+    ("perfagent-summary.json", b'[{"name":"Alice"}]', 400),
+    ("backup.zip", b"name\nAlice\n", 415),
+    ("users.csv", b"name\x00\nAlice\n", 400),
+    ("users.csv", b"x" * (5 * 1024 * 1024 + 1), 413),
+])
+def test_upload_rejects_unsafe_data_files(client, filename, content, status):
+    response = client.post("/api/data", files={"file": (filename, content)})
+    assert response.status_code == status, response.text

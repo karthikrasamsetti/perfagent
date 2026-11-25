@@ -15,7 +15,7 @@ Flow:
 from __future__ import annotations
 
 from perfagent.contracts.artifacts import PlanArtifact
-from perfagent.contracts.load_model import LoadModel, Threshold
+from perfagent.contracts.load_model import LoadModel, LoadProfile, Stage, Threshold
 from perfagent.planner.profile import build_profile
 from perfagent.planner.prompts import SYSTEM_PROMPT, build_user_prompt
 from perfagent.planner.spec import PlanRequest
@@ -98,26 +98,16 @@ def _sanitize_thresholds(model: LoadModel) -> LoadModel:
     return model
 
 
-def _restore_real_bodies(model: LoadModel, request: PlanRequest) -> LoadModel:
-    """Put the user's real request bodies back into the plan.
-
-    The LLM only ever saw REDACTED prompts (passwords/tokens masked by the guardrail),
-    so any body it produced may contain <FIELD_REDACTED> instead of the real value.
-    The real bodies live in the request's endpoints — the source of truth. We match
-    each plan step to the supplied endpoint by (method, path) and restore that body,
-    so secrets the user typed are preserved in the script (and never went to the LLM).
-    """
-    # map (METHOD, path) -> the user's example_body
-    by_key: dict[tuple, dict | None] = {}
-    for ep in request.endpoints:
-        by_key[(ep.method.value, ep.path)] = ep.example_body
-
-    for sc in model.scenarios:
-        for st in sc.steps:
-            key = (st.method.value, st.path)
-            if key in by_key and by_key[key] is not None:
-                st.body = by_key[key]
-    return model
+def _apply_endpoint_inputs(model: LoadModel, request: PlanRequest) -> None:
+    """Restore explicit bodies and response checks after guarded planning."""
+    endpoints = {(ep.method, ep.path): ep for ep in request.endpoints}
+    for scenario in model.scenarios:
+        for step in scenario.steps:
+            endpoint = endpoints[(step.method, step.path)]
+            if endpoint.example_body is not None:
+                step.body = endpoint.example_body
+            if endpoint.assertions is not None:
+                step.assertions = endpoint.assertions
 
 
 def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> LoadModel:
@@ -127,7 +117,7 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
     model.insecure_tls = getattr(request, 'insecure_tls', False)
 
     # 1b. Restore the user's real bodies (the LLM only saw redacted ones).
-    model = _restore_real_bodies(model, request)
+    _apply_endpoint_inputs(model, request)
 
     # 2. Deterministic ramp shape sized to the guard rails.
     model.load_profile = build_profile(
@@ -136,17 +126,47 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
         total_seconds=request.duration_seconds,
     )
 
+    if request.target_request_rate is not None:
+        # Schedule the explicit endpoint sequence as one iteration.
+        journey = model.scenarios[0]
+        steps = {(step.method, step.path): step for scenario in model.scenarios for step in scenario.steps}
+        journey.steps = [
+            steps[(endpoint.method, endpoint.path)].model_copy(update={
+                **({"body": endpoint.example_body} if endpoint.example_body is not None else {}),
+                **({"assertions": endpoint.assertions} if endpoint.assertions is not None else {}),
+            })
+            for endpoint in request.endpoints
+        ]
+        model.scenarios = [journey]
+    if request.target_request_rate is not None or request.target_iteration_rate is not None:
+        model.load_profile = LoadProfile(
+            stages=[Stage(duration_seconds=request.duration_seconds, target_users=request.max_users)],
+            arrival_rate=request.target_request_rate or request.target_iteration_rate,
+            target_request_rate=request.target_request_rate,
+            pre_allocated_vus=request.max_users,
+        )
+    elif request.executor_options:
+        model.load_profile = LoadProfile(
+            stages=[Stage(duration_seconds=request.duration_seconds, target_users=request.max_users)],
+            executor_options=request.executor_options,
+        )
+    elif request.stages is not None:
+        model.load_profile.stages = request.stages
+
     # 3. Collapse duplicate/near-identical scenarios (no fake journeys from thin input).
     model = _collapse_duplicate_scenarios(model)
 
     # 4. Make thresholds meaningful.
-    model = _sanitize_thresholds(model)
+    if request.thresholds is None:
+        _sanitize_thresholds(model)
+    else:
+        model.thresholds = request.thresholds
 
     # 5. Auto-add the Authorization header when an auth token is captured.
     caps = _captured_vars(model)
     auth_var = next((v for v in ("token", "access_token", "jwt", "auth_token", "accessToken")
                      if v in caps), None)
-    if auth_var:
+    if auth_var and (request.target_request_rate is None or len(model.scenarios[0].steps) > 1):
         headers = dict(model.headers or {})
         if not any(k.lower() == "authorization" for k in headers):
             headers["Authorization"] = "Bearer ${" + auth_var + "}"
@@ -155,18 +175,24 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
     return model
 
 
+class DraftEndpointMismatch(ValueError):
+    """The provider did not cover the requested HTTP methods and paths."""
+
+
 def draft_plan(request: PlanRequest, provider: LLMProvider) -> PlanArtifact:
-    system = SYSTEM_PROMPT
     user = build_user_prompt(request)
-
-    model: LoadModel = provider.structured(
-        response_model=LoadModel,
-        system=system,
-        user=user,
-    )
-
-    model = _apply_deterministic_controls(model, request)
-    return PlanArtifact(load_model=model)
+    expected = {(ep.method.value, ep.path) for ep in request.endpoints}
+    feedback = ""
+    for _ in range(2):
+        model = provider.structured(response_model=LoadModel, system=SYSTEM_PROMPT,
+                                    user=user + feedback)
+        actual = {step for scenario in model.scenarios for step in _step_signature(scenario)}
+        if actual == expected:
+            return PlanArtifact(load_model=_apply_deterministic_controls(model, request))
+        missing = ", ".join(f"{method} {path}" for method, path in sorted(expected - actual))
+        unexpected = ", ".join(f"{method} {path}" for method, path in sorted(actual - expected))
+        feedback = f"\nEndpoint coverage mismatch. Missing: {missing or 'none'}. Unexpected: {unexpected or 'none'}."
+    raise DraftEndpointMismatch(feedback.strip())
 
 
 __all__ = ["draft_plan", "PlanRequest"]

@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s          # high-res for live run views
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "perfagent"
+    # PerfAgent dev server runs on :8080 (per the run protocol).
+    # host.docker.internal reaches the host from Docker Desktop (Windows).
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+    metrics_path: /metrics

@@ -69,7 +69,9 @@ def compare(current: dict, previous: dict) -> dict:
     deltas = []
     worse = []
     for m in ("error_rate", "p95_ms", "p99_ms", "avg_ms", "rps"):
-        d = _classify(m, float(current.get(m, 0) or 0), float(previous.get(m, 0) or 0))
+        if current.get(m) is None or previous.get(m) is None:
+            continue
+        d = _classify(m, float(current[m]), float(previous[m]))
         deltas.append(d)
         if d.direction == "worse":
             worse.append(d)
@@ -119,4 +121,25 @@ def _fmt(metric: str, v: float) -> str:
         return f"{v*100:.2f}%"
     if metric == "rps":
         return f"{v:.2f}/s"
-    return f"{v:.0f} ms"
+    return f"{v:.4g} ms"
+
+
+def refresh_baseline_display(baseline: dict | None) -> dict | None:
+    """Update the display of metrics in persisted comparisons."""
+    if not baseline:
+        return baseline
+    result = dict(baseline)
+    deltas = []
+    for delta in baseline.get("deltas", []):
+        metric = delta["metric"]
+        deltas.append({**delta, "previous_fmt": _fmt(metric, delta["previous"]),
+                       "current_fmt": _fmt(metric, delta["current"])})
+    result["deltas"] = deltas
+    worse = [delta for delta in deltas if delta["direction"] == "worse"]
+    if worse:
+        top = max(worse, key=lambda delta: abs(delta["pct_change"]))
+        result["headline"] = (
+            f"Regression: {top['label']} got {abs(top['pct_change'])*100:.0f}% worse "
+            f"({top['previous_fmt']} → {top['current_fmt']})"
+        )
+    return result

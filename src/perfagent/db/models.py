@@ -19,7 +19,11 @@ from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 from perfagent.db.connection import build_engine, install_sanitiser, safe_url
-
+import enum
+from datetime import datetime
+from sqlalchemy import (
+    Column, String, Integer, Float, DateTime, Enum as SAEnum, JSON, Text,
+)
 
 def _new_id() -> str:
     return uuid.uuid4().hex
@@ -33,15 +37,36 @@ class Base(DeclarativeBase):
     pass
 
 
+class ProjectRow(Base):
+    __tablename__ = "projects"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    settings_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class WorkloadRow(Base):
+    __tablename__ = "test_workloads"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    plan_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    profile_json: Mapped[str] = mapped_column(Text)
+    thresholds_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
 class PlanRow(Base):
     __tablename__ = "plans"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    source_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=_now)
     target_base_url: Mapped[str] = mapped_column(String(500))
     goal: Mapped[str] = mapped_column(Text, default="")
     # The full LoadModel stored as JSON text (model_dump_json).
     load_model_json: Mapped[str] = mapped_column(Text)
+    review_sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scripts: Mapped[list[ScriptRow]] = relationship(
         back_populates="plan", cascade="all, delete-orphan"
@@ -80,6 +105,42 @@ class DataFileRow(Base):
         return [c for c in self.columns_csv.split(",") if c]
 
 
+class ScriptSnapshotRow(Base):
+    """Immutable execution inputs for a script version (never sent in reports)."""
+
+    __tablename__ = "script_snapshots"
+    script_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    load_model_json: Mapped[str] = mapped_column(Text, default="")
+    data_filename: Mapped[str] = mapped_column(Text, default="")
+    data_content: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class ScriptVerificationRow(Base):
+    """Outcome of a bounded check against a frozen k6 script version."""
+
+    __tablename__ = "script_verifications"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    script_id: Mapped[str] = mapped_column(
+        ForeignKey("script_snapshots.script_id", ondelete="CASCADE"), index=True
+    )
+    started_at: Mapped[float] = mapped_column(Float)
+    completed_at: Mapped[float] = mapped_column(Float)
+    all_ok: Mapped[bool]
+    journeys_checked: Mapped[int]
+
+
+class RunCheckpointRow(Base):
+    """Short-lived execution evidence until a terminal report is saved."""
+
+    __tablename__ = "run_checkpoints"
+
+    run_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    script_id: Mapped[str] = mapped_column(ForeignKey("scripts.id", ondelete="CASCADE"))
+    updated_at: Mapped[float] = mapped_column(Float)
+    payload_json: Mapped[str] = mapped_column(Text)
+
+
 class RunResultRow(Base):
     """A finished run's key metrics — stored so later runs can compare against it
     (baseline / regression). One row per completed run of a plan."""
@@ -99,6 +160,18 @@ class RunResultRow(Base):
     avg_ms: Mapped[float] = mapped_column(default=0.0)
     goal: Mapped[str] = mapped_column(Text, default="")        # plan goal, for the history list
     report_json: Mapped[str] = mapped_column(Text, default="")  # full saved report (verdict, diagnosis, narrative...)
+
+
+class ReleasePolicyRow(Base):
+    """An approved reference and its budgets for one test environment."""
+
+    __tablename__ = "release_policies"
+
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id", ondelete="CASCADE"), primary_key=True)
+    environment: Mapped[str] = mapped_column(Text, primary_key=True)
+    baseline_id: Mapped[str] = mapped_column(ForeignKey("run_results.id", ondelete="CASCADE"))
+    budgets_json: Mapped[str] = mapped_column(Text)
+    approved_at: Mapped[datetime]
 
 
 class AuditRow(Base):
@@ -186,6 +259,8 @@ class ChatSessionRow(Base):
     __tablename__ = "chat_sessions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    project_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    test_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now, index=True)
     title: Mapped[str] = mapped_column(String(200), default="")
@@ -239,3 +314,49 @@ def get_engine(db_url: str | None = None):
 
 def get_session() -> Session:
     return Session(get_engine())
+
+class RunStatus(str, enum.Enum):
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    INCONCLUSIVE = "inconclusive"
+
+
+class RunRecord(Base):
+    __tablename__ = "run_records"
+
+    run_id = Column(String, primary_key=True)
+    scenario = Column(String, nullable=False, index=True)
+    environment = Column(String, nullable=False, index=True)
+    target_url = Column(String, nullable=False)
+    load_tool = Column(String, nullable=False, default="k6")
+    status = Column(SAEnum(RunStatus), nullable=False, index=True)
+
+    started_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+    total_requests = Column(Integer, default=0)
+    error_rate = Column(Float, default=0.0)
+    p50_ms = Column(Float, nullable=True)
+    p90_ms = Column(Float, nullable=True)
+    p95_ms = Column(Float, nullable=True)
+    p99_ms = Column(Float, nullable=True)
+    rps = Column(Float, nullable=True)
+    max_vus = Column(Integer, nullable=True)
+
+    verdict = Column(String, nullable=True)
+    thresholds = Column(JSON, nullable=True)
+    coverage = Column(JSON, nullable=True)
+    ai_narrative = Column(Text, nullable=True)
+    requested_by = Column(String, nullable=True)
+
+    def as_full_dict(self) -> dict:
+        out = {}
+        for c in self.__table__.columns:
+            v = getattr(self, c.name)
+            if isinstance(v, datetime):
+                v = v.isoformat()
+            elif isinstance(v, RunStatus):
+                v = v.value
+            out[c.name] = v
+        return out

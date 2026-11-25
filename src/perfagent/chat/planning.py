@@ -10,6 +10,8 @@ Nothing here fires load: the plan still has to be reviewed and approved by a hum
 
 from __future__ import annotations
 
+import json
+
 from perfagent import audit, tracing
 from perfagent.chat.draft import DEFAULT_DURATION_SECONDS, DEFAULT_USERS
 from perfagent.chat_intent import ChatIntent
@@ -17,6 +19,7 @@ from perfagent.db import PlanRow, get_session
 from perfagent.evaluation import evaluate_plan
 from perfagent.plan_summary import plan_rationale, usage_summary
 from perfagent.planner import PlanRequest, draft_plan
+from perfagent.planner.review_sources import draft_review_sources
 from perfagent.planner.spec import EndpointSpec
 from perfagent.providers.base import LLMProvider
 
@@ -29,8 +32,9 @@ def plan_request_from_intent(intent: ChatIntent, fallback_goal: str = "") -> Pla
         max_users=intent.max_users or DEFAULT_USERS,
         duration_seconds=intent.duration_seconds or DEFAULT_DURATION_SECONDS,
         profile_type=intent.profile_type,
+        thresholds=intent.thresholds,
         endpoints=[
-            EndpointSpec(method=e.method, path=e.path, example_body=e.example_body)
+            EndpointSpec(method=e.method, path=e.path, example_body=e.example_body, assertions=e.assertions)
             for e in intent.endpoints
         ],
     )
@@ -48,6 +52,7 @@ def build_plan_from_intent(
 
     tracing.set_step("chat")
     plan = draft_plan(request, provider)
+    review_sources = draft_review_sources(request, plan.load_model)
 
     with get_session() as s:
         s.add(PlanRow(
@@ -55,6 +60,7 @@ def build_plan_from_intent(
             target_base_url=plan.load_model.target_base_url,
             goal=request.goal,
             load_model_json=plan.load_model.model_dump_json(),
+            review_sources_json=json.dumps(review_sources),
         ))
         s.commit()
 
@@ -71,6 +77,7 @@ def build_plan_from_intent(
         "plan_id": plan.id,
         "provider": getattr(provider, "name", ""),
         "load_model": plan.load_model.model_dump(mode="json"),
+        "review_sources": review_sources,
         "evaluation": evaluate_plan(plan.load_model, request).summary(),
         "rationale": plan_rationale(plan.load_model),
         "usage": usage,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from perfagent.contracts.artifacts import PlanArtifact
 from perfagent.contracts.load_model import (
     LoadModel,
@@ -14,6 +16,31 @@ from perfagent.contracts.load_model import (
     Threshold,
 )
 from perfagent.generator import DEFAULT_TOOL, generate_script, render, supported_tools
+
+
+@pytest.mark.parametrize(("executor", "options", "expected"), [
+    ("constant-vus", {}, ["vus: 1", "duration: '6s'"]),
+    ("shared-iterations", {"iterations": 12}, ["iterations: 9", "iterations: 3", "maxDuration: '6s'"]),
+    ("per-vu-iterations", {"iterations": 5}, ["iterations: 5", "maxDuration: '6s'"]),
+    ("ramping-arrival-rate", {"start_rate": 0, "rate_stages": [
+        {"duration_seconds": 3, "target_rate": 10}, {"duration_seconds": 3, "target_rate": 0},
+    ]}, ["startRate: 0", "preAllocatedVUs:", "timeUnit: '1s'", "target: 0"]),
+])
+def test_guided_executor_schedules(executor, options, expected):
+    from perfagent.runner.k6_binary import find_k6
+    from perfagent.runner.validator import validate_script
+
+    model = _model()
+    model.load_profile = LoadProfile.model_validate({
+        "stages": [{"duration_seconds": 6, "target_users": 4}],
+        "executor_options": {"executor": executor, **options},
+    })
+    content = render(model, "k6")[1]
+    assert content.count(f"executor: '{executor}'") == len(model.scenarios)
+    assert all(option in content for option in expected)
+    if find_k6():
+        result = validate_script(content)
+        assert result["ok"], result
 
 
 def _model() -> LoadModel:
@@ -98,3 +125,20 @@ def test_k6_lineage():
     assert script.plan_id == plan.id
     assert script.tool == "k6"
     assert script.filename == "loadtest.js"
+
+
+def test_weighted_stage_targets_sum_to_requested_peak():
+    from perfagent.generator.k6_renderer import _allocate_users
+
+    assert _allocate_users(15, [0.7, 0.3]) == [11, 4]
+    assert _allocate_users(0, [0.7, 0.3]) == [0, 0]
+
+
+def test_literal_template_characters_are_escaped_while_placeholders_still_work():
+    from perfagent.generator.k6_corr import body_expr, headers_expr, path_expr
+
+    literal = '/example/`${literal part}/${id}'
+    escaped = r'/example/\`\${literal part}/${vars.id}'
+    assert path_expr(literal, {"id"}) == escaped
+    assert escaped in body_expr({"nested": [literal]}, {"id"})
+    assert escaped in headers_expr({"Example": literal}, {"id"})

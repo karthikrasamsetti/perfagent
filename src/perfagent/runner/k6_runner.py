@@ -19,21 +19,46 @@ If that fails (e.g. offline), the run is marked 'error' with a clear message.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from perfagent.config import get_settings
+from perfagent.contracts.load_model import LoadModel
+from perfagent.data.filenames import safe_runner_data_filename
+from perfagent.generator import render
+from perfagent.guardrails.redaction import redact_text, restore
+from perfagent.runner.admission import admission_checks, https_origin
+from perfagent.runner.docker_worker import docker_worker
 from perfagent.runner.k6_binary import K6Unavailable, ensure_k6, find_k6, k6_ready_or_provisionable
+from perfagent.runner.managed_egress import ManagedEgress
+from perfagent.runner.process_environment import k6_process_environment
+from perfagent.runner.worker_protocol import WORKER_SUMMARY_TYPE
 from perfagent.stats import Aggregator
 
 # k6's exit code when the script itself calls exec.test.abort().
 _K6_SCRIPT_ABORTED = 108
 
 _MAX_LOG_LINES = 1000   # keep the log buffer bounded
+
+
+@dataclass(frozen=True)
+class ManagedWorkerOptions:
+    """Trusted supervisor settings, supplied by the application and never a request body."""
+
+    image: str
+    pinned_address: str
+    approved_origins: tuple[str, ...]
+    max_rps: int
+    max_vus: int
+    max_seconds: int
 
 
 @dataclass
@@ -53,15 +78,31 @@ class RunState:
     data_content: str = ""
     # live aggregated snapshot (computed deterministically)
     snapshot: dict = field(default_factory=dict)
+    summary_metrics: dict | None = None
+    run_start_ts: float | None = None
+    run_end_ts: float | None = None
     # human-readable k6 output lines (console.*, thresholds, checks) — for live logs
     logs: list[str] = field(default_factory=list)
+    samples: list[dict] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
     _proc: subprocess.Popen | None = None
+    _managed: ManagedWorkerOptions | None = None
+    _stop_egress: Callable[[], None] | None = None
+    _stop_requested: bool = False
+    _deadline_reached: bool = False
+    _log_secrets: tuple[str, ...] = ()
     _agg: Aggregator = field(default_factory=Aggregator)
     _tmpdir: str | None = None
 
 
 # in-memory registry of runs
 _RUNS: dict[str, RunState] = {}
+_ACTIVE_RUNS: set[str] = set()
+_RUNS_LOCK = threading.Lock()
+
+
+class RunCapacityExceeded(RuntimeError):
+    """Raised before a run is started when all execution slots are reserved."""
 
 
 def get_run(run_id: str) -> RunState | None:
@@ -69,7 +110,8 @@ def get_run(run_id: str) -> RunState | None:
 
 
 def list_runs() -> list[RunState]:
-    return sorted(_RUNS.values(), key=lambda r: r.started_at, reverse=True)
+    with _RUNS_LOCK:
+        return sorted(_RUNS.values(), key=lambda r: r.started_at, reverse=True)
 
 
 def k6_available() -> bool:
@@ -79,10 +121,11 @@ def k6_available() -> bool:
 
 def stop_run(run_id: str) -> bool:
     run = _RUNS.get(run_id)
-    if run and run._proc and run.status == "running":
+    if run and run._proc and run.status == "running" and run._proc.poll() is None:
+        run._stop_requested = True
+        if run._stop_egress:
+            run._stop_egress()
         run._proc.terminate()
-        run.status = "stopped"
-        run.ended_at = time.time()
         return True
     return False
 
@@ -96,30 +139,145 @@ def start_run(
     load_model_json: str = "",
     data_filename: str = "",
     data_content: str = "",
+    metadata: dict | None = None,
+    *,
+    managed: ManagedWorkerOptions | None = None,
+    on_complete: Callable[[str], None] | None = None,
+    on_checkpoint: Callable[[RunState], None] | None = None,
 ) -> RunState:
     """Launch k6 for the given script content. Returns the RunState immediately;
     a background thread keeps parsing output and updating the snapshot."""
     run = RunState(run_id=run_id, script_id=script_id, tool=tool, target=target)
     run.load_model_json = load_model_json
+    run._log_secrets = _request_log_secrets(load_model_json)
     run.data_filename = data_filename
     run.data_content = data_content
-    _RUNS[run_id] = run
-
+    run.metadata = dict(metadata or {})
+    if managed:
+        model = LoadModel.model_validate_json(load_model_json)
+        checks = admission_checks(
+            model, run.metadata, list(managed.approved_origins), max_vus=managed.max_vus,
+            max_seconds=managed.max_seconds, max_requests_per_second=managed.max_rps,
+        )
+        if tool != "k6" or model.target_base_url != target or not all(check["ok"] for check in checks):
+            raise ValueError("The frozen managed workload is outside the approved execution policy.")
+        if render(model, "k6")[1] != content:
+            raise ValueError("The managed script differs from the generated frozen workload.")
+        run._managed = managed
+        run.metadata["execution_transport"] = "managed_broker"
+        fingerprint = run.metadata.get("workload_version") or load_model_json + content + data_content
+        run.metadata["workload_version"] = hashlib.sha256(
+            ("managed-broker-v1:" + fingerprint).encode()
+        ).hexdigest()
     if tool != "k6":
         run.status = "error"
         run.message = f"live run is only implemented for k6 (got {tool!r})"
         run.ended_at = time.time()
+        with _RUNS_LOCK:
+            _RUNS[run_id] = run
         return run
 
-    thread = threading.Thread(target=_run_worker, args=(run, content), daemon=True)
-    thread.start()
+    settings = get_settings()
+    with _RUNS_LOCK:
+        if len(_ACTIVE_RUNS) >= settings.perfagent_max_concurrent_runs:
+            raise RunCapacityExceeded("All k6 run slots are busy. Wait for a run to finish and retry.")
+        if run_id in _RUNS:
+            raise ValueError("Run ID already exists.")
+        _ACTIVE_RUNS.add(run_id)
+        _RUNS[run_id] = run
+
+    thread = threading.Thread(
+        target=_run_with_limits, args=(run, content, settings.perfagent_max_run_seconds, on_complete, on_checkpoint), daemon=True
+    )
+    try:
+        thread.start()
+    except RuntimeError:
+        with _RUNS_LOCK:
+            _ACTIVE_RUNS.remove(run_id)
+            del _RUNS[run_id]
+        raise
     return run
+
+
+def _run_with_limits(
+    run: RunState, content: str, max_seconds: int,
+    on_complete: Callable[[str], None] | None,
+    on_checkpoint: Callable[[RunState], None] | None,
+) -> None:
+    done = threading.Event()
+    if on_checkpoint is not None:
+        def checkpoint():
+            while not done.wait(5):
+                on_checkpoint(run)
+
+        threading.Thread(target=checkpoint, name="perfagent-run-checkpoint", daemon=True).start()
+    try:
+        if run._managed is not None:
+            _run_managed_worker(run, content, run._managed)
+        else:
+            _run_worker(run, content, max_seconds)
+    except Exception:
+        run.message = "The load runner could not complete this run."
+        run.ended_at = time.time()
+        run.status = "error"
+    finally:
+        done.set()
+        try:
+            if run._proc and run._proc.poll() is None:
+                run._proc.kill()
+                run._proc.wait()
+        finally:
+            if run._tmpdir:
+                shutil.rmtree(run._tmpdir, ignore_errors=True)
+            with _RUNS_LOCK:
+                _ACTIVE_RUNS.remove(run.run_id)
+            if on_complete is not None:
+                on_complete(run.run_id)
+
+
+def _expire_run(run: RunState, proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        run._deadline_reached = True
+        if run._stop_egress:
+            run._stop_egress()
+        proc.kill()
+
+
+def _request_log_secrets(load_model_json: str) -> tuple[str, ...]:
+    if not load_model_json:
+        return ()
+    try:
+        model = json.loads(load_model_json)
+    except (TypeError, ValueError):
+        return ()
+    headers = model.get("headers") if isinstance(model, dict) else None
+    if not isinstance(headers, dict):
+        return ()
+    secrets = set()
+    for header, value in headers.items():
+        if not isinstance(value, str) or "${" in value:
+            continue
+        header = header.lower()
+        if header in {"authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "x-auth-token"}:
+            if value:
+                secrets.add(value)
+            if header in {"authorization", "proxy-authorization"} and " " in value:
+                secrets.add(value.split(" ", 1)[1].strip())
+            if header == "cookie":
+                for cookie in value.split(";"):
+                    if "=" in cookie:
+                        secrets.add(cookie.split("=", 1)[1].strip())
+    return tuple(sorted((value for value in secrets if value), key=len, reverse=True))
 
 
 def _append_log(run: RunState, line: str) -> None:
     line = line.rstrip()
     if not line:
         return
+    for secret in run._log_secrets:
+        line = line.replace(secret, "<REDACTED>")
+    identifiers: dict[str, str] = {}
+    line = restore(redact_text(line, mapping=identifiers), identifiers)
     run.logs.append(line)
     if len(run.logs) > _MAX_LOG_LINES:
         del run.logs[: len(run.logs) - _MAX_LOG_LINES]
@@ -136,7 +294,7 @@ def _pump_stderr(run: RunState, proc: subprocess.Popen) -> None:
         pass
 
 
-def _run_worker(run: RunState, content: str) -> None:
+def _run_worker(run: RunState, content: str, max_seconds: int) -> None:
     try:
         if find_k6() is None:
             run.status = "preparing"
@@ -155,17 +313,24 @@ def _run_worker(run: RunState, content: str) -> None:
     tmpdir = tempfile.mkdtemp(prefix="perfagent_run_")
     run._tmpdir = tmpdir
     script_path = Path(tmpdir) / "loadtest.js"
-    script_path.write_text(content, encoding="utf-8")
-
-    # If the script is data-parameterized, place the data file beside it so
-    # k6's open('./<file>') resolves (we run k6 with cwd=tmpdir).
-    if run.data_filename and run.data_content:
-        (Path(tmpdir) / run.data_filename).write_text(run.data_content, encoding="utf-8")
+    try:
+        script_path.write_text(content, encoding="utf-8")
+        if run.data_filename and run.data_content:
+            filename = safe_runner_data_filename(run.data_filename)
+            (Path(tmpdir) / filename).write_text(run.data_content, encoding="utf-8")
+    except (ValueError, OSError) as exc:
+        run.message = f"Could not prepare test inputs: {exc}"
+        run.ended_at = time.time()
+        run.status = "error"
+        return
 
     # k6 --out json=- streams one JSON object per line to stdout.
-    cmd = [k6_path, "run", "--out", "json=-", "--quiet", str(script_path)]
+    summary_path = Path(tmpdir) / "perfagent-summary.json"
+    cmd = [k6_path, "run", "--address=", "--out", "json=-", "--quiet", "--summary-export",
+           str(summary_path), str(script_path)]
 
     try:
+        run.run_start_ts = time.time()
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -175,13 +340,51 @@ def _run_worker(run: RunState, content: str) -> None:
             errors="replace",      # OS default (cp1252 on Windows) which garbles them
             bufsize=1,
             cwd=tmpdir,
+            env=k6_process_environment(tmpdir),
         )
     except Exception as e:  # noqa: BLE001
-        run.status = "error"
         run.message = f"failed to launch k6: {e}"
+        run.status = "error"
         run.ended_at = time.time()
         return
 
+    run.status = _collect_run(run, proc, max_seconds, summary_path)
+
+
+def _run_managed_worker(run: RunState, content: str, policy: ManagedWorkerOptions) -> None:
+    from perfagent.runner.worker_bridge import worker_bridge
+
+    model = LoadModel.model_validate_json(run.load_model_json)
+    profile = model.load_profile
+    origin = https_origin(run.target)
+    if not origin:
+        raise ValueError("The managed target must use HTTPS.")
+    clients = min(policy.max_vus, profile.pre_allocated_vus)
+    seconds = min(policy.max_seconds, profile.total_seconds + profile.graceful_stop_seconds)
+    rate = profile.target_request_rate
+    if rate is None:
+        raise ValueError("Managed workloads require a request-rate target.")
+    broker = ManagedEgress(
+        origin, policy.pinned_address, max_rps=rate, max_active=clients, max_seconds=seconds,
+    )
+    run._stop_egress = broker.close
+    try:
+        with worker_bridge(broker, max_clients=clients) as bridge:
+            with docker_worker(
+                policy.image, bridge, content, max_seconds=seconds, max_clients=clients,
+                data_filename=run.data_filename, data_content=run.data_content,
+            ) as process:
+                run.run_start_ts = time.time()
+                status = _collect_run(run, process, seconds)
+        run.status = status
+    finally:
+        broker.close()
+        run._stop_egress = None
+
+
+def _collect_run(
+    run: RunState, proc: subprocess.Popen, max_seconds: int, summary_path: Path | None = None,
+) -> str:
     run._proc = proc
     run.status = "running"
 
@@ -191,6 +394,49 @@ def _run_worker(run: RunState, content: str) -> None:
     stderr_thread = threading.Thread(target=_pump_stderr, args=(run, proc), daemon=True)
     stderr_thread.start()
 
+    timeout = threading.Timer(max_seconds, _expire_run, args=(run, proc))
+    timeout.daemon = True
+    timeout.start()
+    try:
+        _stream_metrics(run, proc)
+        proc.wait()
+    finally:
+        timeout.cancel()
+        timeout.join()
+    run.run_end_ts = time.time()
+    stderr_thread.join(timeout=2)
+    try:
+        metrics = json.loads(summary_path.read_text(encoding="utf-8"))["metrics"] if summary_path else None
+        if isinstance(metrics, dict):
+            run.summary_metrics = metrics
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    run.snapshot = run._agg.snapshot()
+    if run._deadline_reached or (run._managed and proc.returncode == 124):
+        status = "stopped"
+        run.message = f"The run stopped after reaching the {max_seconds}-second execution limit."
+    elif run._stop_requested:
+        status = "stopped"
+    elif proc.returncode in (0, 99):
+        # k6 exits 99 when an evaluated threshold fails.
+        status = "finished"
+    elif proc.returncode == _K6_SCRIPT_ABORTED:
+        status = "stopped"
+        reason = next((ln for ln in reversed(run.logs) if "Data file exhausted" in ln), "")
+        run.message = (
+            "The test stopped early: the data file ran out of rows (each row is "
+            "used once). Add rows, or let rows repeat." if reason else
+            "The script stopped the test early. See the run logs for the reason."
+        )
+    else:
+        status = "error"
+        run.message = f"k6 exited {proc.returncode}. See the run logs for details."
+    _append_log(run, f"— k6 exited {proc.returncode} —")
+    run.ended_at = run.run_end_ts
+    return status
+
+
+def _stream_metrics(run: RunState, proc: subprocess.Popen) -> None:
     last_snapshot = 0.0
     assert proc.stdout is not None
     for line in proc.stdout:
@@ -203,6 +449,11 @@ def _run_worker(run: RunState, content: str) -> None:
             # Not a JSON metric point — treat as a human log line (defensive).
             _append_log(run, line)
             continue
+        if not isinstance(obj, dict):
+            continue
+        if run._managed and obj.get("type") == WORKER_SUMMARY_TYPE and isinstance(obj.get("metrics"), dict):
+            run.summary_metrics = obj["metrics"]
+            continue
         # k6 json output: {"type":"Point","metric":"http_req_duration","data":{...}}
         if obj.get("type") == "Point":
             run._agg.add_point(obj)
@@ -210,28 +461,14 @@ def _run_worker(run: RunState, content: str) -> None:
         now = time.time()
         if now - last_snapshot > 0.25:
             run.snapshot = run._agg.snapshot()
+            run.samples.append({"t": round(now - run.started_at, 2),
+                                "rps": run.snapshot.get("rps", 0),
+                                "p95": run.snapshot.get("latency", {}).get("p95_ms"),
+                                "err": run.snapshot.get("error_rate", 0) * 100,
+                                "dropped_iterations": run.snapshot.get("dropped_iterations")})
+            if len(run.samples) > 1200:
+                first_drop = next((index for index, sample in enumerate(run.samples)
+                                   if sample.get("dropped_iterations")), None)
+                run.samples = [sample for index, sample in enumerate(run.samples)
+                               if index % 2 == 0 or index == first_drop]
             last_snapshot = now
-
-    proc.wait()
-    stderr_thread.join(timeout=2)
-    run.snapshot = run._agg.snapshot()
-    if run.status != "stopped":
-        if proc.returncode in (0, 99):
-            # k6 exits 99 when a threshold fails — that's a completed run, not a crash.
-            run.status = "finished"
-        elif proc.returncode == _K6_SCRIPT_ABORTED:
-            # The script ended the test on purpose (exec.test.abort) — e.g. a data
-            # file set to "use each row once" ran out of rows. The metrics up to that
-            # point are real, so this is a stopped run, not a crash.
-            run.status = "stopped"
-            reason = next((ln for ln in reversed(run.logs) if "Data file exhausted" in ln), "")
-            run.message = (
-                "The test stopped early: the data file ran out of rows (each row is "
-                "used once). Add rows, or let rows repeat."
-                if reason else
-                "The script stopped the test early. See the run logs for the reason.")
-        else:
-            run.status = "error"
-            run.message = f"k6 exited {proc.returncode}. See the run logs for details."
-    _append_log(run, f"— k6 exited {proc.returncode} —")
-    run.ended_at = time.time()

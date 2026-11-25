@@ -1,0 +1,62 @@
+name: Standalone release checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend and real k6
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PERFAGENT_ACCESS_MODE: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.29"
+      - name: Install locked Python dependencies
+        run: uv sync --locked --python 3.12
+      - name: Provision checksum-verified k6
+        run: |
+          k6_path="$(uv run --no-sync python -c 'from perfagent.runner.k6_binary import ensure_k6; print(ensure_k6())')"
+          "$k6_path" version
+      - name: Test backend and localhost k6 workflows
+        run: uv run --no-sync pytest -q
+
+  frontend:
+    name: Frontend and Chrome smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm --prefix frontend ci
+      - name: Test frontend
+        run: npm --prefix frontend test
+      - name: Build production workspace
+        run: npm --prefix frontend run build
+      - name: Verify browser workflows
+        run: |
+          chrome="$(command -v google-chrome)"
+          "$chrome" --version
+          PERFAGENT_EDGE_PATH="$chrome" node tests/ui_smoke.cjs

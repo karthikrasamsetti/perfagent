@@ -168,14 +168,28 @@ def _remote_files(repo, branch="main"):
 
 @pytest.mark.skipif(platform.system() == "Windows",
                     reason="git autocrlf makes re-publish look changed on Windows (passes on Linux CI)")
-def test_publish_to_empty_repo_then_update(bare_repo):
+def test_publish_to_empty_repo_then_update(bare_repo, monkeypatch):
+    from datetime import datetime, timedelta
+    from perfagent.gitexport import framework
+
+    class ExportClock(datetime):
+        offset = timedelta()
+
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 1, 1, tzinfo=tz) + cls.offset
+
+    monkeypatch.setattr(framework, "datetime", ExportClock)
     r1 = publish(_target(bare_repo), _builder("one", _model()), "first")
     assert r1.changed and r1.commit
     assert "fw/tests/one/loadtest.js" in _remote_files(bare_repo)
 
+    ExportClock.offset += timedelta(seconds=5)
     r2 = publish(_target(bare_repo), _builder("one", _model()), "same again")
     assert not r2.changed and r2.commit is None          # no empty commits
 
+    changed = _model(target_base_url="https://other.example.com")
+    assert publish(_target(bare_repo), _builder("one", changed), "change target").changed
     r3 = publish(_target(bare_repo), _builder("two", _model()), "second test")
     files = _remote_files(bare_repo)
     assert r3.changed and {"fw/tests/one/test.json", "fw/tests/two/test.json"} <= files
@@ -263,7 +277,7 @@ def test_api_export_zip(api):
     assert "shop/ci/Jenkinsfile" not in names
 
 
-def test_api_export_rejects_stale_script(api):
+def test_api_export_uses_frozen_script_after_plan_changes(api):
     from tests.test_api import _plan_body
     plan = api.post("/api/plan", json=_plan_body()).json()
     pid = plan["plan_id"]
@@ -272,7 +286,10 @@ def test_api_export_rejects_stale_script(api):
     edited["thresholds"] = [{"metric": "p95_ms", "op": "<", "value": 123}]
     api.post(f"/api/plan/{pid}/generate", json={"tool": "k6", "load_model": edited})
     r = api.post(f"/api/scripts/{sid}/export/zip", json={"framework_name": "a", "test_name": "b"})
-    assert r.status_code == 409
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
+        exported = json.loads(archive.read("a/tests/b/plan.json"))
+        assert all(threshold["value"] != 123 for threshold in exported["thresholds"])
 
 
 def test_api_export_bad_name(api):

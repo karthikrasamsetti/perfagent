@@ -77,7 +77,37 @@ def diagnose(snapshot: dict, peak_users: int | None = None) -> Diagnostics:
 
         slowest = max(eps, key=ep_p95)
         d.slowest_endpoint = slowest.get("name", "")
-        if ep_p95(slowest) > 0:
+        waiting = [(e, (e.get("timing_phases") or {}).get("waiting")) for e in eps]
+        waiting = [(e, phase) for e, phase in waiting if phase and e.get("requests", 0)]
+        if waiting:
+            baseline = min(phase["p10_ms"] for _, phase in waiting)
+            slow_wait, phase = max(waiting, key=lambda pair: pair[1]["p95_ms"])
+            excess = max(0, phase["p95_ms"] - baseline)
+            peers = [peer["p95_ms"] for e, peer in waiting if e is not slow_wait]
+            findings.append(Finding(
+                "info", "Client request timing",
+                f"Shared time-to-first-byte baseline: {baseline:.0f} ms. "
+                f"'{slow_wait['name']}' reached {phase['p95_ms']:.0f} ms at p95 "
+                f"({excess:.0f} ms above baseline). This timing includes both network transit "
+                "and time spent on the server.",
+            ))
+            phases = slow_wait["timing_phases"]
+            transport = ", ".join(
+                f"{label} {phases[key]['avg_ms']:.1f} ms"
+                for key, label in (("blocked", "blocked"), ("connecting", "TCP connect"),
+                                   ("tls_handshaking", "TLS handshake"), ("receiving", "receive"))
+                if key in phases
+            )
+            if transport:
+                findings.append(Finding("info", "Connection and receive timing",
+                                        f"Mean phases for '{slow_wait['name']}': {transport}."))
+            if peers and excess >= 100 and phase["p95_ms"] >= 2 * (sum(peers) / len(peers)):
+                findings.append(Finding(
+                    "medium", "Elevated time to first byte",
+                    f"'{slow_wait['name']}' waited substantially longer for its response than the other endpoints.",
+                    "Compare server-side request timings to identify where the extra time was spent.",
+                ))
+        elif ep_p95(slowest) > 0:
             # is it an outlier vs the others?
             others = [ep_p95(e) for e in eps if e is not slowest]
             avg_others = (sum(others) / len(others)) if others else ep_p95(slowest)

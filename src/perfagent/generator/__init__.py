@@ -37,11 +37,17 @@ def supported_tools() -> list[str]:
 def render(model: LoadModel, tool: str = DEFAULT_TOOL) -> tuple[str, str]:
     """Render a LoadModel for `tool`. Returns (filename, content)."""
     key = tool.lower()
+    if (model.load_profile.arrival_rate or model.load_profile.executor_options) and key != "k6":
+        raise ValueError("This traffic schedule currently supports k6 only.")
     if key not in _RENDERERS:
         raise ValueError(
             f"unsupported tool {tool!r}; supported: {', '.join(supported_tools())}"
         )
     filename, fn = _RENDERERS[key]
+    if model.script_filename:
+        if not model.script_filename.endswith("." + filename.rsplit(".", 1)[-1]):
+            raise ValueError(f"The filename for {key} must end in .{filename.rsplit('.', 1)[-1]}.")
+        filename = model.script_filename
     content = fn(model, filename)
     return filename, content
 
