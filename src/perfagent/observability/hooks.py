@@ -1,31 +1,18 @@
-"""Wire MetricsSink into the existing k6 run loop with minimal coupling.
-
-k6_runner.py already streams metric snapshots to the UI. These helpers
-let it also feed Prometheus without the runner importing prometheus
-directly -- pass the hook callbacks in, keep the runner tool-agnostic.
-"""
+"""Convert k6 points and run snapshots into Prometheus metrics."""
 from __future__ import annotations
-
-from typing import Protocol
 
 from .metrics import MetricsSink
 
 
-class RunContext(Protocol):
-    run_id: str
-    scenario: str
-    environment: str
-    load_tool: str
-
-
-def sink_for(ctx: RunContext) -> MetricsSink:
-    """Create and activate a sink for a run context."""
-    sink = MetricsSink(
-        scenario=ctx.scenario, environment=ctx.environment,
-        load_tool=ctx.load_tool, run_id=ctx.run_id,
-    )
-    sink.mark_active(True)
-    return sink
+def on_k6_point(sink: MetricsSink, point: dict) -> None:
+    if point.get("metric") != "http_req_duration":
+        return
+    data = point.get("data", {})
+    duration = data.get("value")
+    if isinstance(duration, (int, float)) and duration >= 0:
+        status = str((data.get("tags") or {}).get("status", ""))
+        status_code = int(status) if status.isascii() and status.isdecimal() and len(status) <= 3 else 0
+        sink.record_request(duration / 1000, status_code)
 
 
 def on_aggregator_snapshot(sink: MetricsSink, snapshot: dict) -> None:

@@ -17,15 +17,16 @@
         "query": "label_values(perfagent_rps, environment)",
         "refresh": 2,
         "includeAll": true,
-        "current": { "text": "prod", "value": "prod" }
+        "current": { "text": "All", "value": "$__all" }
       },
       {
         "name": "scenario",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "query": "label_values(perfagent_rps{environment=\"$environment\"}, scenario)",
+        "query": "label_values(perfagent_rps{environment=~\"$environment\"}, scenario)",
         "refresh": 2,
-        "includeAll": true
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
       }
     ]
   },

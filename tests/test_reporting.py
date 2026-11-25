@@ -63,6 +63,7 @@ def test_download_renders_saved_journey_checks_and_timing_without_inventing_valu
         },
         verdict={"overall_passed": False},
         narrative=Narrative(headline="Failed", summary="One request failed."),
+        server_metrics={"metrics": [{"name": "CPU <peak> (%)", "baseline_mean": 0, "run_mean": None}]},
     )
     assert "Checkout journey" in report
     assert "order.id exists" in report
@@ -70,6 +71,7 @@ def test_download_renders_saved_journey_checks_and_timing_without_inventing_valu
     assert "waiting" in report and "110" in report
     assert "Bytes received 1024" in report
     assert "Environment staging" in report
+    assert "CPU &lt;peak&gt; (%)</th><td>0</td><td>Unavailable</td>" in report
     assert "Unavailable" in report and "0.00%" not in report
 
 

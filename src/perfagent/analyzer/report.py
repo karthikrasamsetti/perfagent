@@ -138,6 +138,7 @@ def render_report_html(
     status: str | None = None,
     samples: list[dict] | None = None,
     release_readiness: dict | None = None,
+    server_metrics: dict | None = None,
 ) -> str:
     release_explanation = (release_readiness or {}).get("explanation")
     report_summary = release_explanation or narrative.summary
@@ -152,7 +153,20 @@ def render_report_html(
                       if threshold_count else "No threshold outcomes were recorded.")
     partial_note = "<p>The run ended early. Measurements are partial.</p>" if evidence["partial"] else ""
 
+    def measurement(value: float | None) -> str:
+        return f"{value:.4g}" if value is not None else "Unavailable"
 
+    service_rows = "".join(
+        f'<tr><th scope="row">{esc(metric["name"])}</th>'
+        f'<td>{measurement(metric.get("baseline_mean"))}</td>'
+        f'<td>{measurement(metric.get("run_mean"))}</td></tr>'
+        for metric in (server_metrics or {}).get("metrics", [])
+    )
+    service_section = (
+        '<h2>Service metrics</h2><table><thead><tr><th>Metric</th>'
+        '<th>Before run (2 min)</th><th>During run</th></tr></thead>'
+        f'<tbody>{service_rows}</tbody></table>' if service_rows else ""
+    )
     checks_rows = "".join(
         f"<tr><td>{esc(c['metric'])}</td><td>{esc(c['op'])} "
         f"{esc(format_threshold_value(c['metric'], c['target']))}</td>"
@@ -321,6 +335,7 @@ def render_report_html(
 <table><thead><tr><th>Check</th><th>Passed</th><th>Failed</th></tr></thead>
 <tbody>{response_checks or '<tr><td colspan="3">No response checks were recorded.</td></tr>'}</tbody></table>
 
+{service_section}
 <h2>HTTP timing phases</h2>
 <table><thead><tr><th>Endpoint</th><th>Phase</th><th>Avg (ms)</th><th>p95 (ms)</th></tr></thead>
 <tbody>{timing_rows or '<tr><td colspan="4">No timing phases were recorded.</td></tr>'}</tbody></table>

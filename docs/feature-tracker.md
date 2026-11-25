@@ -23,8 +23,8 @@
 | 15 | Dashboard and release readiness | Verified locally. Compare an approved baseline and candidate, track historical metrics, and identify the largest measured endpoint p95 increase. | [Screenshot gallery](screenshots.md) |
 | 16 | Git import and export | Verified locally. Unchanged exports create no commit. Changed test inputs create a new commit. | [Integrations](integrations.md) |
 | 17 | Jenkins integration | Local integration available. A real Jenkins instance needs its own approved configuration. | [Integrations](integrations.md) |
-| 18 | Standalone CI verification | Workflow is in the repo. The first GitHub Actions run is pending publication and a PR or eligible push. | [Release verification](release-verification.md#continuous-integration) |
-| 19 | Observability and audit | Local. Logs, audit, AI usage, and a Prometheus/Grafana setup. | [Observability](../README-observability.md) |
+| 18 | Standalone CI verification | GitHub Actions runs backend and real k6 checks, frontend tests, and Chrome workflows on pull requests. | [Release verification](release-verification.md#continuous-integration) |
+| 19 | Observability and audit | Local. Monitoring shows endpoint status and links to Grafana and Prometheus. Embedded previews depend on the provider. Web and HTML reports compare service metrics before and during a run when a target-scoped Prometheus source is configured. | [Observability](../README-observability.md) |
 | 20 | Managed access and project roles | Server-side rules are tested locally. Real invitations, MFA, sign-out, and session expiry need the organization gateway. | [Architecture](architecture.md) |
 | 21 | Managed k6 execution | Pending Linux and PostgreSQL staging verification. Managed execution remains disabled. | [Architecture](architecture.md) |
 | 22 | Scheduled load and regression notifications | Planned. Configure a runner, target and workload limits, and approved notification destinations before enabling scheduled load or delivery. | [Roadmap](roadmap.md) |

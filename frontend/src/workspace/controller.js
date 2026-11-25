@@ -2572,10 +2572,17 @@ function renderReport(j){
     } else { blEl.style.display='none'; }
     // diagnostics
     const dg=j.diagnostics; const dgEl=document.getElementById('diagnostics');
-    if(dg && dg.findings && dg.findings.length){
+    const serviceMetrics=dg?.server_metrics?.metrics||[];
+    if(dg?.findings?.length||serviceMetrics.length){
       dgEl.style.display='block';
+      const measurement=value=>Number.isFinite(value)?Number(value.toPrecision(4)).toString():'Unavailable';
+      const serviceRows=serviceMetrics.map(metric=>`<tr><th scope="row">${esc(metric.name)}</th>
+        <td>${measurement(metric.baseline_mean)}</td><td>${measurement(metric.run_mean)}</td></tr>`).join('');
+      const serviceTable=serviceRows?`<h3>Service metrics</h3><div class="table-scroll" tabindex="0" role="region" aria-label="Service metrics">
+        <table><thead><tr><th>Metric</th><th>Before run (2 min)</th><th>During run</th></tr></thead>
+        <tbody>${serviceRows}</tbody></table></div>`:'';
       dgEl.innerHTML=
-        dg.findings.map(f=>{
+        serviceTable+(dg.findings||[]).map(f=>{
           const emoji={high:'🔴',medium:'🟠',low:'🔵',info:'🟢'}[f.severity]||'•';
           return `<div class="finding ${f.severity}"><div class="ttl">${emoji} ${esc(f.title)} <span class="sevdot ${f.severity}">${f.severity}</span></div>`+
                  `<div>${esc(f.detail)}</div>`+
@@ -3781,8 +3788,8 @@ function monRender(){
       <div class="monitor-head">
         <div><h4>${esc(tool)}</h4><p class="url">${esc(new URL(url).host)}</p></div>
         <div class="btnrow">
-          <button type="button" class="btn ghost sm" data-monitor-preview="${index}">Preview</button>
-          <a class="btn ghost sm" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+          <a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+          <button type="button" class="btn ghost sm" data-monitor-preview="${index}">Try embedded preview</button>
           <button type="button" class="btn ghost sm" data-monitor-remove="${index}">Remove</button>
         </div>
       </div>
@@ -3797,7 +3804,7 @@ function monRender(){
     button.onclick=()=>{
       const open=preview.hidden;
       preview.hidden=!open;
-      button.textContent=open?'Close preview':'Preview';
+      button.textContent=open?'Close preview':'Try embedded preview';
       button.setAttribute('aria-expanded',String(open));
       preview.replaceChildren();
       if(!open)return;

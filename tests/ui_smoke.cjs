@@ -36,6 +36,7 @@ async function main(){
    res.setHeader('Content-Type',asset.endsWith('.css')?'text/css':asset.endsWith('.woff2')?'font/woff2':asset.endsWith('.png')?'image/png':asset.endsWith('.jpg')?'image/jpeg':asset.endsWith('.svg')?'image/svg+xml':'application/javascript');res.end(fs.readFileSync(asset));return;
   }
   if(pathname==='/fixture-dashboard'){res.setHeader('Content-Type','text/html');res.end('<title>Service dashboard</title><h1>Service dashboard</h1>');return;}
+  if(pathname==='/api/metrics'){res.setHeader('Content-Type','text/plain');res.end('# HELP perfagent_requests_total Requests issued\n');return;}
   if(!pathname.startsWith('/api/')){res.setHeader('Content-Type','text/html');res.end(pathname==='/legacy'?fs.readFileSync('src/perfagent/web/index.html'):html);return;}
   let body={};if(['POST','PUT'].includes(req.method)){let raw='';for await(const chunk of req)raw+=chunk;body=raw?JSON.parse(raw):{};}
   const url=new URL(req.url,'http://localhost'),p=url.pathname;let data={};
@@ -612,6 +613,11 @@ async function main(){
    await check('Latest script selected and older versions are listed on demand',"currentScriptId==='version-latest'&&document.getElementById('scriptVersionHistory').open&&document.getElementById('scriptVersionList').textContent.includes('Version 2 · Latest')");
    await evaluate("document.querySelector('[data-preview-script*=\"version-first\"]').click()");await pause(100);
    await check('Viewing an older script preserves the latest execution version',"document.getElementById('scriptVersionPreview').textContent==='// version-first'&&currentScriptId==='version-latest'");
+   await check('Script history preview uses dark text on its light surface', `(()=>{
+     const style=getComputedStyle(document.getElementById('scriptVersionPreview'));
+     return style.color===getComputedStyle(document.querySelector('.script-versions strong')).color
+       && style.backgroundColor==='rgb(245, 243, 250)';
+   })()`);
    showScriptHistoryFixture=false;
    await evaluate("showView('history')");await pause(150);
    await evaluate(`(async()=>{
@@ -737,6 +743,16 @@ async function main(){
    }
  })()`);
  await check('Older reports disclose missing samples', "document.getElementById('reportSampleNote').textContent.includes('unavailable')");
+ await check('Report shows the service metrics comparison', `(()=>{
+   const fixture=${JSON.stringify(report)};
+   fixture.saved_result_id=reportContext.savedId;
+   try {
+     renderReport({...fixture,diagnostics:{server_metrics:{metrics:[{name:'CPU (%)',baseline_mean:0,run_mean:null}]}}});
+     const row=document.querySelector('[aria-label="Service metrics"] tbody tr');
+     return row?.cells[0].textContent==='CPU (%)' && row.cells[1].textContent==='0'
+       && row.cells[2].textContent==='Unavailable';
+   } finally { renderReport(fixture); }
+ })()`);
  await check('Report charts share a selected sample and preserve missing values', `(()=>{
    drawTsChart([{t:10,rps:12,p95:135,dropped_iterations:2},{t:30,rps:15,p95:210,err:0,dropped_iterations:4}],
      [{label:'Ramp up',start_s:0,end_s:15}],{elapsed_s:10,count:2});
@@ -809,6 +825,10 @@ async function main(){
    await evaluate("showView('history');window.scrollTo(0,0)");
    await capture('test-library-redesign');
    await evaluate("showView('monitoring');window.scrollTo(0,0)");
+   await check('Local monitoring links to Grafana and Prometheus', `[
+     'http://127.0.0.1:3000/d/perfagent-live','http://127.0.0.1:9090/targets'
+   ].every(url=>document.querySelector('#view-monitoring a[href="'+url+'"][target="_blank"]'))`);
+   await check('Monitoring distinguishes a responding endpoint with no samples', "document.querySelector('[aria-labelledby=monitorLocalTitle] [role=status]').textContent.includes('Run a local k6 test')");
    await check('Monitoring rejects embedded credentials', `(()=>{
      document.getElementById('monUrl').value='https://name:secret@monitor.example.test';
      document.querySelector('.monitor-setup form').requestSubmit();

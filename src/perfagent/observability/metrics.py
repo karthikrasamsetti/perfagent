@@ -1,12 +1,11 @@
 """Prometheus series for PerfAgent runs.
 
-Cardinality rule: run_id is NOT a Prometheus label (high-cardinality,
-would bloat the TSDB). Per-run detail lives in the run_records table and
-is queried through perfagent.reporting. Live series are grouped by the
-low-cardinality (scenario, environment, load_tool) tuple that already
-exists on LoadModel.
+Traffic series are grouped by scenario, environment, and load tool.
+The active-run marker is removed when its run stops.
 """
 from __future__ import annotations
+
+from threading import Lock
 
 import structlog
 from prometheus_client import (
@@ -20,6 +19,9 @@ REGISTRY = CollectorRegistry()
 
 # Mirror LoadModel.environment ("dev"/"staging"/"prod") and load_tool.
 _LABELS = ["scenario", "environment", "load_tool"]
+
+_SUMMARY_LOCK = Lock()
+_SUMMARIES: dict[tuple[str, ...], dict[str, dict[str, float]]] = {}
 
 REQUESTS_TOTAL = Counter(
     "perfagent_requests_total", "Requests issued during runs",
@@ -66,6 +68,7 @@ class MetricsSink:
             "load_tool": load_tool,
         }
         self.run_id = run_id
+        self._labels = tuple(self._base.values())
 
     def mark_active(self, active: bool = True) -> None:
         RUN_ACTIVE.labels(**self._base, run_id=self.run_id).set(
@@ -80,12 +83,30 @@ class MetricsSink:
                        error_rate: float | None = None,
                        active_vus: int | None = None) -> None:
         """Push an aggregator summary snapshot into the gauges."""
-        if rps is not None:
-            RPS.labels(**self._base).set(rps)
-        if error_rate is not None:
-            ERROR_RATE.labels(**self._base).set(error_rate)
-        if active_vus is not None:
-            VUS_ACTIVE.labels(**self._base).set(active_vus)
+        with _SUMMARY_LOCK:
+            runs = _SUMMARIES.setdefault(self._labels, {})
+            summary = runs.setdefault(self.run_id, {})
+            summary.update({key: value for key, value in (
+                ("rps", rps), ("error_rate", error_rate), ("active_vus", active_vus),
+            ) if value is not None})
+            self._publish_summary(runs)
+
+    def finish(self) -> None:
+        with _SUMMARY_LOCK:
+            runs = _SUMMARIES.get(self._labels, {})
+            runs.pop(self.run_id, None)
+            self._publish_summary(runs)
+            if not runs:
+                _SUMMARIES.pop(self._labels, None)
+        RUN_ACTIVE.remove(*self._labels, self.run_id)
+
+    def _publish_summary(self, runs: dict[str, dict[str, float]]) -> None:
+        rps = sum(summary.get("rps", 0) for summary in runs.values())
+        errors_per_second = sum(summary.get("error_rate", 0) * summary.get("rps", 0)
+                                for summary in runs.values())
+        RPS.labels(**self._base).set(rps)
+        ERROR_RATE.labels(**self._base).set(errors_per_second / rps if rps else 0)
+        VUS_ACTIVE.labels(**self._base).set(sum(summary.get("active_vus", 0) for summary in runs.values()))
 
 
 def render_latest() -> tuple[bytes, str]:

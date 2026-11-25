@@ -43,6 +43,7 @@ React, TypeScript, and Vite on the frontend. Python, FastAPI, Pydantic, SQLAlche
 
 | Guide | What it covers |
 | --- | --- |
+| [UI field guide](docs/ui-field-guide.md) | First test, screenshots, feature walkthroughs, and a UI verification checklist |
 | [Workflow](docs/workflow.md) | Planning, traffic models, dynamic data, response checks, and reports |
 | [Local setup](docs/local-setup.md) | Installation, checkout walkthrough, tests, and troubleshooting |
 | [Frontend](frontend/README.md) | Vite development, demo, build, and browser checks |

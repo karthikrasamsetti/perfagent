@@ -373,7 +373,7 @@ tbody tr:hover { background: #f8f6ff; }
 .script-versions { display: grid; gap: 8px; padding: 0; list-style: none; }
 .script-versions li { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
 .script-versions li span { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.script-version-history pre { max-height: 360px; overflow: auto; padding: 12px; background: #f5f3fa; }
+.script-version-history pre { max-height: 360px; overflow: auto; padding: 12px; background: #f5f3fa; color: var(--ink); }
 @media (max-width: 840px) { .project-workspace-grid { grid-template-columns: minmax(0,1fr); } }
 
 .dashboard-results {

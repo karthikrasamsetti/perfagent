@@ -40,6 +40,8 @@ from perfagent.runner.docker_worker import docker_worker
 from perfagent.runner.k6_binary import K6Unavailable, ensure_k6, find_k6, k6_ready_or_provisionable
 from perfagent.runner.managed_egress import ManagedEgress
 from perfagent.runner.process_environment import k6_process_environment
+from perfagent.observability.hooks import on_aggregator_snapshot, on_k6_point
+from perfagent.observability.metrics import MetricsSink
 from perfagent.runner.worker_protocol import WORKER_SUMMARY_TYPE
 from perfagent.stats import Aggregator
 
@@ -397,10 +399,19 @@ def _collect_run(
     timeout = threading.Timer(max_seconds, _expire_run, args=(run, proc))
     timeout.daemon = True
     timeout.start()
+    sink = None
+    if not run._managed:
+        sink = MetricsSink(
+            scenario="all", environment=run.metadata.get("environment") or "unspecified",
+            load_tool=run.tool, run_id=run.run_id,
+        )
+        sink.mark_active()
     try:
-        _stream_metrics(run, proc)
+        _stream_metrics(run, proc, sink)
         proc.wait()
     finally:
+        if sink:
+            sink.finish()
         timeout.cancel()
         timeout.join()
     run.run_end_ts = time.time()
@@ -436,7 +447,7 @@ def _collect_run(
     return status
 
 
-def _stream_metrics(run: RunState, proc: subprocess.Popen) -> None:
+def _stream_metrics(run: RunState, proc: subprocess.Popen, sink: MetricsSink | None = None) -> None:
     last_snapshot = 0.0
     assert proc.stdout is not None
     for line in proc.stdout:
@@ -457,10 +468,14 @@ def _stream_metrics(run: RunState, proc: subprocess.Popen) -> None:
         # k6 json output: {"type":"Point","metric":"http_req_duration","data":{...}}
         if obj.get("type") == "Point":
             run._agg.add_point(obj)
+            if sink:
+                on_k6_point(sink, obj)
         # refresh the public snapshot at most ~4x/sec
         now = time.time()
         if now - last_snapshot > 0.25:
             run.snapshot = run._agg.snapshot()
+            if sink:
+                on_aggregator_snapshot(sink, run.snapshot)
             run.samples.append({"t": round(now - run.started_at, 2),
                                 "rps": run.snapshot.get("rps", 0),
                                 "p95": run.snapshot.get("latency", {}).get("p95_ms"),

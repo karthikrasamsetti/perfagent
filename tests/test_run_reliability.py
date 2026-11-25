@@ -673,14 +673,22 @@ def test_local_k6_release_walkthrough(setup):
         return report
 
     try:
+        def request_histogram_count():
+            response = client.get("/api/metrics")
+            assert response.status_code == 200
+            return sum(float(line.split()[-1]) for line in response.text.splitlines()
+                       if line.startswith("perfagent_request_duration_seconds_count{"))
+
         webpage = {"name": "Open page", "path": "/", "assertions": [
             {"kind": "body_contains", "op": "contains", "value": "Release fixture"},
         ]}
         script = generate([webpage])
         assert verify(script)["all_ok"] is True
+        count_before = request_histogram_count()
         report = finish(start(script, "webpage"))
         assert report["snapshot"]["requests"] == 1
         assert report["verdict"]["overall_passed"] is True
+        assert request_histogram_count() == count_before + 1
 
         account = {"name": "Read account", "path": "/api/account", "assertions": [
             {"kind": "json_path", "op": "exists", "path": "account_id"},

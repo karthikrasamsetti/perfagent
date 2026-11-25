@@ -1592,7 +1592,8 @@ def run_report_download(run_id: str) -> HTMLResponse:
         narrative=Narrative.model_validate(payload["narrative"]),
         plan_id=payload.get("plan_id", ""), run_id=payload.get("run_id", run_id),
         execution=payload.get("execution"), status=payload.get("status"),
-        samples=payload.get("samples"), release_readiness=payload.get("release_readiness"))
+        samples=payload.get("samples"), release_readiness=payload.get("release_readiness"),
+        server_metrics=(payload.get("diagnostics") or {}).get("server_metrics"))
     return HTMLResponse(report_html, headers={
         "Content-Disposition": f'attachment; filename="report_{run_id[:8]}.html"',
         "Cache-Control": "no-store"})
