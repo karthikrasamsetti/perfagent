@@ -946,20 +946,19 @@ pre-flight · script validation · **editable script** · live monitoring + char
 diagnosis engine · fail-closed verdict · baseline/regression · **report dashboard + response
 checks + saved runs & logs history** · **Save to Git (GitHub/Jenkins/Azure/GitLab pipelines) ·
 Import from Git · Run in Jenkins** · run-an-existing-script · logging, audit, token usage &
-AI traces · modern UI with inline guidance.
+AI traces · modern UI with inline guidance and a first-visit guided tour. Open **Help** to replay the illustrated walkthrough at any time.
 
 **🔭 Remaining work in priority order**
 
 | SNO | Priority | Feature | Remarks |
 | --- | --- | --- | --- |
-| 1 | Next | First-visit guided tour | Offer Start tour and Skip tour. Guide users through Home, Projects, Describe, Review, Verify, Run, Report, and Dashboard with Previous, Next, Done, progress, and replay from Help. Use mock data. Tour controls guide navigation without approving plans or starting real tests. |
-| 2 | Release verification | Manual VoiceOver walkthrough | Check the full workflow and tour on macOS, including keyboard navigation, focus restoration, step and status announcements, chart alternatives, and tables. |
-| 3 | Release verification | k6 workflow regression pass | Verify a webpage, an authenticated API, and a multi-step journey. Cover failed authentication, malformed responses, breached thresholds, stop and restart, and report consistency. |
-| 4 | Infrastructure dependency | Managed k6 release verification | Use the requested Linux environment to verify the isolated worker and enforced egress end to end. Validate PostgreSQL row-level isolation before enabling managed runs. |
-| 5 | After managed k6 | Run reliability and release automation | Finish durable and concurrent run handling, scheduled and CI-triggered runs, and regression alerts. |
-| 6 | After managed k6 | Approval-based orchestration | Extend the guided flow from generation through diagnosis and reporting, with a user approval before execution. |
-| 7 | Later | Additional protocols | Evaluate k6 coverage for gRPC and WebSocket streaming. |
-| 8 | Later | Distributed execution and other engines | Add multiple load generators and evaluate live JMeter and Gatling runners after the managed k6 workflow is verified. |
+| 1 | Release verification | Manual VoiceOver walkthrough | Check the full workflow and tour on macOS, including keyboard navigation, focus restoration, step and status announcements, chart alternatives, and tables. |
+| 2 | Release verification | k6 workflow regression pass | Verify a webpage, an authenticated API, and a multi-step journey. Cover failed authentication, malformed responses, breached thresholds, stop and restart, and report consistency. |
+| 3 | Infrastructure dependency | Managed k6 release verification | Use the requested Linux environment to verify the isolated worker and enforced egress end to end. Validate PostgreSQL row-level isolation before enabling managed runs. |
+| 4 | After managed k6 | Run reliability and release automation | Finish durable and concurrent run handling, scheduled and CI-triggered runs, and regression alerts. |
+| 5 | After managed k6 | Approval-based orchestration | Extend the guided flow from generation through diagnosis and reporting, with a user approval before execution. |
+| 6 | Later | Additional protocols | Evaluate k6 coverage for gRPC and WebSocket streaming. |
+| 7 | Later | Distributed execution and other engines | Add multiple load generators and evaluate live JMeter and Gatling runners after the managed k6 workflow is verified. |
 
 ---
 

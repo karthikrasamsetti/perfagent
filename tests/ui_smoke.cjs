@@ -140,6 +140,23 @@ async function main(){
  `});
  await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/'});await pause(900);
  if(spaMode){
+   await check('First-visit tour opens with an accessible title', "document.querySelector('.guided-tour').open && document.querySelector('#tour-title').textContent === 'Take a tour of PerfAgent'");
+   await evaluate("document.querySelector('.guided-tour-actions button:last-child').click()");
+   await check('Tour starts on Home and focuses the step title', "document.activeElement.id === 'tour-title' && document.activeElement.textContent.includes('Step 1 of 8')");
+   await evaluate("document.querySelector('.guided-tour-actions button:last-child').click()");
+   await check('Tour advances to Projects', "document.querySelector('#tour-title').textContent.includes('Projects')");
+   await evaluate("document.querySelector('.guided-tour-actions button:nth-child(2)').click()");
+   await check('Previous returns to Home', "document.querySelector('#tour-title').textContent.includes('Home')");
+   await evaluate("document.querySelector('.guided-tour-actions button:first-child').click()");
+   await pause(100);
+   await check('Skipping persists and returns focus to Help', "!document.querySelector('.guided-tour').open && document.activeElement.getAttribute('aria-haspopup') === 'dialog' && localStorage.getItem('perfagent:guided-tour:v1') === 'seen'");
+   await evaluate("document.querySelector('.maintop-actions button[aria-haspopup=dialog]').click()");
+   await check('Help reopens the guided tour', "document.querySelector('.guided-tour').open");
+   for(let step=0;step<8;step++)await evaluate("document.querySelector('.guided-tour-actions button:last-child').click()");
+   await check('Tour ends on Dashboard with Done available', "document.querySelector('#tour-title').textContent.includes('Dashboard') && document.querySelector('.guided-tour-actions button:last-child').textContent === 'Done'");
+   await evaluate("document.querySelector('.guided-tour-actions button:last-child').click()");
+   await pause(100);
+   await check('Done closes the tour and returns focus to Help', "!document.querySelector('.guided-tour').open && document.activeElement.getAttribute('aria-haspopup') === 'dialog'");
    await check('Starts at Home with the main navigation selected', "document.getElementById('view-home').classList.contains('show')&&document.querySelector('[data-view=home]').getAttribute('aria-current')==='page'");
    await capture('home');
    await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});

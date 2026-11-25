@@ -1,4 +1,5 @@
 import { Icon } from './Icon'
+import { GuidedTour } from './GuidedTour'
 import { handlers } from '../workspace/controller'
 
 export function Topbar() {
@@ -11,6 +12,7 @@ export function Topbar() {
         <p className="sub" id="viewSub">Organize performance tests by application.</p>
       </div>
       <div className="maintop-actions">
+        <GuidedTour />
         <select id="projectPicker" aria-label="Switch project" onChange={handlers.h107}>
           <option value="">Select project</option>
         </select>

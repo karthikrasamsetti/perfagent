@@ -648,3 +648,67 @@ tbody tr:hover { background: #f8f6ff; }
 [data-demo] .sb-item[aria-label="Git framework"],
 [data-demo] #view-projects .projects-intro .btn,
 [data-demo] #view-home .home-actions article:first-child { display: none; }
+
+.guided-tour {
+  box-sizing: border-box;
+  width: min(46rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  border: 1px solid #d4dbe6;
+  border-radius: 1rem;
+  background: #fff;
+  color: #172235;
+}
+
+.guided-tour::backdrop {
+  background: rgb(15 23 42 / 65%);
+}
+
+.guided-tour-content {
+  padding: clamp(1rem, 4vw, 2rem);
+}
+
+.guided-tour h2 {
+  margin: 0 0 .75rem;
+}
+
+.guided-tour h2 span {
+  display: block;
+  margin-bottom: .4rem;
+  font-size: .875rem;
+  font-weight: 600;
+}
+
+.guided-tour h3 {
+  margin: 0;
+}
+
+.guided-tour p {
+  margin: .5rem 0 1rem;
+}
+
+.guided-tour-example {
+  display: block;
+  width: 100%;
+  max-height: 45dvh;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.guided-tour-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: .5rem;
+  margin-top: 1rem;
+}
+
+.guided-tour-actions button:first-child {
+  margin-right: auto;
+}
+
+@media (max-width: 600px) {
+  .tour-help-label {
+    display: none;
+  }
+}
