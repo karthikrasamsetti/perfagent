@@ -95,15 +95,17 @@ class ChatMessageBody(BaseModel):
 def _project_view(view):
     with get_session() as s:
         row = s.get(ChatSessionRow, view["session_id"])
-        if row and row.project_id and view.get("plan"):
+        if row and view.get("plan"):
             plan = s.get(PlanRow, view["plan"]["plan_id"])
             if plan:
-                plan.project_id = row.project_id
                 model = json.loads(plan.load_model_json)
-                model["test_name"] = row.test_name or model.get("test_name", "")
-                plan.load_model_json = json.dumps(model)
+                if row.project_id and plan.project_id != row.project_id:
+                    plan.project_id = row.project_id
+                    model["test_name"] = row.test_name or model.get("test_name", "")
+                    plan.load_model_json = json.dumps(model)
+                    s.commit()
                 view["plan"]["load_model"] = model
-                s.commit()
+                view["plan"]["review_sources"] = json.loads(plan.review_sources_json) if plan.review_sources_json else None
     return view
 
 

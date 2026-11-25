@@ -360,7 +360,11 @@ def _stream_metrics(run: RunState, proc: subprocess.Popen) -> None:
             run.samples.append({"t": round(now - run.started_at, 2),
                                 "rps": run.snapshot.get("rps", 0),
                                 "p95": run.snapshot.get("latency", {}).get("p95_ms"),
-                                "err": run.snapshot.get("error_rate", 0) * 100})
+                                "err": run.snapshot.get("error_rate", 0) * 100,
+                                "dropped_iterations": run.snapshot.get("dropped_iterations")})
             if len(run.samples) > 1200:
-                run.samples = run.samples[::2]
+                first_drop = next((index for index, sample in enumerate(run.samples)
+                                   if sample.get("dropped_iterations")), None)
+                run.samples = [sample for index, sample in enumerate(run.samples)
+                               if index % 2 == 0 or index == first_drop]
             last_snapshot = now

@@ -6,7 +6,7 @@ from math import isfinite
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from perfagent.contracts.load_model import Assertion, HttpMethod, LoadProfileType, Stage, Threshold
+from perfagent.contracts.load_model import Assertion, ExecutorOptions, HttpMethod, LoadProfile, LoadProfileType, Stage, Threshold
 
 
 class EndpointSpec(BaseModel):
@@ -42,15 +42,22 @@ class PlanRequest(BaseModel):
     thresholds: list[Threshold] | None = None
 
     target_request_rate: int | None = Field(default=None, ge=1, le=1_000_000)
+    target_iteration_rate: int | None = Field(default=None, ge=1, le=1_000_000)
     stages: list[Stage] | None = Field(default=None, min_length=1, max_length=20)
+    executor_options: ExecutorOptions | None = None
 
     @model_validator(mode="after")
     def validate_workload(self) -> "PlanRequest":
-        if self.target_request_rate is not None:
-            if len(self.endpoints) != 1:
-                raise ValueError("A request-rate target requires exactly one endpoint.")
+        if self.target_iteration_rate is not None and self.target_request_rate is not None:
+            raise ValueError("Choose requests per second or journey starts per second.")
+        if self.executor_options:
+            if self.stages is not None or self.target_request_rate is not None or self.target_iteration_rate is not None:
+                raise ValueError("Choose one traffic schedule.")
+            LoadProfile(stages=[Stage(duration_seconds=self.duration_seconds, target_users=self.max_users)],
+                        executor_options=self.executor_options)
+        if self.target_request_rate is not None or self.target_iteration_rate is not None:
             if self.stages is not None or self.profile_type != LoadProfileType.RAMP:
-                raise ValueError("A constant request-rate target uses a duration instead of VU stages.")
+                raise ValueError("A constant rate target uses a duration instead of VU stages.")
         if self.stages is not None:
             if sum(stage.duration_seconds for stage in self.stages) != self.duration_seconds:
                 raise ValueError("Stage durations must add up to the total duration.")

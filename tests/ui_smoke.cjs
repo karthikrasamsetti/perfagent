@@ -13,6 +13,7 @@ const report={run_id:'original-a',plan_id:'plan-a',script_id:'script-a',target:'
 const profiles={};let lastPlanRequest,browser,ws,server,send;const checks=[],errors=[],downloads=[],validationCalls=[],preflightCalls=[],pending=new Map();let sequence=0;
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 let showScriptHistoryFixture=false;
+let dashboardRequests=0, dashboardDelay=0;
 async function main(){
  server=http.createServer(async(req,res)=>{
   const pathname=new URL(req.url,'http://localhost').pathname;
@@ -31,7 +32,8 @@ async function main(){
    else data={summary:{tests:4,runs:4,requests:550},projects:projects.map(project=>({...project,runs:project.tests,requests:100,pass_rate:100}))};
   }else if(p.startsWith('/api/projects/')&&p.endsWith('/dashboard'))data={project:projects[0],summary:{tests:3,runs:3,requests:450,pass_rate:67}};
   else if(p==='/api/plan'){
-   lastPlanRequest=body;data={plan_id:'named-plan',provider:'fixture',load_model:{test_name:body.test_name,target_base_url:body.target_base_url,scenarios:[{name:'Browse',weight:1,steps:[{name:'Products',method:'GET',path:'/products'}],think_time:{min_seconds:1,max_seconds:2}}],load_profile:body.target_request_rate?{type:'ramp',arrival_rate:body.target_request_rate,target_request_rate:body.target_request_rate,pre_allocated_vus:body.max_users,stages:[{duration_seconds:body.duration_seconds,target_users:body.max_users}]}:{type:'ramp',stages:[{duration_seconds:30,target_users:3}]},thresholds:[]}};
+   const arrival=body.target_request_rate||body.target_iteration_rate;
+   lastPlanRequest=body;data={plan_id:'named-plan',provider:'fixture',load_model:{test_name:body.test_name,target_base_url:body.target_base_url,scenarios:[{name:'Browse',weight:1,steps:[{name:'Products',method:'GET',path:'/products'}],think_time:{min_seconds:1,max_seconds:2}}],load_profile:arrival?{type:'ramp',arrival_rate:arrival,target_request_rate:body.target_request_rate,pre_allocated_vus:body.max_users,stages:[{duration_seconds:body.duration_seconds,target_users:body.max_users}]}:{type:'ramp',stages:[{duration_seconds:30,target_users:3}]},thresholds:[]}};
   }else if(p.endsWith('/workloads')){
    if(req.method==='POST'){data={...body,workload_id:'profile-one'};profiles[p]=[data];}else data={workloads:profiles[p]||[]};
   }else if(p.endsWith('/project'))data={plan_id:'named-plan',project_id:body.project_id};
@@ -49,6 +51,8 @@ async function main(){
    const visible=runs.filter(r=>(!url.searchParams.get('project_id')||r.project_id===url.searchParams.get('project_id'))&&(!url.searchParams.get('plan_id')||r.plan_id===url.searchParams.get('plan_id'))&&(!url.searchParams.get('target')||r.target.includes(url.searchParams.get('target'))));
    data={runs:visible.map(r=>url.searchParams.get('role')==='viewer'?{run_id:r.run_id,created_at:r.created_at,verdict:r.verdict,p95_ms:r.p95_ms,requests:r.requests,test_name:r.test_name,script_name:r.script_name,mode:r.mode}:{...r,has_report:true}),total:visible.length};
    if(url.searchParams.get('include_overview')==='true'){
+    dashboardRequests++;
+    if(dashboardDelay)await pause(dashboardDelay);
     const passed=visible.filter(run=>run.verdict==='pass').length;
     const failed=visible.filter(run=>run.verdict==='fail').length;
     data.overview={total:visible.length,passed,failed,inconclusive:visible.length-passed-failed,
@@ -80,7 +84,18 @@ async function main(){
  send=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});
  async function evaluate(expression){const value=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(value.exceptionDetails)throw Error(value.exceptionDetails.exception?.description||value.exceptionDetails.text);return value.result.value;}
  async function check(name,expression){checks.push({name,result:await evaluate(expression)});}
- await send('Runtime.enable');await send('Page.enable');await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/'});await pause(900);
+ await send('Runtime.enable');await send('Page.enable');
+ if(spaMode)await send('Page.addScriptToEvaluateOnNewDocument',{source:`
+   const realInterval=window.setInterval.bind(window);
+   window.setInterval=(callback,delay,...args)=>{
+     if(delay===30000){
+       window.fireWorkspaceRefresh=callback;
+       return realInterval(()=>{},delay);
+     }
+     return realInterval(callback,delay,...args);
+   };
+ `});
+ await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/'});await pause(900);
  await check('Starts at Projects','document.getElementById("view-projects").classList.contains("show")');
  if(spaMode){
  await check('Project library is visible', "document.querySelector('.projects-intro h2').textContent==='Performance workspace'&&Boolean(document.querySelector('.project-card-meta'))");
@@ -94,6 +109,31 @@ async function main(){
  await evaluate("document.getElementById('planBtn').click()");await pause(250);
  checks.push({name:'Planning receives project and test identity',result:lastPlanRequest?.project_id==='project-new'&&lastPlanRequest?.test_name==='Named checkout'});
  if(spaMode){
+ await check('Review stage is exposed as the current workflow step',
+   "document.querySelector('button.step[aria-current=step]').textContent.includes('Review plan')&&document.getElementById('workflowAnnouncement').textContent.includes('Step 2 of 5')");
+ const accessibility=await send('Accessibility.getFullAXTree');
+ checks.push({name:'Workflow navigation and Review control are named in the accessibility tree',result:
+   accessibility.nodes.some(node=>node.role?.value==='navigation'&&node.name?.value==='Test workflow')&&
+   accessibility.nodes.some(node=>node.role?.value==='button'&&node.name?.value.startsWith('Review plan'))});
+ await evaluate("document.querySelector('button.step[data-step=\"1\"]').focus()");
+ await send('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32,nativeVirtualKeyCode:49});
+ await send('Input.dispatchKeyEvent',{type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32,nativeVirtualKeyCode:49});
+ await check('Keyboard can return to Describe',"document.getElementById('panel1').classList.contains('show')");
+ await evaluate("document.getElementById('planBtn').focus();goStep(2)");
+ await check('Leaving a stage restores focus to the new step',"document.activeElement===document.querySelector('.step[aria-current=step]')");
+ await check('Workflow step text meets normal-text contrast', `(()=>{
+   const luminance=color=>color.match(/\\d+/g).slice(0,3).map(Number).map(n=>n/255).map(
+     n=>n<=0.04045?n/12.92:((n+0.055)/1.055)**2.4
+   ).reduce((total,n,i)=>total+n*[0.2126,0.7152,0.0722][i],0);
+   return [...document.querySelectorAll('#stepper .step')].every(step=>{
+     const text=luminance(getComputedStyle(step.querySelector('.sub')).color);
+     const surface=luminance(getComputedStyle(step).backgroundColor);
+     return (Math.max(text,surface)+0.05)/(Math.min(text,surface)+0.05)>=4.5;
+   });
+ })()`);
+ await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+ await check('Reduced-motion preference disables workflow animation',"getComputedStyle(document.getElementById('panel2')).animationName==='none'");
+ await send('Emulation.setEmulatedMedia',{features:[]});
  await check('Review loads with every editor collapsed', "document.querySelectorAll('.review-editor[open],.review-advanced[open]').length===0");
  await evaluate("planModel.thresholds=[{metric:'p95_ms',op:'<=',value:500},{metric:'error_rate',op:'<',value:.01}]; renderPlanForm(); addHeader('Authorization','Bearer fixture-review-secret')");
  await check('Review shows exact target, requests, load, and pass rules', "document.getElementById('reviewTargetOverview').textContent.includes('http://fixture.test')&&document.getElementById('reviewRequestsOverview').textContent.includes('/products')&&document.getElementById('planSummary').textContent.includes('3 peak VUs')&&document.getElementById('planSummary').textContent.includes('< 1%')");
@@ -156,6 +196,12 @@ async function main(){
  await evaluate("document.getElementById('planBtn').click()");await pause(250);
  checks.push({name:'Describe preserves the request-rate goal and page path',result:lastPlanRequest?.target_request_rate===15&&lastPlanRequest?.endpoints[0]?.path==='/products'});
  await check('Review shows the request rate and request count', "document.getElementById('planSummary').textContent.includes('15 requests/s')&&document.getElementById('planSummary').textContent.includes('900 HTTP requests')");
+ await evaluate("goStep(1);document.getElementById('draftSchedule').value='journey-rate';document.getElementById('draftJourneyRate').value='5'");
+ await check('Describe offers a separate journey rate', "document.getElementById('draftJourneyRate').offsetWidth>0&&document.getElementById('draftRequestRate').offsetWidth===0");
+ await evaluate("document.getElementById('planBtn').click()");await pause(250);
+ checks.push({name:'Journey-rate choice submits journey starts without an HTTP target',
+  result:lastPlanRequest?.target_iteration_rate===5&&lastPlanRequest?.target_request_rate===undefined});
+ await check('Review shows the journey rate in iterations per second', "document.getElementById('planSummary').textContent.includes('5 iterations/s')&&document.getElementById('planSummary').textContent.includes('Constant journey rate')");
  }
  await evaluate("selectProject('project-a');startProjectImport('script')");
  await check('Script import is separate',"document.getElementById('modeScript').style.display==='block'&&document.querySelector('#panel1 .modeswitch').style.display==='none'");
@@ -178,7 +224,11 @@ async function main(){
    await evaluate("document.getElementById('projectTestSearch').value='checkout';document.getElementById('projectTestSearch').dispatchEvent(new Event('input'))");
    await check('Workspace test search narrows the list',"document.querySelectorAll('#plansTable [data-open-test]').length===1&&document.querySelector('#plansTable tbody').textContent.includes('Checkout flow')");
  }
- await evaluate("selectProject('project-a');toggleSidebar();showView('dashboard')");await pause(250);
+ dashboardDelay=spaMode?350:0;
+ await evaluate("selectProject('project-a');toggleSidebar();showView('dashboard')");await pause(100);
+ if(spaMode)await check('Dashboard shows skeletons while its first result is loading',"document.querySelectorAll('#sdTiles .ui-skeleton').length===8&&document.querySelector('.dashboard-results').getAttribute('aria-busy')==='true'");
+ await pause(340);
+ dashboardDelay=0;
  await check('Recent reports available',"document.querySelectorAll('#sdTable [data-report-id]').length===3");
  if(spaMode) await check('Dashboard totals come from saved history', "document.getElementById('sdTiles').textContent.includes('450Total requests')&&document.getElementById('sdFilterNote').textContent.includes('all matching saved runs')");
  if(spaMode){
@@ -187,6 +237,16 @@ async function main(){
  await check('Trend has a keyboard-accessible data table', "document.querySelectorAll('#sdTrendData tbody tr').length===3&&document.querySelector('#sdTrendData button')!==null");
  await check('Dashboard shows all four historical charts', "document.querySelectorAll('.dashboard-chart-grid figure').length===4&&document.querySelector('#sdOutcomes button').getAttribute('aria-label').includes('1 fail')");
  await check('Dashboard selected run has a report action', "!document.getElementById('sdInspectReport').disabled&&Boolean(document.getElementById('sdInspectRunNote').textContent)");
+ const beforeRefresh=dashboardRequests;
+ await evaluate(`document.activeElement.blur();
+   window.savedTrendRows=document.querySelector('#sdTable tbody').firstElementChild;
+   Object.defineProperty(document,'hidden',{configurable:true,value:false});
+   try{window.fireWorkspaceRefresh();}finally{delete document.hidden;}
+ `);
+ for(let retries=0;retries<10&&dashboardRequests===beforeRefresh;retries++)await pause(100);
+ await pause(100);
+ checks.push({name:'Dashboard checks for updates automatically',result:dashboardRequests===beforeRefresh+1});
+ await check('Unchanged auto refresh preserves dashboard rows',"window.savedTrendRows===document.querySelector('#sdTable tbody').firstElementChild&&document.getElementById('sdRefreshStatus').textContent.startsWith('Updated ')");
  }
  await check('Dashboard scoped to project',"!document.querySelector('#sdTable tbody').textContent.includes('Hidden payment test')");
  await check('Names distinguish same-target tests',"document.querySelector('#sdTable tbody').textContent.includes('Product browsing')&&document.querySelector('#sdTable tbody').textContent.includes('Login flow')");
@@ -213,7 +273,8 @@ async function main(){
  })()`);
  await check('Older reports disclose missing samples', "document.getElementById('reportSampleNote').textContent.includes('unavailable')");
  await check('Report charts share a selected sample and preserve missing values', `(()=>{
-   drawTsChart([{t:10,rps:12,p95:135},{t:30,rps:15,p95:210,err:0}],[{label:'Ramp up',start_s:0,end_s:15}]);
+   drawTsChart([{t:10,rps:12,p95:135,dropped_iterations:2},{t:30,rps:15,p95:210,err:0,dropped_iterations:4}],
+     [{label:'Ramp up',start_s:0,end_s:15}],{elapsed_s:10,count:2});
    try {
      const picker=document.getElementById('reportSampleIndex');
      picker.value='0';
@@ -221,6 +282,7 @@ async function main(){
      return document.querySelectorAll('.report-metric-charts canvas').length===3
        && picker.getAttribute('aria-valuetext')==='10 seconds'
        && document.getElementById('reportPlannedPhases').textContent.includes('Ramp up 0–15 s')
+       && document.getElementById('reportDropMarker').textContent.includes('10 s (2 cumulative)')
        && document.getElementById('reportSampleReadout').textContent.includes('Errors Unavailable');
    } finally { drawTsChart([]); }
  })()`);
@@ -255,7 +317,18 @@ async function main(){
  await check('Pre-flight endpoint result appears',"document.getElementById('preflightResult').textContent.includes('1/1 endpoints responded OK')&&document.getElementById('preflightResult').textContent.includes('/products')");
  fs.writeFileSync(path.join(os.tmpdir(),'perfagent-ui-report.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'})).data,'base64'));
  for(const view of ['history','monitoring','activity']){await evaluate("showView('"+view+"')");await pause(100);await check(view+' navigation',"document.getElementById('view-"+view+"').classList.contains('show')");}
- await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});await evaluate("showView('dashboard')");await pause(150);await evaluate("document.querySelector('#sdTable [data-report-id]').click()");await pause(150);await check('Mobile report fits viewport','document.documentElement.scrollWidth<=390');
+ await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+ if(spaMode){
+   for(const [stage,label] of [[1,'Describe'],[3,'Verify'],[4,'Live Run']]){
+     await evaluate('goStep('+stage+')');
+     await check(label+' fits a narrow viewport','document.documentElement.scrollWidth<=390');
+   }
+   await evaluate("showView('history')");
+   await check('Project workspace fits a narrow viewport','document.documentElement.scrollWidth<=390');
+   await evaluate("showView('activity')");
+   await check('Activity fits a narrow viewport','document.documentElement.scrollWidth<=390');
+ }
+ await evaluate("showView('dashboard')");await pause(150);await evaluate("document.querySelector('#sdTable [data-report-id]').click()");await pause(150);await check('Mobile report fits viewport','document.documentElement.scrollWidth<=390');
  await evaluate("showView('dashboard');document.getElementById('sdRole').value='viewer';loadStakeholder()");await check('Viewer target filter disabled',"document.getElementById('sdTarget').disabled");await check('Viewer omits unavailable error metrics',"!document.getElementById('sdHead').textContent.includes('Errors')");await check('Mobile dashboard fits','document.documentElement.scrollWidth<=390');
  await evaluate('openMobNav()');await check('Mobile navigation opens',"document.getElementById('sidebar').classList.contains('mobopen')");await evaluate("document.querySelector('[data-view=create]').click()");await check('Mobile navigation closes',"!document.getElementById('sidebar').classList.contains('mobopen')");await check('Projects fit mobile viewport','document.documentElement.scrollWidth<=390');
  if(spaMode){

@@ -8,97 +8,45 @@ return <>
 <div className={"project-context"} id={"testProjectContext"}>
 
 </div>
-<div className="stepper" id="stepper" aria-label="Test workflow">
-<div className={"step"} data-step={"1"}>
-<div className={"num"}>
-{"1"}
-</div>
-<div>
-<div className={"lbl"}>
-{"Describe"}
-</div>
-<div className={"sub"}>
-{"target & endpoints"}
-</div>
-</div>
-</div>
-<div className={"step"} data-step={"2"}>
-<div className={"num"}>
-{"2"}
-</div>
-<div>
-<div className={"lbl"}>
-{"Review plan"}
-</div>
-<div className={"sub"}>
-{"edit & approve"}
-</div>
-</div>
-</div>
-<div className={"step"} data-step={"3"}>
-<div className={"num"}>
-{"3"}
-</div>
-<div>
-<div className={"lbl"}>
-{"Verify"}
-</div>
-<div className={"sub"}>
-{"checks & script"}
-</div>
-</div>
-</div>
-<div className={"step"} data-step={"4"}>
-<div className={"num"}>
-{"4"}
-</div>
-<div>
-<div className={"lbl"}>
-{"Run"}
-</div>
-<div className={"sub"}>
-{"live metrics"}
-</div>
-</div>
-</div>
-<div className={"step"} data-step={"5"}>
-<div className={"num"}>
-{"5"}
-</div>
-<div>
-<div className={"lbl"}>
-{"Report"}
-</div>
-<div className={"sub"}>
-{"verdict"}
-</div>
-</div>
-</div>
-</div>
+<nav className="stepper" id="stepper" aria-label="Test workflow">
+  {[
+    ['Describe', 'Target and endpoints'],
+    ['Review plan', 'Edit and approve'],
+    ['Verify', 'Checks and script'],
+    ['Run', 'Live metrics'],
+    ['Report', 'Verdict and evidence'],
+  ].map(([title, description], index)=>
+    <button type="button" className="step" data-step={index+1} key={title} aria-controls={'panel'+(index+1)}>
+      <span className="num" aria-hidden="true">{index+1}</span>
+      <span><span className="lbl">{title}</span><span className="sub">{description}</span></span>
+    </button>
+  )}
+</nav>
+<p className="sr-only" role="status" id="workflowAnnouncement" />
 <div className={"wrap"}>
 <div className={"panel show"} id={"panel1"}>
-<div className={"card"}>
+<div className="card workflow-stage-card">
 <h2>
 {"How do you want to start?"}
 </h2>
 <div className={"modeswitch"} role={"tablist"} aria-label={"How to start"}>
-<button className={"modebtn"} role={"tab"} id={"modeConvBtn"} onClick={handlers.h13} style={{"display": "none"} as CSSProperties}>
+<button className={"modebtn"} role={"tab"} aria-controls="modeConv" id={"modeConvBtn"} onClick={handlers.h13} style={{"display": "none"} as CSSProperties}>
 {"Conversation"}
 </button>
-<button className={"modebtn active"} role={"tab"} id={"modeManualBtn"} onClick={handlers.h14}>
+<button className={"modebtn active"} role={"tab"} aria-controls="modeManual" id={"modeManualBtn"} onClick={handlers.h14}>
 {"Manual form"}
 </button>
-<button className={"modebtn"} role={"tab"} id={"modeScriptBtn"} onClick={handlers.h15}>
+<button className={"modebtn"} role={"tab"} aria-controls="modeScript" id={"modeScriptBtn"} onClick={handlers.h15}>
 {"Import script"}
 </button>
-<button className={"modebtn"} role={"tab"} id={"modeGitBtn"} onClick={handlers.h16}>
+<button className={"modebtn"} role={"tab"} aria-controls="modeGit" id={"modeGitBtn"} onClick={handlers.h16}>
 {"Import from Git"}
 </button>
 </div>
 <p className={"hint"} id={"modeHint"} style={{"margin": "-4px 0 14px"} as CSSProperties}>
 
 </p>
-<div id={"modeConv"} style={{"display": "none"} as CSSProperties}>
+<div role="tabpanel" aria-labelledby="modeConvBtn" id={"modeConv"} style={{"display": "none"} as CSSProperties}>
 <div className={"conv"}>
 <div className={"conv-main"}>
 <div className={"conv-head"}>
@@ -175,7 +123,7 @@ return <>
 </aside>
 </div>
 </div>
-<div id={"modeManual"}>
+<div role="tabpanel" aria-labelledby="modeManualBtn" id={"modeManual"}>
 <p className={"hint"}>
 {"Enter a URL for a page test, or add endpoints for an API or journey. Review the suggested workload before sending traffic."}
 </p>
@@ -200,10 +148,15 @@ return <>
       <select id="draftSchedule" defaultValue="users">
         <option value="users">Virtual users with stages</option>
         <option value="rate">Requests per second</option>
+        <option value="journey-rate">Journey starts per second</option>
+        <option value="constant-vus">Keep virtual users steady</option>
+        <option value="ramping-arrival-rate">Ramp journey starts per second</option>
+        <option value="shared-iterations">Complete a total number of journeys</option>
+        <option value="per-vu-iterations">Complete a set number of journeys per user</option>
       </select>
     </div>
     <div className="field">
-      <label htmlFor="duration">Duration (seconds)</label>
+      <label htmlFor="duration"><span className="describe-duration">Duration</span><span className="describe-fixed-only">Maximum duration</span> (seconds)</label>
       <input id="duration" type="number" min={1} step={1} defaultValue={60} required />
     </div>
   </div>
@@ -221,7 +174,29 @@ return <>
   <div className="field describe-rate-only">
     <label htmlFor="draftRequestRate">Target requests per second</label>
     <input id="draftRequestRate" type="number" min={1} max={1000000} step={1} placeholder="15" />
-    <p className="hint">Use one URL or one endpoint. The report shows how many requests k6 sent and whether any were dropped.</p>
+    <p className="hint">PerfAgent uses the endpoints in Describe order as one journey. Review shows how many journey starts per second are needed for the request target.</p>
+  </div>
+  <div className="field describe-journey-rate-only">
+    <label htmlFor="draftJourneyRate">Target journey starts per second</label>
+    <input id="draftJourneyRate" type="number" min={1} max={1000000} step={1} placeholder="5" />
+    <p className="hint">One iteration starts one journey. Each journey may send multiple HTTP requests.</p>
+  </div>
+  <div className="field describe-fixed-only">
+    <label htmlFor="draftIterations">Iterations <span className="describe-per-user">per virtual user</span><span className="describe-shared-count">across all virtual users</span></label>
+    <input id="draftIterations" type="number" min={1} max={1000000} step={1} defaultValue={100} />
+    <p className="hint">One iteration completes one journey. k6 stops scheduling when the count or maximum duration is reached.</p>
+  </div>
+  <div className="describe-arrival-only">
+    <div className="field"><label htmlFor="draftStartRate">Starting journeys per second</label><input id="draftStartRate" type="number" min={0} step={1} defaultValue={0} /></div>
+    <div className="grid3">
+      {['Ramp up', 'Hold', 'Ramp down'].map((phase,index)=><div className="field" key={phase}>
+        <label htmlFor={'draftRateDuration'+index}>{phase} duration (seconds)</label>
+        <input id={'draftRateDuration'+index} type="number" min={1} step={1} defaultValue={[12,36,12][index]} />
+        <label htmlFor={'draftRateTarget'+index}>Target at end of {phase.toLowerCase()} (journeys/s)</label>
+        <input id={'draftRateTarget'+index} type="number" min={0} step={1} defaultValue={[15,15,0][index]} />
+      </div>)}
+    </div>
+    <p className="hint">Stage durations must add up to the test duration. The rate targets journey starts, and each journey can include multiple requests.</p>
   </div>
   <details className="field describe-ramp-only">
     <summary>Set exact ramp stages</summary>
@@ -233,7 +208,7 @@ return <>
     <p className="hint">Enter all three durations. They must add up to the test duration.</p>
   </details>
   <div className="field describe-capacity">
-    <label htmlFor="maxUsers"><span className="describe-vu-only">Virtual users</span><span className="describe-rate-only">Preallocated virtual users</span></label>
+    <label htmlFor="maxUsers"><span className="describe-user-label">Virtual users</span><span className="describe-open-label">Preallocated virtual users</span></label>
     <input id="maxUsers" type="number" min={1} max={1000000} step={1} defaultValue={50} required />
   </div>
 </div>
@@ -294,7 +269,7 @@ return <>
 
 </div>
 </div>
-<div id={"modeScript"} style={{"display": "none"} as CSSProperties}>
+<div role="tabpanel" aria-labelledby="modeScriptBtn" id={"modeScript"} style={{"display": "none"} as CSSProperties}>
 <div className={"field"}>
 <label htmlFor={"exTestName"}>
 {"Test name"}
@@ -341,7 +316,7 @@ return <>
 
 </div>
 </div>
-<div id={"modeGit"} style={{"display": "none"} as CSSProperties}>
+<div role="tabpanel" aria-labelledby="modeGitBtn" id={"modeGit"} style={{"display": "none"} as CSSProperties}>
 <div className={"grid3"} style={{"marginTop": "14px"} as CSSProperties}>
 <div className={"field"}>
 <label>
@@ -620,9 +595,10 @@ return <>
 <div className={"rv-shape"} id={"pfShape"}>
 
 </div>
+<div id="pfExecutorOptions" />
 <div className={"grid2"} style={{"marginTop": "12px"} as CSSProperties}>
 <div className={"field"}>
-<label htmlFor={"pfArrival"}>
+<label htmlFor={"pfArrival"} id="pfArrivalLabel">
 {"Target iterations/second (k6, optional)"}
 </label>
 <input id={"pfArrival"} type={"number"} min={"1"} max={"1000000"} placeholder={"Leave empty for user-based load"} onChange={handlers.h41} />
@@ -1017,10 +993,10 @@ return <>
 {"■ Stop"}
 </button>
 </div>
-<div className={"statusline"} id={"runStatus"}>
+<div className="statusline" id="runStatus" role="status">
 
 </div>
-<canvas id={"liveChart"} height={"120"} style={{"width": "100%", "margin": "6px 0 14px", "border": "1px solid var(--line)", "borderRadius": "12px", "background": "#fcfcfb"} as CSSProperties}>
+<canvas id={"liveChart"} role="img" aria-label="Live throughput, latency, and errors over time" height={"120"} style={{"width": "100%", "margin": "6px 0 14px", "border": "1px solid var(--line)", "borderRadius": "12px", "background": "#fcfcfb"} as CSSProperties}>
 
 </canvas>
 <div className={"tiles"}>
@@ -1079,6 +1055,10 @@ return <>
 <div className="tile">
   <div className="v" id="mIterationRate">—</div>
   <div className="l">Iterations/s / target</div>
+</div>
+<div className="tile" id="mIterationsTile" hidden>
+  <div className="v" id="mIterations">—</div>
+  <div className="l" id="mIterationsLabel">Iterations completed / planned</div>
 </div>
 <div className="tile">
   <div className="v" id="mDroppedIterations">—</div>
@@ -1145,6 +1125,7 @@ return <>
 <section className="report-story" aria-labelledby="reportStoryTitle">
   <h2 id="reportStoryTitle">What happened</h2>
   <p id="reportSummary" />
+  <p hidden id="reportDropsSummary"><a id="reportDropsLink" href="#reportTimeline" /></p>
   <p id="reportPartial" className="note warn" hidden />
 </section>
 <aside className="report-evidence-summary" id="reportEvidenceSummary" aria-label="Key evidence" hidden />
@@ -1220,11 +1201,12 @@ return <>
 </div>
 </div>
 <section id="reportHighlights" className="card" aria-label="Threshold results" />
-<details className="card report-drilldown" open>
+<details className="card report-drilldown" id="reportTimeline" open>
   <summary>Timeline &amp; trends</summary>
   <p className="hint" id="reportSampleNote" />
   <div id="reportTimelineCharts" hidden>
     <p className="hint" id="reportPlannedPhases" hidden />
+    <p className="hint" id="reportDropMarker" hidden />
     <div className="report-sample-picker">
       <label htmlFor="reportSampleIndex">Inspect a recorded sample</label>
       <input type="range" id="reportSampleIndex" min="0" step="1" />

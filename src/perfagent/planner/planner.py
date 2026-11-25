@@ -127,15 +127,28 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
     )
 
     if request.target_request_rate is not None:
-        # A k6 iteration is exactly one HTTP request for this workload.
+        # Schedule the explicit endpoint sequence as one iteration.
         journey = model.scenarios[0]
-        journey.steps = journey.steps[:1]
+        steps = {(step.method, step.path): step for scenario in model.scenarios for step in scenario.steps}
+        journey.steps = [
+            steps[(endpoint.method, endpoint.path)].model_copy(update={
+                **({"body": endpoint.example_body} if endpoint.example_body is not None else {}),
+                **({"assertions": endpoint.assertions} if endpoint.assertions is not None else {}),
+            })
+            for endpoint in request.endpoints
+        ]
         model.scenarios = [journey]
+    if request.target_request_rate is not None or request.target_iteration_rate is not None:
         model.load_profile = LoadProfile(
             stages=[Stage(duration_seconds=request.duration_seconds, target_users=request.max_users)],
-            arrival_rate=request.target_request_rate,
+            arrival_rate=request.target_request_rate or request.target_iteration_rate,
             target_request_rate=request.target_request_rate,
             pre_allocated_vus=request.max_users,
+        )
+    elif request.executor_options:
+        model.load_profile = LoadProfile(
+            stages=[Stage(duration_seconds=request.duration_seconds, target_users=request.max_users)],
+            executor_options=request.executor_options,
         )
     elif request.stages is not None:
         model.load_profile.stages = request.stages
@@ -153,7 +166,7 @@ def _apply_deterministic_controls(model: LoadModel, request: PlanRequest) -> Loa
     caps = _captured_vars(model)
     auth_var = next((v for v in ("token", "access_token", "jwt", "auth_token", "accessToken")
                      if v in caps), None)
-    if auth_var and request.target_request_rate is None:
+    if auth_var and (request.target_request_rate is None or len(model.scenarios[0].steps) > 1):
         headers = dict(model.headers or {})
         if not any(k.lower() == "authorization" for k in headers):
             headers["Authorization"] = "Bearer ${" + auth_var + "}"

@@ -73,6 +73,8 @@ node tests/ui_smoke.cjs
 
 The harness uses real headless Microsoft Edge with fixture API responses; it does not generate target load. Set `PERFAGENT_EDGE_PATH` for another Edge installation. Set `PERFAGENT_UI_MODE=legacy` to run the shared checks against the preserved workspace.
 
+The React checks cover keyboard navigation between workflow stages, focus handoff, the browser accessibility tree, workflow text contrast, reduced motion, and narrow-screen layouts. In the Describe mode tabs, use the arrow keys to switch between available modes.
+
 ## Source layout
 
 - `src/pages/`: Projects, test workspace, dashboard, library, monitoring, activity and admin pages.

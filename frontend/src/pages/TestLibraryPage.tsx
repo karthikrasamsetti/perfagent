@@ -18,7 +18,7 @@ export function TestLibraryPage() {
           <section className="card project-test-list" aria-labelledby="projectTestsTitle">
             <div className="section-header">
               <h3 id="projectTestsTitle">Tests in this project</h3>
-              <button className="btn ghost sm" onClick={handlers.h91}>Refresh</button>
+              <button className="btn ghost sm refresh-action" type="button" aria-label="Refresh project tests" title="Refresh project tests" onClick={handlers.h91}>↻</button>
             </div>
             <label htmlFor="projectTestSearch">Find a test</label>
             <input id="projectTestSearch" type="search" placeholder="Search by name, purpose, or target" />
@@ -44,7 +44,7 @@ export function TestLibraryPage() {
         </div>
         <details className="card project-reports">
           <summary>Runs &amp; reports</summary>
-          <div className="btnrow"><button className="btn ghost sm" onClick={handlers.h92}>Refresh reports</button></div>
+          <div className="btnrow"><button className="btn ghost sm refresh-action" type="button" aria-label="Refresh reports" title="Refresh reports" onClick={handlers.h92}>↻</button></div>
           <div className="table-scroll" role="region" aria-label="Project reports" tabIndex={0}>
             <table id="runsTable">
               <thead><tr><th scope="col">When</th><th scope="col">Verdict</th><th scope="col">Target</th><th scope="col">Test / script</th><th scope="col">Requests</th><th scope="col">Errors</th><th scope="col">p95</th><th scope="col">Open report</th></tr></thead>

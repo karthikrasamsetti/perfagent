@@ -14,6 +14,8 @@ let dataColumns=[];        // uploaded data file columns
 
 /* ---------- stepper ---------- */
 function goStep(n){
+  const priorPanel=document.querySelector('#view-create.show .panel.show');
+  const shouldMoveFocus=priorPanel&&priorPanel.id!=='panel'+n&&priorPanel.contains(document.activeElement);
   const verification=document.getElementById('preflightResult');
   if(n===3 && verification && verification.dataset.scriptId!==currentScriptId){
     verification.style.display='none';
@@ -36,8 +38,18 @@ function goStep(n){
     s.classList.toggle('done', si<n);
     if(si===n) s.setAttribute('aria-current','step');
     else s.removeAttribute('aria-current');
+    if(s instanceof HTMLButtonElement){
+      s.disabled=si!==n&&!canOpenStep(si);
+    }
   });
-  window.scrollTo({top:0,behavior:'smooth'});
+  const announcement=document.getElementById('workflowAnnouncement');
+  const activeStep=document.querySelector('.step.active');
+  if(announcement&&activeStep){
+    const message='Step '+n+' of 5. '+activeStep.querySelector('.lbl').textContent;
+    if(announcement.textContent!==message)announcement.textContent=message;
+  }
+  if(shouldMoveFocus)activeStep?.focus({preventScroll:true});
+  window.scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
 
 publishStep(n);
 }
@@ -57,8 +69,15 @@ function setMode(m){
     document.getElementById(MODES[k][0]).style.display = (k===m)?'block':'none';
     const b=document.getElementById(MODES[k][1]);
     b.classList.toggle('active', k===m); b.setAttribute('aria-selected', k===m?'true':'false');
+    if(b.getAttribute('role')==='tab')b.tabIndex=k===m?0:-1;
   }
   document.getElementById('modeHint').textContent=MODES[m][2];
+}
+
+function canOpenStep(n){
+  return n===1||n===2&&Boolean(planModel)||n===3&&Boolean(currentScriptId)||
+    n===4&&Boolean(currentRunId&&currentScriptId)||
+    n===5&&Boolean(currentRunId&&reportContext?.runId===currentRunId);
 }
 
 /* ---------- conversation mode (multi-turn planning chat) ----------
@@ -280,6 +299,7 @@ async function convOpenPlan(p){
     currentPlanId=p.plan_id; planModel=p.load_model;
     if(projectId) planModel.test_name=name;
     planRationale=p.rationale||'';
+    setReviewSources(p.review_sources);
     document.getElementById('importNote').style.display='none';
     applyIntegrations(p.plan_id);
     renderPlanForm(); renderRawFromModel();
@@ -472,15 +492,19 @@ async function doPlan(){
       if(!Number.isInteger(value)||value<min) throw new Error(label+' must be a whole number of at least '+min+'.');
       return value;
     };
-    const rateMode=document.getElementById('draftSchedule').value==='rate';
-    const users=wholeNumber('maxUsers',rateMode?'Preallocated virtual users':'Virtual users');
-    const duration=wholeNumber('duration','Duration',rateMode?1:3);
-    const profileType=rateMode?'ramp':document.getElementById('profileType').value;
+    const schedule=document.getElementById('draftSchedule').value;
+    const rateMode=schedule==='rate';
+    const journeyRateMode=schedule==='journey-rate';
+    const rampRate=schedule==='ramping-arrival-rate';
+    const fixedIterations=['shared-iterations','per-vu-iterations'].includes(schedule);
+    const users=wholeNumber('maxUsers',rateMode||journeyRateMode||rampRate?'Preallocated virtual users':'Virtual users');
+    const duration=wholeNumber('duration','Duration',schedule==='users'?3:1);
+    const profileType=schedule==='users'?document.getElementById('profileType').value:'ramp';
     const rate=rateMode?wholeNumber('draftRequestRate','Requests per second'):null;
-    if(users>1000000||rate>1000000) throw new Error('Enter values up to 1,000,000.');
-    if(rateMode&&eps.length!==1) throw new Error('Requests per second needs one endpoint. Use virtual users for a journey with multiple requests.');
+    const journeyRate=journeyRateMode?wholeNumber('draftJourneyRate','Journey starts per second'):null;
+    if(users>1000000||rate>1000000||journeyRate>1000000) throw new Error('Enter values up to 1,000,000.');
     const stageFields=['draftRampUp','draftHold','draftRampDown'];
-    const customStages=!rateMode&&profileType==='ramp'&&stageFields.some(id=>document.getElementById(id).value!=='');
+    const customStages=schedule==='users'&&profileType==='ramp'&&stageFields.some(id=>document.getElementById(id).value!=='');
     const stages=customStages?stageFields.map((id,index)=>({
       duration_seconds:wholeNumber(id,['Ramp up','Steady state','Ramp down'][index]),
       target_users:index===2?0:users,
@@ -488,18 +512,29 @@ async function doPlan(){
     if(stages&&stages.reduce((sum,stage)=>sum+stage.duration_seconds,0)!==duration){
       throw new Error('Ramp up, steady state, and ramp down must add up to '+duration+' seconds.');
     }
+    const executorOptions=schedule==='users'||rateMode||journeyRateMode?null:{executor:schedule};
+    if(fixedIterations){
+      executorOptions.iterations=wholeNumber('draftIterations','Iterations');
+      if(schedule==='shared-iterations'&&executorOptions.iterations<users) throw Error('Shared iterations must be at least the number of virtual users.');
+    }
+    if(rampRate){
+      executorOptions.start_rate=wholeNumber('draftStartRate','Starting rate',0);
+      executorOptions.rate_stages=[0,1,2].map(index=>({
+        duration_seconds:wholeNumber('draftRateDuration'+index,'Stage '+(index+1)+' duration'),
+        target_rate:wholeNumber('draftRateTarget'+index,'Stage '+(index+1)+' arrival rate',0),
+      }));
+      if(executorOptions.rate_stages.reduce((sum,stage)=>sum+stage.duration_seconds,0)!==duration)
+        throw Error('Arrival-rate stages must add up to the test duration.');
+    }
     const body={project_id:currentProject.project_id,test_name:newTestName,environment:currentProject.environment||'',target_base_url:target,
       goal:document.getElementById('goal').value.trim(),
       max_users:users, duration_seconds:duration, profile_type:profileType, endpoints:eps,
-      ...(rate?{target_request_rate:rate}:{}), ...(stages?{stages}:{}), ...(rules.length?{thresholds:rules}:{})};
+      ...(rate?{target_request_rate:rate}:{}), ...(journeyRate?{target_iteration_rate:journeyRate}:{}), ...(stages?{stages}:{}),
+      ...(executorOptions?{executor_options:executorOptions}:{}), ...(rules.length?{thresholds:rules}:{})};
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
     currentPlanId=j.plan_id; planModel=j.load_model; planRationale=j.rationale||'';
-    reviewDraftInputs={planId:j.plan_id,target:body.target_base_url,environment:body.environment,
-      profile:JSON.stringify(planModel.load_profile),rules:JSON.stringify(planModel.thresholds),
-      ruleSource:body.thresholds?'From Describe':'Suggested rules',
-      loadSource:body.stages||body.target_request_rate?'From Describe':'Load shape uses profile defaults',
-      endpoints:new Set(eps.map(endpoint=>endpoint.method+' '+endpoint.path))};
+    setReviewSources(j.review_sources);
     document.getElementById('importNote').style.display='none';
     applyIntegrations(j.plan_id);
     renderPlanForm(); renderRawFromModel();
@@ -634,19 +669,31 @@ async function saveSla(){
 /* ---------- plain-English plan summary ---------- */
 let planRationale = "";   // the AI's "why", set when a plan is drafted
 let reviewDraftInputs=null;
+function formatJourneyRate(rate){
+  const rounded=Number(rate.toPrecision(4));
+  return (rounded===rate?'':'≈ ')+rounded;
+}
+function setReviewSources(sources){
+  reviewDraftInputs=sources?{planId:currentPlanId,snapshot:structuredClone(planModel),sources}:null;
+}
 function reviewLoadChart(profile, stages, duration, peak){
   if(!duration) return '';
   const arrival=profile?.arrival_rate;
-  const maximum=Math.max(1,arrival||peak,arrival?0:profile?.start_users||0);
+  const options=profile?.executor_options;
+  if(options?.iterations!=null) return '';
+  const rampRate=options?.executor==='ramping-arrival-rate';
+  const startValue=arrival||(rampRate?options.start_rate:options?.executor==='constant-vus'?peak:profile?.start_users||0);
+  const levels=rampRate?options.rate_stages.map(stage=>({duration_seconds:stage.duration_seconds,target_users:stage.target_rate})):stages;
+  const maximum=arrival||Math.max(1,startValue,...levels.map(stage=>stage.target_users));
   let elapsed=0;
   const point=(time,level)=>time/duration*100+'% '+(100-level/maximum*100)+'%';
-  const start=point(0,arrival||profile?.start_users||0);
-  const targets=arrival?[point(duration,arrival)]:stages.map(stage=>{
+  const start=point(0,startValue);
+  const targets=arrival?[point(duration,arrival)]:levels.map(stage=>{
     elapsed+=stage.duration_seconds;
     return point(elapsed,stage.target_users);
   });
   const area=['0% 100%',start,...targets,'100% 100%'].join(',');
-  const unit=arrival?(profile.target_request_rate?'req/s':'iterations/s'):'VUs';
+  const unit=arrival||rampRate?(profile.target_request_rate?'req/s':'iterations/s'):'VUs';
   return '<figure class="review-load-chart" aria-label="Planned load over time">'+
     '<div class="review-load-axis" aria-hidden="true"><span>'+esc(maximum+' '+unit)+'</span><span>0</span></div>'+
     '<div class="review-load-plot" aria-hidden="true"><div style="clip-path:polygon('+area+')"></div></div>'+
@@ -666,8 +713,21 @@ function renderSummary(){
   const typeLabel={ramp:'Load',stress:'Stress',spike:'Spike',soak:'Soak'}[type]||type;
   const arrival=profile?.arrival_rate;
   const requestRate=profile?.target_request_rate;
+  const journeyRate=requestRate&&scenarios.length===1&&requestCount?requestRate/requestCount:null;
+  const options=profile?.executor_options;
+  const executor=options?.executor||(arrival?'constant-arrival-rate':'ramping-vus');
+  const iterations=options?.iterations;
+  const plannedIterations=executor==='per-vu-iterations'?iterations*peak:iterations;
+  const rateStages=options?.rate_stages||[];
   const inputs=reviewDraftInputs?.planId===currentPlanId?reviewDraftInputs:null;
-  const sourceLabel=(text)=>'<small class="review-source">'+esc(text)+'</small>';
+  const sourceLabel=(source,previous,current,subject='')=>{
+    if(!inputs) return '';
+    const key=JSON.stringify(previous)===JSON.stringify(current)?source:'edited';
+    const label={user:'From you',suggested:'Suggested by PerfAgent',profile:'Load shape uses profile defaults',
+      edited:'Edited in Review'}[key];
+    return label?'<small class="review-source">'+esc(subject?subject+' · '+label:label)+'</small>':'';
+  };
+  const targetValues=model=>[model.target_base_url,model.environment||'',Boolean(model.insecure_tls)];
   const stageNames={
     ramp:['Ramp up','Steady state','Ramp down'], soak:['Ramp up','Steady hold','Ramp down'],
     spike:['Baseline','Spike up','Peak hold','Drop','Recovery'],
@@ -682,11 +742,23 @@ function renderSummary(){
   }).join('');
   summary.innerHTML='<h3>What will run</h3><p>'+esc(requestCount)+' '+(requestCount===1?'request':'requests')+' across '+
     esc(scenarios.length)+' '+(scenarios.length===1?'journey':'journeys')+'</p><div class="review-summary-load"><strong>'+
-    esc(requestRate?requestRate+' requests/s':arrival?arrival+' iterations/s':peak+' peak VUs')+'</strong><span>'+esc(requestRate?'Constant request rate':typeLabel)+' · '+esc(duration)+' s</span></div>'+
-    (inputs?sourceLabel(JSON.stringify(profile)===inputs.profile?inputs.loadSource:'Edited in Review'):'')+
+    esc(requestRate?requestRate+' requests/s':arrival?arrival+' iterations/s':
+      iterations!=null?plannedIterations+' planned iterations':
+      rateStages.length?Math.max(options.start_rate,...rateStages.map(stage=>stage.target_rate))+' peak iterations/s':peak+' peak VUs')+
+    '</strong><span>'+esc(executor)+(options?'':' · '+esc(requestRate?'Constant request rate':arrival?'Constant journey rate':typeLabel))+' · '+esc(duration)+' s'+(iterations!=null?' max':'')+'</span></div>'+
+    sourceLabel(inputs?.sources.load,inputs?.snapshot.load_profile,profile)+
     reviewLoadChart(profile,stages,duration,peak)+
-    (arrival?'<p>'+esc(profile.pre_allocated_vus)+' preallocated VUs</p>'+(requestRate?'<p>One request per iteration. At least '+esc(requestRate*duration)+' HTTP requests and zero dropped iterations.</p>':'<p>Each iteration runs one journey and can send multiple requests.</p>'):stageRows?'<ol class="review-summary-list" aria-label="Load stages">'+stageRows+'</ol>':'')+
-    '<h4>Pass rules</h4>'+(inputs?sourceLabel(JSON.stringify(planModel.thresholds)===inputs.rules?inputs.ruleSource:'Edited in Review'):'')+
+    (arrival?'<p>'+esc(profile.pre_allocated_vus)+' preallocated VUs</p>'+(requestRate?
+      (journeyRate!=null?'<p>'+esc(requestRate)+' requests/s ÷ '+esc(requestCount)+' '+(requestCount===1?'request':'requests')+
+        ' per journey = '+esc(formatJourneyRate(journeyRate))+' journey starts/s. Actual throughput depends on completed requests and available VUs.</p>':
+        '<p>Combine requests into one ordered journey to generate an HTTP request-rate target.</p>')+
+      '<p>At least '+esc(requestRate*duration)+' HTTP requests and zero dropped iterations.</p>':
+      '<p>Each iteration starts one journey and can send multiple requests.</p>'):
+      rateStages.length?'<p>Start at '+esc(options.start_rate)+' iterations/s with '+esc(peak)+' preallocated VUs.</p><ol class="review-summary-list" aria-label="Arrival-rate stages">'+rateStages.map(stage=>'<li><span>'+esc(stage.duration_seconds)+' s</span><strong>'+esc(stage.target_rate)+' iterations/s at end</strong></li>').join('')+'</ol>':
+      iterations!=null?'<p>'+esc(peak)+' VUs · '+(executor==='per-vu-iterations'?esc(iterations)+' iterations per VU':'iterations shared across users')+'</p>':
+      executor==='constant-vus'?'<p>Hold '+esc(peak)+' virtual users for '+esc(duration)+' seconds.</p>':
+      stageRows?'<ol class="review-summary-list" aria-label="Load stages">'+stageRows+'</ol>':'')+
+    '<h4>Pass rules</h4>'+sourceLabel(inputs?.sources.thresholds,inputs?.snapshot.thresholds,planModel.thresholds)+
     (rules?'<ul class="review-summary-list">'+rules+'</ul>':'<p>No thresholds configured.</p>');
 
   const headers=Object.entries(readHeaders()).filter(([,value])=>value);
@@ -697,7 +769,7 @@ function renderSummary(){
     esc(headerCount?headerCount+(headerCount===1?' custom header':' custom headers'):'No custom headers')+
     (usesAuth?' · Authentication configured':'')+
     (planModel.insecure_tls?' · TLS verification off':'')+'</p>'+
-    (inputs?sourceLabel(planModel.target_base_url===inputs.target&&(planModel.environment||'')===inputs.environment?'From Describe':'Edited in Review'):'');
+    sourceLabel(inputs?.sources.target,inputs?targetValues(inputs.snapshot):null,targetValues(planModel));
 
   const columns=new Set(dataColumns);
   const allCaptures=capturedVars();
@@ -705,6 +777,9 @@ function renderSummary(){
   const requests=document.getElementById('reviewRequestsOverview');
   requests.innerHTML=scenarios.map((scenario,si)=>{
     const capturedHere=new Set();
+    const originalJourney=inputs?.snapshot.scenarios[si];
+    const journeySources=inputs?.sources.journeys[si];
+    const journeyFields=value=>value&&[value.name,value.weight,value.think_time];
     const rows=scenario.steps.map((step,sti)=>{
       const requestInputs=[step.path,...headers.map(([,value])=>value),...flattenBody(step.body||{}).map(field=>field.value)];
       const sources=new Set();
@@ -730,17 +805,22 @@ function renderSummary(){
       }
       const group=(label,values)=>values.length?'<div><strong>'+label+'</strong> '+values.map(esc).join(' · ')+'</div>':'';
       const checks=(step.assertions||[]).map(checkLabel);
-      const described=inputs?.endpoints.has((step.method||'GET')+' '+step.path);
+      const originalStep=originalJourney?.steps[sti];
+      const stepSources=journeySources?.steps[sti];
+      const endpoint=value=>value&&[value.method||'GET',value.path];
       return '<li class="review-request"><span class="review-method">'+esc(step.method||'GET')+'</span>'+
         '<div class="review-request-path"><code>'+esc(step.path||'Path required')+'</code>'+
         '<button type="button" class="btn ghost sm" data-review-step="'+si+':'+sti+
         '" aria-label="Edit '+esc((step.method||'GET')+' '+(step.path||'request'))+'">Edit</button></div>'+
-        '<div class="review-request-tags">'+(described?sourceLabel('Endpoint from Describe'):'')+
+        '<div class="review-request-tags">'+sourceLabel(stepSources?.endpoint,endpoint(originalStep),endpoint(step),'Endpoint')+
+        sourceLabel(stepSources?.body,originalStep?.body??null,step.body??null,'Request body')+
         group('Checks',checks.length?checks:['Default HTTP status check'])+
+        sourceLabel(stepSources?.checks,originalStep?.assertions||[],step.assertions||[],'Checks')+
         group('Changing inputs',[...sources,...unavailable])+group('Response values',captures)+'</div></li>';
     }).join('');
     return '<div class="review-journey"><div class="review-journey-title"><strong>'+esc(scenario.name||'Journey')+
-      '</strong><span>'+Math.round((scenario.weight||0)/totalWeight*100)+'% of traffic</span></div><ol>'+rows+'</ol></div>';
+      '</strong><span>'+Math.round((scenario.weight||0)/totalWeight*100)+'% of traffic</span>'+
+      sourceLabel(journeySources?.source,journeyFields(originalJourney),journeyFields(scenario))+'</div><ol>'+rows+'</ol></div>';
   }).join('')||'<p class="hint">Add a journey to define the requests.</p>';
   const reviewFindings=document.getElementById('reviewFindings');
   if(reviewFindings){
@@ -844,14 +924,86 @@ function renderLoad(){
   document.getElementById('pfType').value=l.type;
   document.getElementById('pfUsers').value=asked.users||l.users||'';
   document.getElementById('pfDuration').value=asked.duration||l.duration||'';
+  const options=planModel.load_profile.executor_options;
+  document.getElementById('pfType').disabled=Boolean(options);
+  document.getElementById('pfDuration').disabled=options?.executor==='ramping-arrival-rate';
+  document.getElementById('pfDuration').min=options?'1':'3';
+  document.getElementById('pfArrival').disabled=Boolean(options);
+  const rateLabel=document.getElementById('pfArrivalLabel');
+  if(rateLabel) rateLabel.textContent=planModel.load_profile.target_request_rate?
+    'Target HTTP requests per second':'Target journey starts per second (optional)';
+  document.getElementById('pfArrivalVus').disabled=Boolean(options);
   document.getElementById('pfShape').textContent = l.stages.length
     ? 'Load shape: '+l.stages.map(s=>s.target_users+' users for '+s.duration_seconds+'s').join(' → ') : '';
+  if(options) document.getElementById('pfShape').textContent=options.executor;
+  renderExecutorOptions(options);
+}
+function renderExecutorOptions(options){
+  const host=document.getElementById('pfExecutorOptions');
+  if(!host)return;
+  host.replaceChildren();
+  if(!options)return;
+  const numberInput=(label,value,min,apply)=>{
+    const field=document.createElement('label');
+    field.className='field';
+    field.textContent=label;
+    const input=document.createElement('input');
+    input.type='number';input.step='1';input.min=String(min);input.max='1000000';input.value=String(value);
+    input.onchange=()=>{
+      const next=input.valueAsNumber;
+      if(!input.checkValidity()||!Number.isInteger(next)||!apply(next)){
+        showError('Enter a valid whole number for '+label.toLowerCase()+'.');
+        input.value=String(value);
+        return;
+      }
+      value=next;
+      renderRawFromModel();
+      renderSummary();
+    };
+    field.append(input);
+    return field;
+  };
+  const profile=planModel.load_profile;
+  if(options.iterations!=null){
+    const shared=options.executor==='shared-iterations';
+    host.append(numberInput(shared?'Total iterations':'Iterations per virtual user',options.iterations,
+      shared?profile.stages[0].target_users:1,value=>{options.iterations=value;return true;}));
+  }
+  if(options.executor==='ramping-arrival-rate'){
+    const changeRate=(item,key,value)=>{
+      if(!value&&!(item!==options&&options.start_rate)&&
+        !options.rate_stages.some(stage=>stage!==item&&stage.target_rate))return false;
+      item[key]=value;
+      return true;
+    };
+    host.append(numberInput('Starting iterations per second',options.start_rate,0,value=>changeRate(options,'start_rate',value)));
+    options.rate_stages.forEach((stage,index)=>{
+      const row=document.createElement('div');row.className='grid2';
+      row.append(numberInput('Stage '+(index+1)+' duration (seconds)',stage.duration_seconds,1,value=>{
+        stage.duration_seconds=value;
+        const duration=options.rate_stages.reduce((sum,item)=>sum+item.duration_seconds,0);
+        profile.stages[0].duration_seconds=duration;
+        document.getElementById('pfDuration').value=String(duration);
+        return true;
+      }),numberInput('Stage '+(index+1)+' target iterations per second',stage.target_rate,0,value=>changeRate(stage,'target_rate',value)));
+      host.append(row);
+    });
+  }
 }
 async function updateLoad(){
   const users=parseInt(document.getElementById('pfUsers').value,10);
   const duration=parseInt(document.getElementById('pfDuration').value,10);
   const status=document.getElementById('genStatus');
   if(!(users>0) || !(duration>0)){ status.className='statusline err'; status.textContent='Peak users and duration must be whole numbers above 0.'; return; }
+  const options=planModel.load_profile.executor_options;
+  if(options){
+    if(options.executor==='shared-iterations'&&users>options.iterations){
+      status.className='statusline err'; status.textContent='Shared iterations must be at least the number of virtual users.';return;
+    }
+    planModel.load_profile.stages=[{target_users:users,duration_seconds:duration}];
+    _loadAsked=null;
+    renderLoad();renderSummary();return;
+  }
   try{
     const r=await fetch('/api/load-profile',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({type:document.getElementById('pfType').value,max_users:users,duration_seconds:duration})});
@@ -1461,6 +1613,7 @@ async function doGenerate(){
     const hdrs=readHeaders(); planModel.headers=hdrs; if(Object.keys(hdrs).length) payload.headers=hdrs;
     const r=await fetch(`/api/plan/${currentPlanId}/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'generate failed');
+    setReviewSources(j.review_sources);
     currentScriptId=j.script_id; _scriptEdited=false;
     if(!j.reused) document.getElementById('preflightResult').style.display='none';
     document.getElementById('scriptOut').textContent=j.content;
@@ -1926,12 +2079,18 @@ async function runScript(smoke=false){
   }finally{runStarting=false;}
 }
 async function pollRun(){
-  if(!currentRunId) return;
+  const runId=currentRunId, timer=pollTimer;
+  if(!runId) return;
   try{
-    const response=await fetch(`/api/runs/${currentRunId}`);
+    const response=await fetch(`/api/runs/${runId}`);
     if(!response.ok)throw new Error('Unable to refresh run status.');
     const j=await response.json();
+    if(runId!==currentRunId||timer!==pollTimer)return;
     const rs=document.getElementById('runStatus'); const pill=document.getElementById('runPill');
+    const updateStatus=(style,message)=>{
+      rs.className=style;
+      if(rs.textContent!==message)rs.textContent=message;
+    };
     pill.textContent=j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':j.status==='error'?'fail':'ghost');
     const s=j.snapshot||{}; const lat=s.latency||{}; window._lastSnap=s; window._lastElapsed=j.elapsed_s;
     document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
@@ -1939,7 +2098,13 @@ async function pollRun(){
     const planned=j.planned_load||{};
     document.getElementById('mRps').textContent=(s.rps??0)+(planned.requests_per_second?' / '+planned.requests_per_second:'');
     document.getElementById('mActiveVus').textContent=(s.active_vus??'—')+' / '+(planned.peak_users??'—');
-    document.getElementById('mIterationRate').textContent=(s.iterations_per_second??'—')+' / '+(planned.iterations_per_second??'—');
+    document.getElementById('mIterationRate').textContent=(s.iterations_per_second??'—')+' / '+(planned.iterations_per_second==null?'—':formatJourneyRate(planned.iterations_per_second));
+    const iterationsTile=document.getElementById('mIterationsTile');
+    if(iterationsTile){
+      iterationsTile.hidden=planned.iterations==null&&planned.iterations_per_second==null;
+      document.getElementById('mIterations').textContent=(s.iterations??0)+(planned.iterations==null?'':' / '+planned.iterations);
+      document.getElementById('mIterationsLabel').textContent=planned.iterations==null?'Iterations completed':'Iterations completed / planned';
+    }
     document.getElementById('mDroppedIterations').textContent=s.dropped_iterations??'—';
     document.getElementById('mErr').textContent=((s.error_rate??0)*100).toFixed(2)+'%';
     document.getElementById('mP95').textContent=(lat.p95_ms??0)+' ms';
@@ -1956,16 +2121,22 @@ async function pollRun(){
       document.getElementById('logCount').textContent='('+logs.length+' lines)';
       if(atBottom) pre.scrollTop=pre.scrollHeight;   // autoscroll unless user scrolled up
     }
-    if(j.status==='starting'||j.status==='preparing'){ rs.className='statusline'; rs.textContent=j.message||'Starting…'; }
-    else if(j.status==='running'){ rs.className='statusline'; rs.textContent='Running against '+j.target+' …'; }
+    if(j.status==='starting'||j.status==='preparing')updateStatus('statusline',j.message||'Starting…');
+    else if(j.status==='running')updateStatus('statusline','Running against '+j.target+' …');
     else{
       clearInterval(pollTimer); pollTimer=null;
       document.getElementById('runBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
-      if(j.status==='finished'){ rs.className='statusline ok'; rs.textContent='Run finished.'; loadReport(); }
-      else if(j.status==='stopped'){ rs.className='statusline'; rs.textContent=j.message||'Run stopped.'; loadReport(); }
-      else{ rs.className='statusline err'; rs.textContent='Run error: '+(j.message||'unknown'); }
+      if(j.status==='finished'){updateStatus('statusline ok','Run finished.');loadReport();}
+      else if(j.status==='stopped'){updateStatus('statusline',j.message||'Run stopped.');loadReport();}
+      else updateStatus('statusline err','Run error: '+(j.message||'unknown'));
     }
-  }catch(e){const status=document.getElementById('runStatus');status.className='statusline err';status.textContent='Status update failed: '+e.message+' Retrying...';}
+  }catch(e){
+    if(runId!==currentRunId||timer!==pollTimer)return;
+    const status=document.getElementById('runStatus');
+    const message='Status update failed: '+e.message+' Retrying…';
+    status.className='statusline err';
+    if(status.textContent!==message)status.textContent=message;
+  }
 }
 async function stopRun(){if(!currentRunId)return;try{const r=await fetch(`/api/runs/${currentRunId}/stop`,{method:'POST'});if(!r.ok)throw Error('Stop request failed.');}catch(e){showError(e.message);}}
 
@@ -2012,6 +2183,10 @@ function _lineChart(canvas, series, opts={}){
     x.fillText(labels[0],pad,H-10);
     x.textAlign='right'; x.fillText(labels[1],W-6,H-10); x.textAlign='left';
     x.strokeStyle='#777185'; x.beginPath(); x.moveTo(sx(opts.selected),8); x.lineTo(sx(opts.selected),H-pad); x.stroke();
+    if(Number.isFinite(opts.droppedAt)){
+      x.strokeStyle='#a32d2d'; x.lineWidth=2;
+      x.beginPath(); x.moveTo(sx(opts.droppedAt),8); x.lineTo(sx(opts.droppedAt),H-pad); x.stroke();
+    }
   }
   series.forEach(s=>{
     if(s.data.length<1) return;
@@ -2029,7 +2204,7 @@ function _lineChart(canvas, series, opts={}){
     });
   });
 }
-function drawTsChart(samples, phases=[]){
+function drawTsChart(samples, phases=[], dropped=null){
   const panel=document.getElementById('reportTimelineCharts');
   if(panel){
     const timeline=samples.filter(sample=>Number.isFinite(sample.t)).sort((a,b)=>a.t-b.t);
@@ -2040,6 +2215,9 @@ function drawTsChart(samples, phases=[]){
     phaseNote.textContent=phases.length?'Planned phases · '+phases.map(phase=>
       phase.label+' '+phase.start_s+'–'+phase.end_s+' s').join(' · '):'';
     const boundaries=phases.map(phase=>phase.end_s);
+    const marker=document.getElementById('reportDropMarker');
+    marker.hidden=!dropped;
+    marker.textContent=dropped?'Red marker · first recorded drops at '+dropped.elapsed_s+' s ('+dropped.count+' cumulative).':'';
     const input=document.getElementById('reportSampleIndex');
     input.max=String(timeline.length-1);
     input.value=input.max;
@@ -2050,7 +2228,8 @@ function drawTsChart(samples, phases=[]){
     const draw=()=>{
       const sample=timeline[Number(input.value)];
       readout.textContent=sample.t+' s · Throughput '+format(sample.rps,'req/s')+
-        ' · p95 '+format(sample.p95,'ms')+' · Errors '+format(sample.err,'%');
+        ' · p95 '+format(sample.p95,'ms')+' · Errors '+format(sample.err,'%')+
+        ' · Dropped iterations '+(sample.dropped_iterations??'Unavailable');
       input.setAttribute('aria-valuetext',sample.t+' seconds');
       for(const [id,key,color] of [
         ['reportLoadChart','rps','#0f7a5f'],
@@ -2058,7 +2237,7 @@ function drawTsChart(samples, phases=[]){
         ['reportErrorsChart','err','#b4342b'],
       ]){
         _lineChart(document.getElementById(id),[{data:timeline.map(item=>({x:item.t,y:item[key]})),color}],
-          {domain,selected:sample.t,boundaries});
+          {domain,selected:sample.t,boundaries,droppedAt:dropped?.elapsed_s});
       }
     };
     input.oninput=draw;
@@ -2117,7 +2296,8 @@ function renderReport(j){
     setK('kP95',lat.p95_ms==null?'Unavailable':lat.p95_ms+' ms'+(p95Rule?' / '+p95Rule.op+' '+p95Rule.target+' ms':''));
     setK('kP99', lat.p99_ms==null?'Unavailable':lat.p99_ms+' ms');
     setK('kAvg', lat.avg_ms==null?'Unavailable':lat.avg_ms+' ms');
-    drawTsChart(j.samples||[],j.execution?.planned_phases||[]); loadTrend(reportContext.planId);
+    const dropped=j.evidence?.first_dropped_sample;
+    drawTsChart(j.samples||[],j.execution?.planned_phases||[],dropped); loadTrend(reportContext.planId);
 
     // run logs panel (persisted with the report)
     window._reportLogs = j.logs || (j.snapshot&&j.snapshot.logs) || [];
@@ -2154,6 +2334,23 @@ function renderReport(j){
     const passed=j.evidence?.passed_count??checks.filter(check=>check.passed===true).length;
     document.getElementById('verdictSub').textContent=total?passed+' of '+total+' thresholds passed':n.headline||'';
     document.getElementById('reportSummary').textContent=n.summary||'No explanation was recorded for this run.';
+    const dropSummary=document.getElementById('reportDropsSummary');
+    const dropLink=document.getElementById('reportDropsLink');
+    dropSummary.hidden=!dropped&&!(s.dropped_iterations>0);
+    dropLink.textContent=dropped?'First recorded dropped iterations at '+dropped.elapsed_s+' s ('+dropped.count+' cumulative).':
+      'Timing is unavailable for the dropped iterations recorded in this run.';
+    dropLink.onclick=event=>{
+      event.preventDefault();
+      const timeline=document.getElementById('reportTimeline');
+      timeline.open=true;
+      timeline.querySelector('summary').focus();
+      if(dropped){
+        const index=[...samples].filter(sample=>Number.isFinite(sample.t)).sort((a,b)=>a.t-b.t)
+          .findIndex(sample=>sample.t===dropped.elapsed_s);
+        const picker=document.getElementById('reportSampleIndex');
+        if(index>=0){picker.value=String(index);picker.dispatchEvent(new Event('input'));}
+      }
+    };
     const partial=document.getElementById('reportPartial');
     partial.hidden=!(j.evidence?.partial??(j.status&&j.status!=='finished'));
     partial.textContent=partial.hidden?'':'The run ended early. Measurements are partial.';
@@ -2163,8 +2360,8 @@ function renderReport(j){
       : 'Timeline samples are unavailable for this run.';
     document.getElementById('reportTimelineData').hidden=!samples.length;
     document.getElementById('reportSampleTable').innerHTML=samples.length?
-      '<table><thead><tr><th scope="col">Elapsed (s)</th><th scope="col">p95 (ms)</th><th scope="col">Requests/s</th><th scope="col">Errors (%)</th></tr></thead><tbody>'+
-      samples.map(sample=>'<tr>'+[sample.t,sample.p95,sample.rps,sample.err].map(value=>'<td>'+esc(value??'—')+'</td>').join('')+'</tr>').join('')+
+      '<table><thead><tr><th scope="col">Elapsed (s)</th><th scope="col">p95 (ms)</th><th scope="col">Requests/s</th><th scope="col">Errors (%)</th><th scope="col">Dropped iterations (cumulative)</th></tr></thead><tbody>'+
+      samples.map(sample=>'<tr>'+[sample.t,sample.p95,sample.rps,sample.err,sample.dropped_iterations].map(value=>'<td>'+esc(value??'—')+'</td>').join('')+'</tr>').join('')+
       '</tbody></table>':'';
     document.getElementById('reportObs').innerHTML=(n.observations&&n.observations.length)?'<div class="mini">Observations</div><ul>'+n.observations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
     document.getElementById('reportRecs').innerHTML=(n.recommendations&&n.recommendations.length)?'<div class="mini">Recommendations</div><ul>'+n.recommendations.map(o=>`<li>${esc(o)}</li>`).join('')+'</ul>':'';
@@ -2226,12 +2423,48 @@ function downloadReport(){const id=reportContext?.savedId;if(id)location='/api/r
 
 
 /* ---------- AI call traces ---------- */
-async function loadTraces(){
+const tableRefreshes=new WeakMap();
+function beginTableRefresh(id,scope,columns){
+  const table=document.getElementById(id);
+  const previous=tableRefreshes.get(table);
+  if(previous?.scope===scope&&previous.busy) return null;
+  const state=previous?.scope===scope?previous:{scope,signature:null};
+  tableRefreshes.set(table,state);
+  state.busy=true;
+  table.setAttribute('aria-busy','true');
+  const body=table.tBodies[0];
+  if(state.signature===null) body.innerHTML=Array.from({length:3},()=>
+    '<tr aria-hidden="true">'+Array.from({length:columns},()=>'<td><span class="ui-skeleton skeleton-cell"></span></td>').join('')+'</tr>').join('');
+  return {
+    body,
+    accept(data){
+      if(tableRefreshes.get(table)!==state)return false;
+      const signature=JSON.stringify(data);
+      const changed=signature!==state.signature;
+      state.signature=signature;
+      return changed;
+    },
+    fail(message){
+      if(tableRefreshes.get(table)===state&&state.signature===null)
+        body.innerHTML='<tr><td colspan="'+columns+'">'+esc(message)+'</td></tr>';
+    },
+    finish(){
+      if(tableRefreshes.get(table)!==state)return;
+      state.busy=false;
+      table.removeAttribute('aria-busy');
+    },
+  };
+}
+
+async function loadTraces(background=false){
+  const loading=beginTableRefresh('tracesTable','activity',7);
+  if(!loading)return;
   try{
     const response=await fetch('/api/traces?limit=100'); if(!response.ok)throw Error('Request failed ('+response.status+')'); const j=await response.json();
     const sc={plan:'#534ab7',chat:'#2563a8',dynamize:'#9a6412',narrate:'#0f7a5f'};
     const realTraces=(j.traces||[]).filter(t=>(t.total_tokens>0)||(t.model&&t.model.trim())||t.status==='error');
-    document.querySelector('#tracesTable tbody').innerHTML=realTraces.map(t=>{
+    if(!loading.accept(realTraces))return;
+    loading.body.innerHTML=realTraces.map(t=>{
       const stCol=t.status==='error'?'#b4342b':'#0f7a5f';
       const stepCol=sc[t.step]||'#6b7280';
       return `<tr><td>${new Date(t.created_at).toLocaleString()}</td>`+
@@ -2242,17 +2475,23 @@ async function loadTraces(){
         `<td>${t.redactions||0}</td>`+
         `<td style="color:${stCol};font-weight:600">${esc(t.status)}${t.error?' — '+esc(t.error):''}</td></tr>`;
     }).join('')||'<tr><td colspan="7" class="muted">No AI calls yet.</td></tr>';
-  }catch(e){showError('AI traces could not be loaded: '+e.message);}
+  }catch(e){
+    loading.fail('AI traces could not be loaded.');
+    if(!background)showError('AI traces could not be loaded: '+e.message);
+  }finally{loading.finish();}
 }
 
 /* ---------- activity log ---------- */
-async function loadAudit(){
-  refreshUsage();
+async function loadAudit(background=false){
+  const loading=beginTableRefresh('auditTable','activity',5);
+  if(!loading)return;
+  if(!background)refreshUsage();
   try{
     const response=await fetch('/api/audit?limit=100'); if(!response.ok)throw Error('Request failed ('+response.status+')'); const j=await response.json();
     const colors={'plan.created':'#2563a8','plan.approved':'#9a6412','script.generated':'#0f6e56',
       'script.downloaded':'#6b7280','run.started':'#9a6412','run.finished':'#0f6e56'};
-    document.querySelector('#auditTable tbody').innerHTML=(j.events||[]).map(e=>{
+    if(!loading.accept(j.events||[]))return;
+    loading.body.innerHTML=(j.events||[]).map(e=>{
       const c=colors[e.action]||'#6b7280';
       const tok = e.tokens ? (e.tokens.toLocaleString()+' tok'+(e.cost_usd?(' · $'+e.cost_usd.toFixed(4)):'')) : '';
       return `<tr><td>${new Date(e.created_at).toLocaleString()}</td>`+
@@ -2260,7 +2499,10 @@ async function loadAudit(){
              `<td>${esc(e.target||'')}</td><td>${esc(e.summary||'')}</td>`+
              `<td style="color:var(--muted);white-space:nowrap">${tok}</td></tr>`;
     }).join('')||'<tr><td colspan="5" class="muted">No activity yet.</td></tr>';
-  }catch(e){showError('Activity could not be loaded: '+e.message);}
+  }catch(e){
+    loading.fail('Activity could not be loaded.');
+    if(!background)showError('Activity could not be loaded: '+e.message);
+  }finally{loading.finish();}
 }
 
 /* ---------- history ---------- */
@@ -2435,8 +2677,10 @@ function renderDashboardRegression(regression){
   baseline.onclick=()=>openSavedReport(baseline_id);
 }
 
-async function loadStakeholder(offset=0){
-  const request=++dashboardRequest;
+let dashboardPending=false, dashboardResultKey='', dashboardResultSignature='';
+async function loadStakeholder(offset=0,background=false){
+  if(!currentProject||background&&dashboardPending)return;
+  const projectId=currentProject.project_id;
   const role=document.getElementById('sdRole').value;
   const head=document.getElementById('sdHead');
   const body=document.querySelector('#sdTable tbody');
@@ -2453,11 +2697,21 @@ async function loadStakeholder(offset=0){
   targetField.disabled=role==='viewer';
   if(targetField.disabled) targetField.value='';
   const from=document.getElementById('sdFrom').value,to=document.getElementById('sdTo').value;
-  if(from&&to&&from>to){showError('From date must be before the through date.');return;}
+  if(from&&to&&from>to){if(!background)showError('From date must be before the through date.');return;}
+  const request=++dashboardRequest;
+  dashboardPending=true;
   dashboardOffset=offset;
-  document.getElementById('sdPage').textContent='Loading runs...';
+  const results=tiles.closest('.dashboard-results');
+  const refreshStatus=document.getElementById('sdRefreshStatus');
+  results?.setAttribute('aria-busy','true');
+  const initial=!dashboardResultKey.startsWith(projectId+'|');
+  if(initial){
+    results?.setAttribute('data-initial-load','');
+    tiles.innerHTML=Array.from({length:4},()=>'<div class="tile" aria-hidden="true"><span class="ui-skeleton skeleton-value"></span><span class="ui-skeleton skeleton-cell"></span></div>').join('');
+    document.getElementById('sdPage').textContent='Loading runs…';
+  }
   try{
-    const query=new URLSearchParams({role,limit:'50',offset:String(offset),project_id:currentProject.project_id,include_overview:'true'});
+    const query=new URLSearchParams({role,limit:'50',offset:String(offset),project_id:projectId,include_overview:'true'});
     if(document.getElementById('sdTest').value)query.set('plan_id',document.getElementById('sdTest').value);
     if(targetField.value.trim())query.set('target',targetField.value.trim());
     if(document.getElementById('sdVerdict').value)query.set('verdict',document.getElementById('sdVerdict').value);
@@ -2468,14 +2722,38 @@ async function loadStakeholder(offset=0){
     const response=await fetch('/api/reporting/runs?'+query);
     if(!response.ok) throw new Error('Runs could not be loaded. Please refresh to try again.');
     const j=await response.json();
-    if(request!==dashboardRequest)return;
+    if(request!==dashboardRequest||currentProject?.project_id!==projectId)return;
+    const key=projectId+'|'+query.toString(), signature=JSON.stringify(j);
+    if(refreshStatus)refreshStatus.textContent='Updated '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    if(key===dashboardResultKey&&signature===dashboardResultSignature)return;
+    dashboardResultKey=key;
+    dashboardResultSignature=signature;
+    if(background)loadProjectSummary(true);
     runs=j.runs||[];
     overview=j.overview||null;
     const total=j.total??runs.length;
     document.getElementById('sdPage').textContent=total?(offset+1)+' - '+(offset+runs.length)+' of '+total+' runs':'No matching runs';
     document.getElementById('sdPrev').disabled=offset===0;
     document.getElementById('sdNext').disabled=offset+runs.length>=total;
-  }catch(e){ if(request!==dashboardRequest)return; document.getElementById('sdPage').textContent='Could not load runs'; tiles.innerHTML=''; document.getElementById('sdComparison').textContent='Comparison unavailable. Refresh to retry.'; dashboardRuns=[]; empty.style.display='none'; dashboardTrend=[]; renderDashboardHistoryCharts(null,role); refreshDashboardTrend(); renderDashboardAttention(null); document.getElementById('sdPrev').disabled=true;document.getElementById('sdNext').disabled=true; body.innerHTML='<tr><td class="muted">Could not load: '+esc(e.message)+'</td></tr>'; return; }
+  }catch(e){
+    if(request!==dashboardRequest||currentProject?.project_id!==projectId)return;
+    if(refreshStatus)refreshStatus.textContent='Refresh failed. Retrying automatically.';
+    if(!initial&&background)return;
+    dashboardResultKey=''; dashboardResultSignature='';
+    document.getElementById('sdPage').textContent='Could not load runs'; tiles.innerHTML='';
+    document.getElementById('sdComparison').textContent='Comparison unavailable. Refresh to retry.';
+    dashboardRuns=[]; empty.style.display='none'; dashboardTrend=[];
+    renderDashboardHistoryCharts(null,role); refreshDashboardTrend(); renderDashboardAttention(null);
+    document.getElementById('sdPrev').disabled=true;document.getElementById('sdNext').disabled=true;
+    body.innerHTML='<tr><td class="muted">Could not load: '+esc(e.message)+'</td></tr>';
+    return;
+  }finally{
+    if(request===dashboardRequest){
+      dashboardPending=false;
+      results?.removeAttribute('aria-busy');
+      results?.removeAttribute('data-initial-load');
+    }
+  }
 
   if(request!==dashboardRequest) return;
   document.getElementById('sdFilterNote').textContent=overview
@@ -2580,16 +2858,17 @@ async function rerunReport(){
 }
 
 /* ---------- runs & reports history ---------- */
-async function loadRuns(){
+async function loadRuns(background=false){
   const projectId=currentProject?.project_id;
-  const table=document.querySelector('#runsTable tbody');
-  table.replaceChildren();
+  const loading=beginTableRefresh('runsTable',projectId,8);
+  if(!loading)return;
   try{
     const response=await fetch('/api/runs?limit=50'+projectQuery()); if(!response.ok)throw Error('Request failed ('+response.status+')'); const j=await response.json();
     if(currentProject?.project_id!==projectId)return;
+    if(!loading.accept(j.runs||[]))return;
     const badge=(v)=>{const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
       return '<span class="pill '+m[0]+'">'+m[1]+'</span>';};
-    table.innerHTML=(j.runs||[]).map(r=>
+    loading.body.innerHTML=(j.runs||[]).map(r=>
       `<tr><td>${new Date(r.created_at).toLocaleString()}</td>`+
       `<td>${badge(r.verdict)}</td>`+
       `<td>${esc(r.target||'')}</td><td><b>${esc(r.test_name||r.goal||'Unnamed test')}</b><br>${esc(r.script_name||'Not recorded')}<br><span class="muted">${esc(r.mode||'full')} | ${esc(r.endpoint_summary||'')}</span></td>`+
@@ -2598,7 +2877,10 @@ async function loadRuns(){
       `<td>${(r.p95_ms||0)} ms</td>`+
       `<td>${r.has_report?`<button class="btn sec sm" onclick="openSavedReport('${r.run_id}')">Open report</button>`:''}</td></tr>`
     ).join('') || '<tr><td colspan="8" class="muted">No runs yet — run a test to see it here.</td></tr>';
-  }catch(e){if(currentProject?.project_id===projectId)showError('Run history could not be loaded: '+e.message);}
+  }catch(e){if(currentProject?.project_id===projectId){
+    loading.fail('Run history could not be loaded.');
+    if(!background)showError('Run history could not be loaded: '+e.message);
+  }}finally{loading.finish();}
 }
 async function openSavedReport(id){
   try{
@@ -2609,33 +2891,36 @@ async function openSavedReport(id){
   }catch(e){ alert('Error opening report: '+e.message); }
 }
 
-async function loadPlans(){
+async function loadPlans(background=false){
   const project=currentProject;
+  if(!project)return;
+  const loading=beginTableRefresh('plansTable',project.project_id,3);
+  if(!loading)return;
   const status=document.getElementById('projectTestListStatus');
   try{
-  if(!project)return;
-  if(status){
+  if(status&&loading.body.querySelector('.ui-skeleton')){
     status.textContent='Loading project tests…';
-    document.querySelector('#plansTable tbody').replaceChildren();
     renderProjectFramework(project,[]);
   }
   const response=await fetch('/api/plans?project_id='+encodeURIComponent(project.project_id));if(!response.ok)throw Error('Plans could not be loaded.');
   const j=await response.json();
   if(currentProject?.project_id!==project.project_id) return;
+  if(!loading.accept([j.plans||[],project.repo_url,project.branch,project.framework_name,project.ci]))return;
   if(status){
     renderProjectTests(j.plans||[]);
     renderProjectFramework(project,j.plans||[]);
     return;
   }
-  document.querySelector('#plansTable tbody').innerHTML=j.plans.map(p=>
+  loading.body.innerHTML=j.plans.map(p=>
     `<tr class="histrow"><td>${new Date(p.created_at).toLocaleString()}</td><td>${esc(p.target)}</td>
      <td>${esc(p.goal||'')}</td><td>${p.script_count}</td>
      <td><button class="btn ghost sm" onclick="openPlan('${p.plan_id}')">Open</button></td></tr>`).join('');
   }catch(e){
     if(currentProject?.project_id!==project?.project_id)return;
-    if(status) status.textContent=e.message;
-    else showError(e.message);
-  }
+    loading.fail(e.message);
+    if(status&&!background) status.textContent=e.message;
+    else if(!status&&!background) showError(e.message);
+  }finally{loading.finish();}
 }
 
 function renderProjectTests(plans){
@@ -2699,7 +2984,8 @@ async function openPlan(id){
   document.getElementById('importNote').style.display='none';
   applyIntegrations(id);
   const j=await (await fetch(`/api/plans/${id}`)).json();
-  currentPlanId=id; planModel=j.load_model; planRationale=''; renderPlanForm(); renderRawFromModel();
+  currentPlanId=id; planModel=j.load_model; planRationale=''; setReviewSources(j.review_sources);
+  renderPlanForm(); renderRawFromModel();
   document.getElementById('guardrailBadge').style.display='none';
   document.getElementById('planEval').style.display='none';
   document.getElementById('planMeta').style.display='inline-flex';
@@ -2742,7 +3028,7 @@ function loadScriptHistory(){
   scriptHistoryRequest++;
   const load=async()=>{
     const request=++scriptHistoryRequest;
-    list.textContent='Loading versions…';
+    list.innerHTML='<p class="hint" role="status">Loading versions…</p><div aria-hidden="true"><span class="ui-skeleton skeleton-value"></span><span class="ui-skeleton skeleton-cell"></span></div>';
     preview.hidden=true;
     preview.textContent='';
     try{
@@ -3019,6 +3305,23 @@ function showView(v){
 
 publishView(v);
 }
+
+let workspaceRefreshTimer=null;
+function refreshVisibleWorkspace(){
+  if(document.hidden)return;
+  const view=document.querySelector('.view.show');
+  const focused=document.activeElement;
+  if(!view||view.contains(focused)&&focused.matches('input,select,textarea,button,a,summary,[tabindex]'))return;
+  if(view.id==='view-dashboard'&&currentProject){
+    loadStakeholder(dashboardOffset,true);
+  }else if(view.id==='view-history'&&currentProject){
+    loadPlans(true);
+    if(document.querySelector('.project-reports')?.open)loadRuns(true);
+  }else if(view.id==='view-activity'){
+    loadAudit(true);
+    loadTraces(true);
+  }
+}
 function toggleSidebar(){
   const sidebar=document.getElementById('sidebar');
   const collapsed=sidebar.classList.toggle('collapsed');
@@ -3116,12 +3419,17 @@ async function projectApi(url,options){
   return requestJson(url,options);
 }
 async function loadProjects(){
+  const cards=document.getElementById('projectCards');
+  if(!cards.childElementCount){
+    cards.setAttribute('aria-busy','true');
+    cards.innerHTML=Array.from({length:3},()=>'<div class="card project-skeleton" aria-hidden="true"><span class="ui-skeleton skeleton-value"></span><span class="ui-skeleton skeleton-cell"></span><span class="ui-skeleton skeleton-cell"></span></div>').join('');
+  }
   try{
     const j=await projectApi('/api/projects');projects=j.projects||[];
     if(currentProject)currentProject=projects.find(p=>p.project_id===currentProject.project_id)||null;
     document.getElementById('projectPicker').innerHTML='<option value="">Select project</option>'+projects.map(p=>'<option value="'+esc(p.project_id)+'">'+esc(p.name)+'</option>').join('');
     document.getElementById('projectPicker').value=currentProject?.project_id||'';
-    document.getElementById('projectCards').innerHTML=projects.map(p=>{
+    cards.innerHTML=projects.map(p=>{
       const initials=p.name.trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('').toUpperCase();
       return '<article class="card project-card"><div class="project-card-mark" aria-hidden="true">'+esc(initials)+'</div>'+
         '<h3>'+esc(p.name)+'</h3>'+(p.description?'<p>'+esc(p.description)+'</p>':'')+
@@ -3131,7 +3439,10 @@ async function loadProjects(){
     }).join('')||'<div class="card"><p>No projects yet. Create a project or import a framework to get started.</p></div>';
     document.querySelectorAll('#projectCards [data-project-id]').forEach(button=>button.onclick=()=>selectProject(button.dataset.projectId));
     renderProjectContext();
-  }catch(e){showError(e.message);}
+  }catch(e){
+    if(cards.querySelector('.project-skeleton')) cards.innerHTML='<p>Projects could not be loaded. Reopen Projects to retry.</p>';
+    showError(e.message);
+  }finally{cards.removeAttribute('aria-busy');}
 }
 function renderProjectContext(){
   document.getElementById('activeProject').style.display=currentProject?'block':'none';
@@ -3189,7 +3500,7 @@ function startNamedTest(){
   document.getElementById('draftP95').value='';
   document.getElementById('draftErrorRate').value='';
   document.getElementById('draftSchedule').value='users';
-  for(const id of ['draftRequestRate','draftRampUp','draftHold','draftRampDown']) document.getElementById(id).value='';
+  for(const id of ['draftRequestRate','draftJourneyRate','draftRampUp','draftHold','draftRampDown']) document.getElementById(id).value='';
   document.getElementById('endpoints').replaceChildren();
   addEndpoint();
   document.getElementById('goal').value=document.getElementById('newTestPurpose').value.trim();
@@ -3213,11 +3524,15 @@ publishRoute('/projects/' + encodeURIComponent(currentProject.project_id) + '/im
 async function attachCurrentTest(id,projectId,name){
   return projectApi('/api/plans/'+id+'/project',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId,test_name:name})});
 }
-async function loadProjectSummary(){
-  if(!currentProject)return;
-  try{const j=await projectApi('/api/projects/'+currentProject.project_id+'/dashboard'),s=j.summary;
-    document.getElementById('projectDashboardSummary').textContent=currentProject.name+' · '+s.tests+' tests · '+s.runs+' runs · '+Number(s.requests).toLocaleString()+' requests · pass rate '+(s.pass_rate==null?'unavailable':s.pass_rate+'%');}
-  catch(e){document.getElementById('projectDashboardSummary').textContent=e.message;}
+async function loadProjectSummary(background=false){
+  const project=currentProject;
+  if(!project)return;
+  const summary=document.getElementById('projectDashboardSummary');
+  if(summary.dataset.projectId!==project.project_id)summary.textContent='';
+  summary.dataset.projectId=project.project_id;
+  try{const j=await projectApi('/api/projects/'+project.project_id+'/dashboard'),s=j.summary;
+    if(currentProject?.project_id===project.project_id)summary.textContent=project.name+' · '+s.tests+' tests · '+s.runs+' runs · '+Number(s.requests).toLocaleString()+' requests · pass rate '+(s.pass_rate==null?'unavailable':s.pass_rate+'%');}
+  catch(e){if(!background&&currentProject?.project_id===project.project_id)summary.textContent=e.message;}
 }
 async function loadAdminOverview(){
   const host=document.getElementById('adminOverview');host.textContent='Loading all-project overview…';
@@ -3271,7 +3586,7 @@ function clearSelectedBaseline(){
   catch(e){showError('Could not clear the selected baseline.');}
 }
 function setTrafficRate(){
-  if(!planModel)return;
+  if(!planModel||planModel.load_profile.executor_options)return;
   const raw=document.getElementById('pfArrival').value,rate=Number(raw),vus=Number(document.getElementById('pfArrivalVus').value);
   if((raw&&(!Number.isInteger(rate)||rate<1||rate>1000000))||!Number.isInteger(vus)||vus<1||vus>1000000){showError('Use positive whole numbers up to 1,000,000 for iteration rate and preallocated users.');return;}
   if(planModel.load_profile.target_request_rate!=null) planModel.load_profile.target_request_rate=raw?rate:null;
@@ -3300,7 +3615,14 @@ async function checkReadiness(){
   try{
     await ensureScriptId();if(!currentScriptId)throw Error('Generate or import a script first.');
     const r=await fetch('/api/scripts/'+encodeURIComponent(currentScriptId)+'/readiness'),j=await r.json();if(!r.ok)throw Error(j.detail||'Readiness check failed.');
-    el.innerHTML='<b>Before you run</b><ul>'+j.checks.map(c=>'<li>'+esc(c.name)+': '+(c.ok?'Ready':'Review')+' — '+esc(c.detail)+'</li>').join('')+'</ul><p>'+esc(j.execution.duration_seconds)+' seconds · '+esc(j.execution.peak_users)+' peak users'+(j.execution.arrival_rate?' · '+esc(j.execution.arrival_rate)+' target iterations/s':'')+'</p><p>Verify test exercises the configured k6 journeys and checks with one virtual user. Validate checks script syntax without sending traffic.</p>';
+    const x=j.execution;
+    el.innerHTML='<b>Before you run</b><ul>'+j.checks.map(c=>'<li>'+esc(c.name)+': '+(c.ok?'Ready':'Review')+' — '+esc(c.detail)+'</li>').join('')+'</ul><p>'+
+      (x.generated&&!x.script_edited&&x.executor?esc(x.executor)+' · ':'')+esc(x.duration_seconds)+' seconds'+
+      (x.planned_iterations!=null&&!x.script_edited?' max · '+esc(x.planned_iterations)+' planned iterations':'')+
+      ' · '+esc(x.peak_users)+(x.executor==='ramping-arrival-rate'?' preallocated VUs':' peak users')+
+      (x.arrival_rate?' · '+esc(formatJourneyRate(x.arrival_rate))+' journey starts/s':'')+
+      (x.target_request_rate?' · '+esc(x.target_request_rate)+' target HTTP requests/s':'')+
+      '</p><p>Verify test exercises the configured k6 journeys and checks with one virtual user. Validate checks script syntax without sending traffic.</p>';
   }catch(e){el.className='note err';el.textContent=e.message;}
 }
 function renderReportDetails(j){
@@ -3318,11 +3640,17 @@ function renderReportDetails(j){
     (a.passed===false?0:a.passed==null?1:2)-(b.passed===false?0:b.passed==null?1:2));
   const rules=thresholdList.map(c=>'<tr><td>'+esc(c.metric)+'</td><td>'+esc(c.target==null?'':c.op+' '+formatThreshold(c.metric,c.target))+'</td><td>'+esc(formatThreshold(c.metric,c.actual))+'</td><td>'+(c.passed===true?'Pass':c.passed===false?'Fail':'Inconclusive')+'</td></tr>').join('');
   const measurements=[
-    [lat.samples,'latency samples'], [snap.iterations,'completed iterations'],
+    [lat.samples,'latency samples'], [snap.iterations,'completed iterations'], [x.script_edited?null:x.planned_iterations,'planned iterations'],
     [snap.iterations_per_second,'achieved iterations/s'], [snap.dropped_iterations,'dropped iterations'],
-    [x.target_request_rate,'target requests/s'], [x.target_request_rate?null:x.arrival_rate,'requested iterations/s'],
+    [x.script_edited?null:x.target_request_rate,'target requests/s'],
+    [!x.script_edited&&Number.isFinite(x.planned_iteration_rate??x.arrival_rate)?
+      formatJourneyRate(x.planned_iteration_rate??x.arrival_rate):null,'planned journey starts/s'],
     [snap.observed_peak_vus,'observed peak VUs'], [snap.bytes_sent,'bytes sent'], [snap.bytes_received,'bytes received'],
   ].filter(([value])=>value!=null).map(([value,label])=>esc(value)+' '+label).join(' · ');
+  const executor=x.generated&&!x.script_edited&&x.executor?'<p>Planned executor <strong>'+esc(x.executor)+'</strong></p>':'';
+  const throughputBasis=!x.script_edited&&x.requests_per_iteration?
+    '<p>Throughput plan uses '+esc(x.requests_per_iteration)+' HTTP '+(x.requests_per_iteration===1?'request':'requests')+
+    ' per completed journey.</p>':'';
   const journeyRows=(snap.per_journey||[]).map(journey=>'<tr>'+
     [journey.name,journey.requests,journey.failed,journey.iterations,journey.dropped_iterations,journey.checks_failed]
       .map(value=>'<td>'+esc(value)+'</td>').join('')+'</tr>').join('');
@@ -3349,6 +3677,7 @@ function renderReportDetails(j){
     </table></div>`;
   document.getElementById('reportDetails').innerHTML=`
     <h3>Measured workload</h3>
+    ${executor}${throughputBasis}
     <p>${measurements||'No workload measurements are available for this run.'}</p>
     <h3>Endpoint ranking</h3>
     ${endpoints.length?'<label for="reportEndpointMetric">Rank by</label> <select id="reportEndpointMetric"><option value="p95_ms">p95 latency</option><option value="failed">HTTP failures</option><option value="checks_failed">Failed response checks</option></select><ol id="reportEndpointRanking" class="report-endpoint-ranking"></ol>':''}
@@ -3665,6 +3994,8 @@ export async function initialize(){
  initialized=true;
  routeMuted=true;
  workspaceEvents=new AbortController();
+ workspaceRefreshTimer=setInterval(refreshVisibleWorkspace,30000);
+ document.addEventListener('visibilitychange',refreshVisibleWorkspace,{signal:workspaceEvents.signal});
  const properties={"projects":{configurable:true,get:()=>projects,set:value=>{projects=value;}},
 "currentProject":{configurable:true,get:()=>currentProject,set:value=>{currentProject=value;}},
 "editingProjectId":{configurable:true,get:()=>editingProjectId,set:value=>{editingProjectId=value;}},
@@ -3733,13 +4064,19 @@ export async function initialize(){
  }
  document.querySelectorAll('.step').forEach(s=>s.addEventListener('click',()=>{
   const n=+s.dataset.step;
-  // allow going back, or forward only if that step is reachable
-  if(n===1) goStep(1);
-  else if(n===2 && planModel) goStep(2);
-  else if(n===3 && currentScriptId) goStep(3);
-  else if(n===4 && currentRunId) goStep(4);
-  else if(n===5 && currentRunId) goStep(5);
+  if(canOpenStep(n))goStep(n);
 }, {signal:workspaceEvents.signal}));
+ document.querySelector('.modeswitch[role="tablist"]')?.addEventListener('keydown',event=>{
+   if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+   const tabs=[...event.currentTarget.querySelectorAll('[role="tab"]')].filter(tab=>tab.offsetWidth>0);
+   const current=tabs.indexOf(event.target);
+   if(current<0)return;
+   event.preventDefault();
+   const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:
+     (current+(event.key==='ArrowRight'?1:tabs.length-1))%tabs.length;
+   tabs[next].click();
+   tabs[next].focus();
+ },{signal:workspaceEvents.signal});
 applyIntegrations(null);
 (async()=>{ try{ const j=await (await fetch('/api/jenkins/settings')).json();
   if(j.allowed_hosts&&j.allowed_hosts.length) document.getElementById('jkHint').textContent+=' Allowed Jenkins hosts: '+j.allowed_hosts.join(', ')+'.'; }catch(e){} })();
@@ -3763,6 +4100,7 @@ loadTraces();
 export function dispose(){
  if(pollTimer)clearInterval(pollTimer);if(jk.timer)clearInterval(jk.timer);
  if(dashboardFilterTimer)clearTimeout(dashboardFilterTimer);
+ if(workspaceRefreshTimer)clearInterval(workspaceRefreshTimer);
  workspaceEvents?.abort();routeMuted=true;queuedRoute='';
  for(const [name,descriptor] of originalBindings){if(descriptor)Object.defineProperty(window,name,descriptor);else delete window[name];}
  originalBindings.clear();initialized=false;

@@ -52,7 +52,14 @@ export function App() {
   }, [location.pathname, location.search])
 
   return <>
-    {loading && <div className="spa-loading" role="status">Opening workspace…</div>}
+    {loading && <div className="spa-loading" role="status">
+      <span>Opening workspace…</span>
+      <div className="workspace-loading-preview" aria-hidden="true">
+        <span className="ui-skeleton skeleton-heading" />
+        <div><span className="ui-skeleton" /><span className="ui-skeleton" /><span className="ui-skeleton" /></div>
+        <span className="ui-skeleton skeleton-panel" />
+      </div>
+    </div>}
     {error && <main className="spa-error card" role="alert"><h1>Page unavailable</h1><p>{error}</p>
       <div className="btnrow"><button className="btn" onClick={() => { setError(''); navigate('/projects') }}>Go to projects</button>
         <a className="btn ghost" href="/legacy">Open the previous workspace</a></div></main>}

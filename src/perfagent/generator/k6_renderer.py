@@ -211,10 +211,10 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
 
     request_rate = model.load_profile.target_request_rate
     if request_rate is not None and (
-        len(model.scenarios) != 1 or len(model.scenarios[0].steps) != 1
+        len(model.scenarios) != 1
         or model.load_profile.arrival_rate != request_rate
     ):
-        raise ValueError("An HTTP request-rate target needs one journey with one request and a matching arrival rate.")
+        raise ValueError("An HTTP request-rate target needs one ordered journey and a matching rate.")
 
     fractions = model.normalised_weights()
     rates = _allocate(model.load_profile.arrival_rate, fractions) if model.load_profile.arrival_rate else [0] * len(fractions)
@@ -222,10 +222,24 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
     scenarios_meta = []
     scenario_funcs = []
     profile = model.load_profile
+    executor = profile.executor
+    options = profile.executor_options
+    open_model = executor in {"constant-arrival-rate", "ramping-arrival-rate"}
     if not profile.arrival_rate and max(profile.peak_users, profile.start_users) < len(fractions):
         raise ValueError("Peak users must be at least the number of journeys. Increase users or combine journeys.")
     targets = [_allocate_users(stage.target_users, fractions) for stage in profile.stages]
     starts = _allocate_users(profile.start_users, fractions)
+    rate_starts = [0] * len(fractions)
+    rate_targets = []
+    iterations = [options.iterations if options else None] * len(fractions)
+    if executor == "ramping-arrival-rate":
+        vus = targets[0]
+        rate_starts = _allocate(options.start_rate, fractions) if options.start_rate else rate_starts
+        rate_targets = [_allocate(stage.target_rate, fractions) if stage.target_rate else [0] * len(fractions)
+                        for stage in options.rate_stages]
+    if executor == "shared-iterations":
+        spare = _allocate_users(options.iterations - profile.peak_users, fractions)
+        iterations = [users + extra for users, extra in zip(targets[0], spare, strict=True)]
     for i, sc in enumerate(model.scenarios):
         scenarios_meta.append({
             "key": _identifier(sc.name, f"scenario_{i}").lower(),
@@ -235,11 +249,16 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
             "rate": rates[i],
             "vus": vus[i],
             "start_vus": starts[i],
+            "fixed_vus": targets[0][i],
+            "iterations": iterations[i],
+            "start_rate": rate_starts[i],
+            "rate_stages": [{"duration": stage.duration_seconds, "target": allocation[i]}
+                            for stage, allocation in zip(options.rate_stages if options else [], rate_targets, strict=True)],
         })
         scenario_funcs.append(_scenario_js(
             sc, i, cap, data_on, corr_on, has_headers, dynamic,
             row_mode=model.data_file.row_mode if data_on else "random",
-            scenario_count=len(model.scenarios), arrival=bool(model.load_profile.arrival_rate)))
+            scenario_count=len(model.scenarios), arrival=open_model))
 
     # extra imports (uuid generator) + headers declarations.
     # Build as a list and join, so the uuid import is never overwritten by the
@@ -268,7 +287,8 @@ def render_k6(model: LoadModel, filename: str = "loadtest.js") -> str:
         profile_type=model.load_profile.type.value,
         peak_users=model.load_profile.peak_users,
         total_seconds=model.load_profile.total_seconds,
-        arrival_rate=model.load_profile.arrival_rate,
+        executor=executor,
+        iteration_time_unit_seconds=model.iteration_time_unit_seconds,
         request_rate=request_rate,
         graceful_stop_seconds=model.load_profile.graceful_stop_seconds,
         scenarios=scenarios_meta,

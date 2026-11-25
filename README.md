@@ -198,7 +198,7 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 
 ## The 5-step workflow
 
-1. **Describe** the target, endpoints, response checks, and workload. Choose VU-based traffic or a request-rate goal for a single HTTP request per iteration.
+1. **Describe** the target, endpoints, response checks, and workload. Choose VU-based traffic, journey starts per second, or an HTTP request-rate goal for one ordered journey.
 2. **Review Plan** to inspect the draft, change any request, attach test data, and confirm checks and thresholds.
 3. **Verify** the generated or imported script. Validate its syntax, verify the requests and assertions, and optionally run a short smoke test.
 4. **Run** the load test and watch throughput, latency, errors, VUs, dropped iterations, and live logs.
@@ -228,6 +228,7 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 
 ### ⏱ Realistic load
 - **Test types** — ramp, spike, soak, stress, each a genuinely different load shape.
+- **Guided k6 executors** — ramping VUs, constant VUs, constant and ramping journey arrival rates, shared iterations, and per-VU iterations. For a constant HTTP request-rate goal, PerfAgent schedules the Describe endpoints as one ordered journey and shows the conversion in Review.
 - **Environment & TLS** — tag a run with an environment name (dev/staging/prod), and for test
   or dev hosts optionally **skip TLS certificate verification** (never against production).
 - **Protocols** — REST/HTTP and **GraphQL** (a step can send a `{query, variables}` request).
@@ -250,7 +251,7 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 
 ### 📊 Report & history
 - **Performance dashboard** shows comparable historical runs across latency, throughput, error rate, and daily outcomes, with environment and release filters and links to saved reports.
-- **Run report** opens with the verdict, What happened, and linked key evidence, followed by thresholds, synchronized timelines, endpoint rankings, and baseline comparison.
+- **Run report** opens with the verdict, What happened, and linked key evidence, followed by thresholds, synchronized timelines, endpoint rankings, and baseline comparison. When samples record dropped iterations, the report links to the first affected sample.
 - **Response checks panel** — each assertion with its pass/fail count, so you can see exactly
   which checks failed and why the run passed or failed.
 - **Run logs** — the full k6 output for the run is shown on the report, **saved with it**, and

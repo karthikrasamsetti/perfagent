@@ -12,6 +12,18 @@ from perfagent.api.test_identity import model_identity
 
 def planned_phases(model: LoadModel) -> list[dict]:
     profile = model.load_profile
+    if profile.executor_options:
+        options = profile.executor_options
+        if options.executor != "ramping-arrival-rate":
+            return [{"label": options.executor.replace("-", " ").capitalize(),
+                     "start_s": 0, "end_s": profile.total_seconds}]
+        elapsed = 0
+        phases = []
+        for stage in options.rate_stages:
+            end = elapsed + stage.duration_seconds
+            phases.append({"label": f"Target {stage.target_rate} iterations/s", "start_s": elapsed, "end_s": end})
+            elapsed = end
+        return phases
     if profile.arrival_rate:
         return [{"label": "Constant arrival rate", "start_s": 0, "end_s": profile.total_seconds}]
     phases = []
@@ -53,7 +65,11 @@ def freeze_script(session, script, model: LoadModel, *, generated=False):
         "duration_seconds": model.load_profile.total_seconds,
         "peak_users": model.load_profile.peak_users,
         "arrival_rate": model.load_profile.arrival_rate,
+        "planned_iteration_rate": model.planned_iteration_rate,
+        "requests_per_iteration": model.iteration_time_unit_seconds if model.load_profile.target_request_rate else None,
         "target_request_rate": model.load_profile.target_request_rate,
+        "executor": model.load_profile.executor,
+        "planned_iterations": model.load_profile.planned_iterations,
         "generated": generated,
     }
     saved = ScriptSnapshotRow(script_id=script.id, load_model_json=model_json,

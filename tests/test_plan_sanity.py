@@ -137,6 +137,7 @@ def test_explicit_checks_and_thresholds_survive_conversation_and_k6_generation()
     from perfagent.contracts.load_model import Assertion
     from perfagent.evaluation import evaluate_plan
     from perfagent.generator.k6_renderer import render_k6
+    from perfagent.planner.review_sources import draft_review_sources
 
     assertion = Assertion(kind="json_path", op="exists", path="order.id")
     previous = ChatIntent(
@@ -158,6 +159,9 @@ def test_explicit_checks_and_thresholds_survive_conversation_and_k6_generation()
     model = draft_plan(request, _Fake(suggested)).load_model
     assert model.thresholds == previous.thresholds
     assert model.scenarios[0].steps[0].assertions == [assertion]
+    sources = draft_review_sources(request, model)
+    assert sources["thresholds"] == "user"
+    assert sources["journeys"][0]["steps"][0]["checks"] == "user"
     assert evaluate_plan(model, request).grounded is True
     script = render_k6(model)
     assert "p(95)<=500" in script and "rate<0.01" in script
@@ -182,3 +186,33 @@ def test_exact_stages_and_request_rate_are_owned_by_the_planner():
     assert rate.load_model.load_profile.arrival_rate == 15
     assert rate.load_model.load_profile.target_request_rate == 15
     assert rate.load_model.load_profile.total_seconds == 60
+
+
+def test_multistep_http_rate_keeps_order_and_does_not_round_iteration_rate():
+    from perfagent.generator.k6_renderer import render_k6
+
+    endpoints = [EndpointSpec(method="POST", path="/login"), EndpointSpec(path="/cart"),
+                 EndpointSpec(method="POST", path="/checkout", example_body={"sku": "${sku}"})]
+    model = LoadModel(
+        target_base_url="https://fixture.test",
+        scenarios=[
+            Scenario(name="Cart", steps=[Step(name="Cart", path="/cart")]),
+            Scenario(name="Order", steps=[Step(name="Checkout", method="POST", path="/checkout"),
+                                          Step(name="Login", method="POST", path="/login")]),
+        ],
+        load_profile=_profile(),
+    )
+    args = {"target_base_url": model.target_base_url, "endpoints": endpoints, "duration_seconds": 6}
+    journey_rate = draft_plan(PlanRequest(**args, target_iteration_rate=4), _Fake(model.model_copy(deep=True))).load_model
+    assert journey_rate.planned_iteration_rate == 4
+    assert journey_rate.load_profile.target_request_rate is None
+    assert len(journey_rate.scenarios) == 2
+
+    plan = draft_plan(PlanRequest(**args, target_request_rate=14), _Fake(model)).load_model
+    assert len(plan.scenarios) == 1
+    assert [step.path for step in plan.scenarios[0].steps] == [item.path for item in endpoints]
+    assert plan.scenarios[0].steps[-1].body == {"sku": "${sku}"}
+    assert plan.planned_iteration_rate == 14 / 3
+    script = render_k6(plan)
+    assert "rate: 14," in script and "timeUnit: '3s'" in script
+    assert "'http_reqs': ['count>=84']" in script and "maxRedirects: 0" in script

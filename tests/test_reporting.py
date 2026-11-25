@@ -95,7 +95,8 @@ def test_report_leads_with_saved_explanation_and_orders_breaches_first():
             {"label": "Ramp up", "start_s": 0, "end_s": 5},
             {"label": "Steady state", "start_s": 5, "end_s": 15},
         ]}, status="finished", verdict=verdict,
-        samples=[{"t": 15, "rps": 12.8, "p95": 420}],
+        samples=[{"t": 15, "rps": 12.8, "p95": 420, "dropped_iterations": 2},
+                 {"t": 5, "rps": 10.0, "p95": 300, "dropped_iterations": 0}],
         narrative=Narrative(headline="Latency limit breached", summary="p95 reached 420 ms."),
     )
     assert html.index("What happened") < html.index("p95 reached 420 ms.") < html.index("Threshold results")
@@ -104,3 +105,5 @@ def test_report_leads_with_saved_explanation_and_orders_breaches_first():
     assert "<td>15</td><td>12.8</td><td>420</td><td>Unavailable</td>" in html
     assert "Planned phases · Ramp up 0–5 s" in html and 'class="phase-line"' in html
     assert "<figcaption>p95 latency (ms)</figcaption>" in html
+    assert 'href="#run-timeline">First recorded dropped iterations at 15 s (2 cumulative).' in html
+    assert 'class="phase-line drop-line"' in html

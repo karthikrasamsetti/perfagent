@@ -66,6 +66,7 @@ class PlanRow(Base):
     goal: Mapped[str] = mapped_column(Text, default="")
     # The full LoadModel stored as JSON text (model_dump_json).
     load_model_json: Mapped[str] = mapped_column(Text)
+    review_sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scripts: Mapped[list[ScriptRow]] = relationship(
         back_populates="plan", cascade="all, delete-orphan"

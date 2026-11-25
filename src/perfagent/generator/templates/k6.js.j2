@@ -28,18 +28,32 @@ export const options = {
   scenarios: {
 {% for scenario in scenarios %}
     {{ scenario.key }}: {
-{% if arrival_rate %}
-      executor: 'constant-arrival-rate',
+      executor: '{{ executor }}',
+{% if executor == 'constant-arrival-rate' %}
       rate: {{ scenario.rate }},
-      timeUnit: '1s',
+      timeUnit: '{{ iteration_time_unit_seconds }}s',
       duration: '{{ total_seconds }}s',
       preAllocatedVUs: {{ scenario.vus }},
-{% else %}
-      executor: 'ramping-vus',
+{% elif executor == 'ramping-arrival-rate' %}
+      startRate: {{ scenario.start_rate }},
+      timeUnit: '1s',
+      preAllocatedVUs: {{ scenario.vus }},
+      stages: [
+{% for st in scenario.rate_stages %}
+        { duration: '{{ st.duration }}s', target: {{ st.target }} },
+{% endfor %}
+      ],
+{% elif executor == 'constant-vus' %}
+      vus: {{ scenario.fixed_vus }},
+      duration: '{{ total_seconds }}s',
+{% elif executor in ['shared-iterations', 'per-vu-iterations'] %}
+      vus: {{ scenario.fixed_vus }},
+      iterations: {{ scenario.iterations }},
+      maxDuration: '{{ total_seconds }}s',
 {% endif %}
       exec: '{{ scenario.func_name }}',
       gracefulStop: '{{ graceful_stop_seconds }}s',
-{% if not arrival_rate %}
+{% if executor == 'ramping-vus' %}
       startVUs: {{ scenario.start_vus }},
       stages: [
 {% for st in scenario.stages %}

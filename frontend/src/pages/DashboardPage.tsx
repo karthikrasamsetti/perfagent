@@ -11,9 +11,8 @@ return <>
 <div className="card dashboard-results">
 <div className="section-header dashboard-heading">
 <h2>Performance overview</h2>
-<button className={"btn ghost sm"} onClick={handlers.h79}>
-{"↻ Refresh"}
-</button>
+<button className="btn ghost sm refresh-action" type="button" aria-label="Refresh dashboard" title="Refresh dashboard" onClick={handlers.h79}>↻</button>
+<small className="refresh-caption" id="sdRefreshStatus">Updates automatically</small>
 <div className={"spacer"}>
 
 </div>
@@ -107,6 +106,13 @@ return <>
 
 </div>
 <p className="muted dashboard-scope" id="sdActiveScope" />
+<div className="dashboard-loading-preview" aria-hidden="true">
+  <span className="ui-skeleton skeleton-heading" />
+  <div className="dashboard-chart-grid">
+    <span className="ui-skeleton skeleton-panel" />
+    <span className="ui-skeleton skeleton-panel" />
+  </div>
+</div>
 <div className="dashboard-findings">
 <section className="dashboard-attention" id="sdAttention" aria-label="Run to review" />
 <section className="dashboard-attention" id="sdRegression" aria-label="Regression from baseline" hidden />

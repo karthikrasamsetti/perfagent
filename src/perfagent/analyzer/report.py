@@ -24,7 +24,7 @@ def _badge(passed) -> str:
     return '<span class="badge na">INCONCLUSIVE</span>'
 
 
-def _timeline_charts(samples: list[dict], phases: list[dict]) -> str:
+def _timeline_charts(samples: list[dict], phases: list[dict], dropped: dict | None = None) -> str:
     def finite(value):
         return type(value) in (int, float) and isfinite(value) and value >= 0
 
@@ -37,6 +37,9 @@ def _timeline_charts(samples: list[dict], phases: list[dict]) -> str:
         f'<i class="phase-line" style="left:{phase["end_s"] / duration * 100:.4f}%"></i>'
         for phase in phases if finite(phase.get("end_s")) and 0 < phase["end_s"] < end
     )
+    if dropped:
+        position = dropped["elapsed_s"] / duration * 100
+        boundaries += f'<i class="phase-line drop-line" style="left:{position:.4f}%"></i>'
     charts = []
     for label, key in (("Throughput (requests/s)", "rps"), ("p95 latency (ms)", "p95"), ("Error rate (%)", "err")):
         points = [(sample["t"], sample[key]) for sample in recorded if finite(sample.get(key))]
@@ -73,7 +76,8 @@ def render_report_html(
     execution = execution or {}
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     esc = html.escape
-    evidence = report_evidence({"execution": execution, "snapshot": snapshot, "verdict": verdict, "status": status})
+    evidence = report_evidence({"execution": execution, "snapshot": snapshot, "verdict": verdict,
+                                "status": status, "samples": samples})
     threshold_count = evidence["total_thresholds"]
     threshold_note = (f"{evidence['passed_count']} of {threshold_count} thresholds passed"
                       if threshold_count else "No threshold outcomes were recorded.")
@@ -105,6 +109,13 @@ def render_report_html(
     throughput = cell(evidence["metrics"]["rps"])
     if evidence["metrics"]["target_rps"] is not None:
         throughput += " / " + cell(evidence["metrics"]["target_rps"])
+    planned_rate = execution.get("planned_iteration_rate")
+    rate_note = ""
+    if not execution.get("script_edited") and planned_rate is not None:
+        rate_note = f"<p>Planned journey starts/s {cell(round(planned_rate, 4))}"
+        if execution.get("requests_per_iteration"):
+            rate_note += f" · HTTP requests per journey {cell(execution['requests_per_iteration'])}"
+        rate_note += "</p>"
 
     ep_rows = "".join(
         f"<tr><td>{cell(e.get('name'))}</td><td>{cell(e.get('requests'))}</td><td>{cell(e.get('failed'))}</td>"
@@ -115,12 +126,17 @@ def render_report_html(
     journey_rows = rows(snapshot.get("per_journey", []), (
         "name", "requests", "failed", "iterations", "dropped_iterations", "checks_failed"))
     response_checks = rows(snapshot.get("checks", []), ("name", "passed", "failed"))
-    sample_rows = rows(samples or [], ("t", "rps", "p95", "err"))
+    sample_rows = rows(samples or [], ("t", "rps", "p95", "err", "dropped_iterations"))
+    dropped = evidence["first_dropped_sample"]
+    drop_note = (f"First recorded dropped iterations at {dropped['elapsed_s']} s "
+                 f"({dropped['count']} cumulative)." if dropped else
+                 "Timing is unavailable for the dropped iterations recorded in this run."
+                 if snapshot.get("dropped_iterations") else "")
     phases = execution.get("planned_phases") or []
     phase_note = " · ".join(
         f"{cell(phase.get('label'))} {cell(phase.get('start_s'))}–{cell(phase.get('end_s'))} s" for phase in phases
     )
-    timeline_charts = _timeline_charts(samples or [], phases)
+    timeline_charts = _timeline_charts(samples or [], phases, dropped)
     timing_rows = rows(
         ({"endpoint": endpoint.get("name"), "phase": name.replace("_", " "), **values}
          for endpoint in snapshot.get("per_endpoint", [])
@@ -167,6 +183,7 @@ def render_report_html(
   .timeline-chart {{ position:relative; height:80px; margin:4px 3px; border-bottom:1px solid #777; }}
   .timeline-chart i {{ position:absolute; width:4px; height:4px; color:#5545bb; background:currentColor; border-radius:50%; transform:translate(-50%,50%); }}
   .timeline-chart .phase-line {{ top:0; bottom:0; height:auto; width:0; border-left:1px dashed #777; border-radius:0; transform:none; }}
+  .timeline-chart .drop-line {{ border-left:2px solid #a32d2d; }}
   @media (max-width:540px) {{ .timeline-charts {{ grid-template-columns:1fr; }} }}
   footer {{ margin-top:36px; color:#9a988f; font-size:11px; }}
 </style></head><body>
@@ -181,6 +198,7 @@ def render_report_html(
 <p>{threshold_note}</p>{partial_note}
 <h2>What happened</h2>
 <p>{esc(narrative.summary)}</p>
+{f'<p><a href="#run-timeline">{esc(drop_note)}</a></p>' if drop_note else ''}
 
 <h2>Key metrics</h2>
 <div class="grid">
@@ -197,17 +215,21 @@ def render_report_html(
 <tbody>{checks_rows or '<tr><td colspan="4">No thresholds were defined.</td></tr>'}</tbody></table>
 
 <h2>Workload and latency</h2>
+{rate_note}
+{f"<p>Planned executor {cell(execution['executor'])}</p>" if execution.get('executor') and execution.get('generated') and not execution.get('script_edited') else ''}
 <p>Observed peak VUs {cell(snapshot.get('observed_peak_vus'))} · Iterations {cell(snapshot.get('iterations'))}
+{f" completed / {cell(execution['planned_iterations'])} planned" if execution.get('planned_iterations') is not None and not execution.get('script_edited') else ''}
 · Dropped iterations {cell(snapshot.get('dropped_iterations'))}</p>
 <p>Bytes sent {cell(snapshot.get('bytes_sent'))} · Bytes received {cell(snapshot.get('bytes_received'))}</p>
 <p>Average {latency(lat.get('avg_ms'))} · p50 {latency(lat.get('p50_ms'))} · p90 {latency(lat.get('p90_ms'))}</p>
 
-<h2>Run timeline</h2>
+<h2 id="run-timeline">Run timeline</h2>
 <p>Values summarize traffic observed up to each sample.</p>
 {f'<p>Planned phases · {phase_note}</p>' if phase_note else ''}
+{f'<p>{esc(drop_note)} The solid red line marks this sample.</p>' if dropped else ''}
 {timeline_charts}
-<table><thead><tr><th>Elapsed (s)</th><th>Requests/s</th><th>p95 (ms)</th><th>Errors (%)</th></tr></thead>
-<tbody>{sample_rows or '<tr><td colspan="4">Timeline samples are unavailable for this run.</td></tr>'}</tbody></table>
+<table><thead><tr><th>Elapsed (s)</th><th>Requests/s</th><th>p95 (ms)</th><th>Errors (%)</th><th>Dropped iterations (cumulative)</th></tr></thead>
+<tbody>{sample_rows or '<tr><td colspan="5">Timeline samples are unavailable for this run.</td></tr>'}</tbody></table>
 
 <h2>Per-endpoint</h2>
 <table><thead><tr><th>Endpoint</th><th>Requests</th><th>HTTP failures</th><th>Avg</th><th>p95</th><th>Failed response checks</th><th>Status counts</th></tr></thead>

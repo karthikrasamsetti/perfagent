@@ -444,11 +444,16 @@ def test_api_full_flow(client):
     assert v["status"] == "planned"
     plan_id = v["plan"]["plan_id"]
     # the plan flows into the existing pipeline unchanged
-    assert client.get(f"/api/plans/{plan_id}").status_code == 200
-    g = client.post(f"/api/plan/{plan_id}/generate", json={"tool": "k6"})
+    saved = client.get(f"/api/plans/{plan_id}").json()
+    assert saved["review_sources"] == v["plan"]["review_sources"]
+    assert saved["review_sources"]["journeys"][0]["steps"][0]["endpoint"] == "user"
+    saved["load_model"]["thresholds"][0]["value"] = 0.007
+    g = client.post(f"/api/plan/{plan_id}/generate", json={"tool": "k6", "load_model": saved["load_model"]})
     assert g.status_code == 200 and "/login" in g.json()["content"]
 
-    assert client.get(f"/api/chat/sessions/{sid}").json()["plan"]["plan_id"] == plan_id
+    reopened = client.get(f"/api/chat/sessions/{sid}").json()["plan"]
+    assert reopened["plan_id"] == plan_id
+    assert reopened["review_sources"]["thresholds"] == "edited"
     sessions = client.get("/api/chat/sessions").json()["sessions"]
     assert sessions[0]["session_id"] == sid and sessions[0]["plan_id"] == plan_id
 

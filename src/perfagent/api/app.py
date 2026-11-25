@@ -88,6 +88,7 @@ from perfagent.plan_summary import (
 from perfagent.planner import PlanRequest, draft_plan
 from perfagent.planner.planner import DraftEndpointMismatch
 from perfagent.planner.profile import build_profile
+from perfagent.planner.review_sources import draft_review_sources, update_review_sources
 from perfagent.preflight import preflight
 from perfagent.providers import build_provider
 from perfagent.request_data import preview_requests
@@ -469,6 +470,7 @@ def create_plan(request: PlanRequest) -> dict:
     except DraftEndpointMismatch as exc:
         raise HTTPException(422, str(exc)) from exc
     plan.load_model.test_name = request.test_name.strip() or plan.load_model.test_name
+    review_sources = draft_review_sources(request, plan.load_model)
     redaction_counts = getattr(provider, "last_redaction_counts", {}) or {}
 
     with get_session() as s:
@@ -482,6 +484,7 @@ def create_plan(request: PlanRequest) -> dict:
             target_base_url=plan.load_model.target_base_url,
             goal=request.goal,
             load_model_json=plan.load_model.model_dump_json(),
+            review_sources_json=json.dumps(review_sources),
         )
         s.add(row)
         s.commit()
@@ -499,6 +502,7 @@ def create_plan(request: PlanRequest) -> dict:
         "plan_id": plan.id,
         "provider": provider.name,
         "load_model": plan.load_model.model_dump(),
+        "review_sources": review_sources,
         "guardrail": _summarize_redactions(redaction_counts),
         "evaluation": plan_eval,
         "rationale": _plan_rationale(plan.load_model),
@@ -691,6 +695,13 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
         if body.headers:
             model.headers = {k: v for k, v in body.headers.items() if k and v}
 
+        # Persist source labels independently of the frozen execution model.
+        review_sources = None
+        if row.review_sources_json:
+            review_sources = update_review_sources(
+                json.loads(row.review_sources_json), LoadModel.model_validate_json(row.load_model_json), model,
+            )
+            row.review_sources_json = json.dumps(review_sources)
         # Persist the (possibly edited / data-attached) model.
         row.load_model_json = model.model_dump_json()
         row.target_base_url = model.target_base_url
@@ -737,6 +748,7 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
             "filename": script.filename,
             "content": script.content,
             "reused": reused,
+            "review_sources": review_sources,
         }
 
 
@@ -793,6 +805,7 @@ def get_plan(plan_id: str) -> dict:
             "target": row.target_base_url,
             "goal": row.goal,
             "load_model": LoadModel.model_validate_json(row.load_model_json).model_dump(),
+            "review_sources": json.loads(row.review_sources_json) if row.review_sources_json else None,
             "scripts": _plan_script_versions(s, row),
         }
 
@@ -1076,7 +1089,7 @@ def execution_readiness(script_id: str) -> dict:
                 "verification": _latest_verification(s, script_id) if saved is not None else None,
                 "execution": {**metadata, "duration_seconds": model.load_profile.total_seconds,
                               "peak_users": model.load_profile.peak_users,
-                              "arrival_rate": model.load_profile.arrival_rate},
+                              "arrival_rate": model.planned_iteration_rate},
                 "smoke_supported": script.tool == "k6" and bool(metadata.get("generated")) and not metadata.get("script_edited")}
 
 
@@ -1124,7 +1137,9 @@ def run_script(script_id: str, body: RunOptions | None = None) -> dict:
                                       metadata_json=json.dumps({**metadata, "duration_seconds": 10,
                                           "script_name": smoke_filename,
                                           "peak_users": model.load_profile.peak_users, "arrival_rate": None,
-                                          "mode": "smoke", "target_request_rate": None}))
+                                          "mode": "smoke", "target_request_rate": None,
+                                          "executor": model.load_profile.executor, "planned_iterations": None,
+                                          "planned_iteration_rate": None, "requests_per_iteration": None}))
             s.add(saved)
             metadata = json.loads(saved.metadata_json)
         if body.baseline_id:
@@ -1172,9 +1187,11 @@ def run_status(run_id: str) -> dict:
         "message": run.message,
         "elapsed_s": round((run.ended_at or time.time()) - run.started_at, 1),
         "planned_load": {
+            "iterations": run.metadata.get("planned_iterations") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") else None,
             "peak_users": run.metadata.get("peak_users") if run.metadata.get("generated")
             and not run.metadata.get("script_edited") and not run.metadata.get("arrival_rate") else None,
-            "iterations_per_second": run.metadata.get("arrival_rate") if run.metadata.get("generated")
+            "iterations_per_second": run.metadata.get("planned_iteration_rate", run.metadata.get("arrival_rate")) if run.metadata.get("generated")
             and not run.metadata.get("script_edited") else None,
             "requests_per_second": run.metadata.get("target_request_rate") if run.metadata.get("generated")
             and not run.metadata.get("script_edited") else None,

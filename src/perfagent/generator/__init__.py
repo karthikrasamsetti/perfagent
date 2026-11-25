@@ -37,8 +37,8 @@ def supported_tools() -> list[str]:
 def render(model: LoadModel, tool: str = DEFAULT_TOOL) -> tuple[str, str]:
     """Render a LoadModel for `tool`. Returns (filename, content)."""
     key = tool.lower()
-    if model.load_profile.arrival_rate and key != "k6":
-        raise ValueError("Target iteration-rate execution currently supports k6 only.")
+    if (model.load_profile.arrival_rate or model.load_profile.executor_options) and key != "k6":
+        raise ValueError("This traffic schedule currently supports k6 only.")
     if key not in _RENDERERS:
         raise ValueError(
             f"unsupported tool {tool!r}; supported: {', '.join(supported_tools())}"

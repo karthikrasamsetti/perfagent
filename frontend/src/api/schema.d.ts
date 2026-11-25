@@ -1505,6 +1505,23 @@ export interface components {
             /** Assertions */
             assertions?: components["schemas"]["Assertion"][] | null;
         };
+        /** ExecutorOptions */
+        ExecutorOptions: {
+            /**
+             * Executor
+             * @enum {string}
+             */
+            executor: "constant-vus" | "ramping-arrival-rate" | "shared-iterations" | "per-vu-iterations";
+            /** Iterations */
+            iterations?: number | null;
+            /**
+             * Start Rate
+             * @default 0
+             */
+            start_rate?: number;
+            /** Rate Stages */
+            rate_stages?: components["schemas"]["RateStage"][];
+        };
         /** ExportBody */
         ExportBody: {
             /**
@@ -1689,12 +1706,12 @@ export interface components {
             stages: components["schemas"]["Stage"][];
             /**
              * Arrival Rate
-             * @description Journey iterations per second; k6 only.
+             * @description Constant arrival numerator. HTTP rate goals use a time unit of one second per request in the journey.
              */
             arrival_rate?: number | null;
             /**
              * Target Request Rate
-             * @description HTTP requests per second for a single-request k6 test.
+             * @description HTTP requests per second for one ordered k6 journey.
              */
             target_request_rate?: number | null;
             /**
@@ -1712,6 +1729,7 @@ export interface components {
              * @default 0
              */
             start_users?: number;
+            executor_options?: components["schemas"]["ExecutorOptions"] | null;
         };
         /** LoadProfileBody */
         LoadProfileBody: {
@@ -1774,8 +1792,11 @@ export interface components {
             thresholds?: components["schemas"]["Threshold"][] | null;
             /** Target Request Rate */
             target_request_rate?: number | null;
+            /** Target Iteration Rate */
+            target_iteration_rate?: number | null;
             /** Stages */
             stages?: components["schemas"]["Stage"][] | null;
+            executor_options?: components["schemas"]["ExecutorOptions"] | null;
         };
         /** PreflightBody */
         PreflightBody: {
@@ -1825,6 +1846,13 @@ export interface components {
             framework_name?: string;
             /** Ci */
             ci?: string[];
+        };
+        /** RateStage */
+        RateStage: {
+            /** Duration Seconds */
+            duration_seconds: number;
+            /** Target Rate */
+            target_rate: number;
         };
         /** RequestPreviewBody */
         RequestPreviewBody: {
