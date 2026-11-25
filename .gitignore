@@ -44,3 +44,6 @@ sample_session.har
 branches.csv
 products.csv
 users.csv
+
+# Static demo build
+/frontend/dist-demo/

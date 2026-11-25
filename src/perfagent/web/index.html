@@ -1051,7 +1051,7 @@
         <button class="btn" onclick="downloadReport()" style="background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.3)">⬇ Download report</button>
       </div>
 
-      <div class="btnrow" style="margin:16px 0"><button class="btn" id="rerunBtn" onclick="rerunReport()" disabled>Run again</button><span class="muted" id="rerunNote" role="status"></span></div>
+      <div class="btnrow" style="margin:16px 20px"><button class="btn" id="rerunBtn" onclick="rerunReport()" disabled>Run again</button><span class="muted" id="rerunNote" role="status"></span></div>
       <div class="btnrow"><button class="btn ghost sm" onclick="selectReportBaseline()">Use as baseline</button><button class="btn ghost sm" onclick="clearSelectedBaseline()">Clear selected baseline</button><span class="muted" id="baselineSelection" role="status"></span></div>
       <div id="reportContext" class="note info"></div>
       <!-- KPI tiles -->
@@ -3412,7 +3412,14 @@ async function rerunReport(){
     const content=await response.text();
     currentScriptId=context.scriptId; currentPlanId=context.planId; currentDataFileId=null; _scriptEdited=false;
     document.getElementById('scriptOut').textContent=content;
-    await runScript();
+    document.getElementById('scriptEdit').style.display='none';
+    document.getElementById('scriptOut').style.display='block';
+    for(const id of ['runBtn','preflightBtn','validateBtn','dlBtn']){
+      document.getElementById(id).disabled=false;
+    }
+    document.getElementById('releaseLabel').value='';
+    goStep(3);
+    document.getElementById('releaseLabel').focus();
   }catch(e){document.getElementById('rerunNote').textContent=e.message;}
   finally{button.disabled=false;}
 }

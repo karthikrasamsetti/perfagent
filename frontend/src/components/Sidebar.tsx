@@ -1,28 +1,30 @@
-import { handlers } from '../workspace/controller'
+import { Icon } from './Icon'
+import { handlers, showView } from '../workspace/controller'
 
 const sections = [
   {
     label: 'Workspace',
     items: [
-      { label: 'Projects', icon: '▦', view: 'projects', onClick: handlers.h97 },
-      { label: 'Create test', icon: '+', view: 'create', onClick: handlers.h98 },
-      { label: 'Project workspace', icon: '▤', view: 'history', onClick: handlers.h102 },
+      { label: 'Home', icon: 'home' as const, view: 'home', onClick: () => showView('home') },
+      { label: 'Projects', icon: 'projects' as const, view: 'projects', onClick: handlers.h97 },
+      { label: 'Create test', icon: 'add' as const, view: 'create', onClick: handlers.h98 },
+      { label: 'Project workspace', icon: 'workspace' as const, view: 'history', onClick: handlers.h102 },
     ],
   },
   {
     label: 'Results',
     items: [
-      { label: 'Dashboard', icon: '▥', view: 'dashboard', onClick: handlers.h101 },
-      { label: 'Monitoring', icon: '◉', view: 'monitoring', onClick: handlers.h103 },
-      { label: 'Activity', icon: '≡', view: 'activity', onClick: handlers.h104 },
+      { label: 'Dashboard', icon: 'dashboard' as const, view: 'dashboard', onClick: handlers.h101 },
+      { label: 'Monitoring', icon: 'pulse' as const, view: 'monitoring', onClick: handlers.h103 },
+      { label: 'Activity', icon: 'activity' as const, view: 'activity', onClick: handlers.h104 },
     ],
   },
   {
     label: 'Tools',
     items: [
-      { label: 'Import script', icon: '↥', onClick: handlers.h99 },
-      { label: 'Git framework', icon: '⑂', onClick: handlers.h100 },
-      { label: 'Administration', icon: '⚙', view: 'admin', onClick: handlers.h105 },
+      { label: 'Import script', icon: 'upload' as const, onClick: handlers.h99 },
+      { label: 'Git framework', icon: 'git' as const, onClick: handlers.h100 },
+      { label: 'Administration', icon: 'shield' as const, view: 'admin', onClick: handlers.h105 },
     ],
   },
 ]
@@ -40,8 +42,8 @@ export function Sidebar() {
         <div className="sb-logo" aria-hidden="true"><i /><i /><i /></div>
         <span className="sb-title">PerfAgent</span>
         <button className="sb-toggle" onClick={handlers.h96} title="Collapse sidebar"
-          aria-label="Collapse sidebar" aria-expanded="true" aria-controls="sidebar">«</button>
-        <button className="sb-mobile-close" onClick={handlers.h117} aria-label="Close navigation">×</button>
+          aria-label="Collapse sidebar" aria-expanded="true" aria-controls="sidebar"><Icon name="collapse" /></button>
+        <button className="sb-mobile-close" onClick={handlers.h117} aria-label="Close navigation"><Icon name="close" /></button>
       </div>
       <div className="sb-nav">
         {sections.map(section => (
@@ -51,7 +53,7 @@ export function Sidebar() {
               <button key={item.label} className={'sb-item' + (item.view === 'projects' ? ' active' : '')}
                 data-view={item.view} aria-label={item.label}
                 aria-current={item.view === 'projects' ? 'page' : undefined} onClick={item.onClick}>
-                <span className="sb-ic" aria-hidden="true">{item.icon}</span>
+                <span className="sb-ic" aria-hidden="true"><Icon name={item.icon} /></span>
                 <span className="sb-lbl">{item.label}</span>
               </button>
             ))}

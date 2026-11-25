@@ -130,3 +130,70 @@ def test_invalid_project_configuration_is_rejected(setup):
     client, _, _, _, _ = setup
     assert client.post('/api/projects', json={'name': '  '}).status_code == 422
     assert client.post('/api/projects', json={'name': 'Test', 'repo_url': 'https://user:secret@github.com/org/repo'}).status_code == 422
+
+
+def test_managed_grants_scope_lists_and_direct_resource_access(setup, monkeypatch):
+    from perfagent.api import access
+    from perfagent.config import Settings
+
+    client, engine, api, script_id, _ = setup
+    allowed = project(client, "Commerce")["project_id"]
+    denied = project(client, "Payments")["project_id"]
+    assert client.put("/api/plans/plan/project", json={"project_id": allowed}).status_code == 200
+    imported = client.post("/api/scripts/upload", json={
+        "project_id": denied, "test_name": "Other test", "filename": "other.js",
+        "content": "export default function(){}",
+    })
+    assert imported.status_code == 200, imported.text
+    other_plan = imported.json()["plan_id"]
+    with Session(engine) as session:
+        session.add(RunResultRow(id="other-run", plan_id=other_plan))
+        session.add(RunResultRow(id="visible-run", plan_id="plan", report_json='{"status":"finished"}'))
+        session.commit()
+
+    settings = Settings(
+        perfagent_access_mode="managed",
+        perfagent_gateway_secret=SecretStr("fixture-" * 5),
+        perfagent_workspace_members={"viewer", "editor"},
+        perfagent_project_grants={"viewer": {allowed: "viewer"}, "editor": {allowed: "editor"}},
+    )
+    monkeypatch.setattr(access, "get_settings", lambda: settings)
+
+    def headers(subject):
+        return {
+            "X-PerfAgent-Gateway-Secret": "fixture-" * 5,
+            "X-PerfAgent-Subject": subject,
+            "X-PerfAgent-Assurance": "mfa",
+        }
+
+    viewer, editor = headers("viewer"), headers("editor")
+    projects = client.get("/api/projects", headers=viewer).json()["projects"]
+    assert [item["project_id"] for item in projects] == [allowed]
+    assert client.get("/api/plans", headers=viewer).status_code == 403
+    assert client.get("/api/plans", params={"project_id": allowed}, headers=viewer).status_code == 200
+    assert client.get("/api/plans", params={"project_id": denied}, headers=editor).status_code == 404
+    assert client.get("/api/plans/plan", headers=viewer).status_code == 404
+    assert client.get("/api/plans/plan", headers=editor).status_code == 200
+    assert client.get(f"/api/plans/{other_plan}", headers=editor).status_code == 404
+    assert client.get(f"/api/scripts/{script_id}/download", headers=viewer).status_code == 404
+    assert client.get(f"/api/scripts/{script_id}/download", headers=editor).status_code == 200
+    assert client.get("/api/runs/other-run/saved-report", headers=editor).status_code == 404
+    report = client.get("/api/runs/visible-run/saved-report", headers=viewer)
+    assert report.json()["project_id"] == allowed
+    assert client.put("/api/runs/visible-run/release-policy", headers=viewer,
+                      json={"budgets": {"max_p95_ms": 100}}).status_code == 404
+    assert client.get("/api/audit", headers=editor).status_code == 403
+    settings.perfagent_managed_k6_image = "grafana/k6@sha256:" + "1" * 64
+    calls = []
+
+    def inspect_image(image, content, filename, data):
+        calls.append((image, content))
+        return {"ok": True, "status": "ok"}
+
+    monkeypatch.setattr(api, "validate_isolated", inspect_image)
+    validate_path = f"/api/scripts/{script_id}/validate"
+    assert client.post(validate_path, headers=viewer).status_code == 404
+    assert client.post(validate_path, headers=editor).json()["ok"] is True
+    assert len(calls) == 1
+    assert calls[0][0] == settings.perfagent_managed_k6_image
+    assert client.post(f"/api/scripts/{script_id}/run", headers=editor).status_code == 403

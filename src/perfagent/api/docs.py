@@ -319,6 +319,9 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "Reports & history", "Reopen a saved report",
         "A previously saved report, exactly as it was produced.",
         returns="The saved report."),
+    ("PUT", "/api/runs/{run_id}/release-policy"): _e(
+        "Reports & history", "Approve a release baseline",
+        "Set the reference run and release budgets for its test environment.", access="write"),
     ("GET", "/api/reporting/runs"): _e(
         "Reports & history", "Run history for a stakeholder role",
         "Past runs, newest first, with each run's fields limited to what the given role "

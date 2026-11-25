@@ -19,26 +19,46 @@ If that fails (e.g. offline), the run is marked 'error' with a clear message.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from perfagent.config import get_settings
+from perfagent.contracts.load_model import LoadModel
 from perfagent.data.filenames import safe_runner_data_filename
+from perfagent.generator import render
 from perfagent.guardrails.redaction import redact_text, restore
+from perfagent.runner.admission import admission_checks, https_origin
+from perfagent.runner.docker_worker import docker_worker
 from perfagent.runner.k6_binary import K6Unavailable, ensure_k6, find_k6, k6_ready_or_provisionable
+from perfagent.runner.managed_egress import ManagedEgress
 from perfagent.runner.process_environment import k6_process_environment
+from perfagent.runner.worker_protocol import WORKER_SUMMARY_TYPE
 from perfagent.stats import Aggregator
 
 # k6's exit code when the script itself calls exec.test.abort().
 _K6_SCRIPT_ABORTED = 108
 
 _MAX_LOG_LINES = 1000   # keep the log buffer bounded
+
+
+@dataclass(frozen=True)
+class ManagedWorkerOptions:
+    """Trusted supervisor settings, supplied by the application and never a request body."""
+
+    image: str
+    pinned_address: str
+    approved_origins: tuple[str, ...]
+    max_rps: int
+    max_vus: int
+    max_seconds: int
 
 
 @dataclass
@@ -66,6 +86,8 @@ class RunState:
     samples: list[dict] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
     _proc: subprocess.Popen | None = None
+    _managed: ManagedWorkerOptions | None = None
+    _stop_egress: Callable[[], None] | None = None
     _stop_requested: bool = False
     _deadline_reached: bool = False
     _log_secrets: tuple[str, ...] = ()
@@ -101,6 +123,8 @@ def stop_run(run_id: str) -> bool:
     run = _RUNS.get(run_id)
     if run and run._proc and run.status == "running" and run._proc.poll() is None:
         run._stop_requested = True
+        if run._stop_egress:
+            run._stop_egress()
         run._proc.terminate()
         return True
     return False
@@ -116,6 +140,8 @@ def start_run(
     data_filename: str = "",
     data_content: str = "",
     metadata: dict | None = None,
+    *,
+    managed: ManagedWorkerOptions | None = None,
 ) -> RunState:
     """Launch k6 for the given script content. Returns the RunState immediately;
     a background thread keeps parsing output and updating the snapshot."""
@@ -125,6 +151,22 @@ def start_run(
     run.data_filename = data_filename
     run.data_content = data_content
     run.metadata = dict(metadata or {})
+    if managed:
+        model = LoadModel.model_validate_json(load_model_json)
+        checks = admission_checks(
+            model, run.metadata, list(managed.approved_origins), max_vus=managed.max_vus,
+            max_seconds=managed.max_seconds, max_requests_per_second=managed.max_rps,
+        )
+        if tool != "k6" or model.target_base_url != target or not all(check["ok"] for check in checks):
+            raise ValueError("The frozen managed workload is outside the approved execution policy.")
+        if render(model, "k6")[1] != content:
+            raise ValueError("The managed script differs from the generated frozen workload.")
+        run._managed = managed
+        run.metadata["execution_transport"] = "managed_broker"
+        fingerprint = run.metadata.get("workload_version") or load_model_json + content + data_content
+        run.metadata["workload_version"] = hashlib.sha256(
+            ("managed-broker-v1:" + fingerprint).encode()
+        ).hexdigest()
     if tool != "k6":
         run.status = "error"
         run.message = f"live run is only implemented for k6 (got {tool!r})"
@@ -157,7 +199,10 @@ def start_run(
 
 def _run_with_limits(run: RunState, content: str, max_seconds: int) -> None:
     try:
-        _run_worker(run, content, max_seconds)
+        if run._managed is not None:
+            _run_managed_worker(run, content, run._managed)
+        else:
+            _run_worker(run, content, max_seconds)
     except Exception:
         run.message = "The load runner could not complete this run."
         run.ended_at = time.time()
@@ -177,6 +222,8 @@ def _run_with_limits(run: RunState, content: str, max_seconds: int) -> None:
 def _expire_run(run: RunState, proc: subprocess.Popen) -> None:
     if proc.poll() is None:
         run._deadline_reached = True
+        if run._stop_egress:
+            run._stop_egress()
         proc.kill()
 
 
@@ -285,6 +332,43 @@ def _run_worker(run: RunState, content: str, max_seconds: int) -> None:
         run.ended_at = time.time()
         return
 
+    run.status = _collect_run(run, proc, max_seconds, summary_path)
+
+
+def _run_managed_worker(run: RunState, content: str, policy: ManagedWorkerOptions) -> None:
+    from perfagent.runner.worker_bridge import worker_bridge
+
+    model = LoadModel.model_validate_json(run.load_model_json)
+    profile = model.load_profile
+    origin = https_origin(run.target)
+    if not origin:
+        raise ValueError("The managed target must use HTTPS.")
+    clients = min(policy.max_vus, profile.pre_allocated_vus)
+    seconds = min(policy.max_seconds, profile.total_seconds + profile.graceful_stop_seconds)
+    rate = profile.target_request_rate
+    if rate is None:
+        raise ValueError("Managed workloads require a request-rate target.")
+    broker = ManagedEgress(
+        origin, policy.pinned_address, max_rps=rate, max_active=clients, max_seconds=seconds,
+    )
+    run._stop_egress = broker.close
+    try:
+        with worker_bridge(broker, max_clients=clients) as bridge:
+            with docker_worker(
+                policy.image, bridge, content, max_seconds=seconds, max_clients=clients,
+                data_filename=run.data_filename, data_content=run.data_content,
+            ) as process:
+                run.run_start_ts = time.time()
+                status = _collect_run(run, process, seconds)
+        run.status = status
+    finally:
+        broker.close()
+        run._stop_egress = None
+
+
+def _collect_run(
+    run: RunState, proc: subprocess.Popen, max_seconds: int, summary_path: Path | None = None,
+) -> str:
     run._proc = proc
     run.status = "running"
 
@@ -306,13 +390,13 @@ def _run_worker(run: RunState, content: str, max_seconds: int) -> None:
     run.run_end_ts = time.time()
     stderr_thread.join(timeout=2)
     try:
-        metrics = json.loads(summary_path.read_text(encoding="utf-8"))["metrics"]
+        metrics = json.loads(summary_path.read_text(encoding="utf-8"))["metrics"] if summary_path else None
         if isinstance(metrics, dict):
             run.summary_metrics = metrics
     except (OSError, ValueError, KeyError, TypeError):
         pass
     run.snapshot = run._agg.snapshot()
-    if run._deadline_reached:
+    if run._deadline_reached or (run._managed and proc.returncode == 124):
         status = "stopped"
         run.message = f"The run stopped after reaching the {max_seconds}-second execution limit."
     elif run._stop_requested:
@@ -333,8 +417,7 @@ def _run_worker(run: RunState, content: str, max_seconds: int) -> None:
         run.message = f"k6 exited {proc.returncode}. See the run logs for details."
     _append_log(run, f"— k6 exited {proc.returncode} —")
     run.ended_at = run.run_end_ts
-    run.status = status
-
+    return status
 
 
 def _stream_metrics(run: RunState, proc: subprocess.Popen) -> None:
@@ -349,6 +432,11 @@ def _stream_metrics(run: RunState, proc: subprocess.Popen) -> None:
         except json.JSONDecodeError:
             # Not a JSON metric point — treat as a human log line (defensive).
             _append_log(run, line)
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if run._managed and obj.get("type") == WORKER_SUMMARY_TYPE and isinstance(obj.get("metrics"), dict):
+            run.summary_metrics = obj["metrics"]
             continue
         # k6 json output: {"type":"Point","metric":"http_req_duration","data":{...}}
         if obj.get("type") == "Point":

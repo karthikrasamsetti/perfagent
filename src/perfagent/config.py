@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     perfagent_access_mode: Literal["local", "managed"] = "local"
     perfagent_gateway_secret: SecretStr = Field(default=SecretStr(""))
     perfagent_workspace_members: set[str] = Field(default_factory=set)
+    perfagent_project_grants: dict[str, dict[str, Literal["viewer", "editor"]]] = Field(
+        default_factory=dict,
+    )
+
+    perfagent_managed_k6_image: str = ""
+    perfagent_managed_target_origins: dict[str, list[str]] = Field(default_factory=dict)
+    perfagent_managed_max_vus: int = Field(default=20, ge=1, le=1000)
+    perfagent_managed_max_seconds: int = Field(default=120, ge=1, le=3600)
+    perfagent_managed_max_rps: int = Field(default=25, ge=1, le=1000)
 
     # Additional exact browser origins for deployments behind a reverse proxy.
     # Same-origin requests work without configuration. This does not enable CORS.

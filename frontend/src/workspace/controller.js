@@ -6,6 +6,8 @@
  */
 import { requestJson } from '../api/client'
 import { resolveRoute } from '../routing/routes'
+import { maxTrafficBytes, summarizeTraffic } from './trafficSummary'
+import { journeyRouteOptions, normalizedJourneyWeights } from './journeyWeights'
 
 let projects=[],currentProject=null,editingProjectId=null,newTestName='',importAfterProject=false,savedWorkloads=[];
 let currentPlanId=null, currentScriptId=null, currentDataFileId=null, currentRunId=null, pollTimer=null;
@@ -318,11 +320,12 @@ function addEndpoint(method="GET",path="",body=""){
   d.innerHTML=`<select>${["GET","POST","PUT","PATCH","DELETE"].map(m=>`<option ${m===method?'selected':''}>${m}</option>`).join('')}</select>
     <input placeholder="/path" aria-label="Endpoint path" />
     <input class="bodyInput" aria-label="JSON request body" placeholder='body JSON e.g. {"user":"demo"}' />
-    <button class="iconbtn gbtn" title="Edit body + add dynamic data" onclick="openBodyEditor(this)">✏️</button>
+    <button class="iconbtn gbtn" type="button" aria-label="Edit request body" title="Edit request body" onclick="openBodyEditor(this)">⋯</button>
     <button class="iconbtn" type="button" aria-label="Remove endpoint" onclick="this.parentElement.remove()">×</button>
     <details style="grid-column:1 / -1">
-      <summary>Response check (optional)</summary>
-      <input class="draftJsonPath" aria-label="JSON field that must exist" placeholder="e.g. order.id" />
+      <summary>Require a JSON field in the response</summary>
+      <label>JSON field path <input class="draftJsonPath" placeholder="e.g. order.id" /></label>
+      <p class="hint">Use this when a field must be present, even when the endpoint returns a successful status.</p>
     </details>`;
   const [pathInput, bodyInput]=d.querySelectorAll('input');
   pathInput.value=path;
@@ -463,6 +466,14 @@ async function loadTools(){
 }
 
 /* ---------- draft plan ---------- */
+export function applyTrafficRate(rate){
+  const schedule=document.getElementById('draftSchedule');
+  const input=document.getElementById('draftRequestRate');
+  schedule.value='rate';
+  schedule.dispatchEvent(new Event('change',{bubbles:true}));
+  input.value=String(rate);
+  input.dataset.trafficRate=String(rate);
+}
 async function doPlan(){
   if(!currentProject||!newTestName){showNewTestForm();return;}
   const status=document.getElementById('planStatus');
@@ -529,7 +540,7 @@ async function doPlan(){
     const body={project_id:currentProject.project_id,test_name:newTestName,environment:currentProject.environment||'',target_base_url:target,
       goal:document.getElementById('goal').value.trim(),
       max_users:users, duration_seconds:duration, profile_type:profileType, endpoints:eps,
-      ...(rate?{target_request_rate:rate}:{}), ...(journeyRate?{target_iteration_rate:journeyRate}:{}), ...(stages?{stages}:{}),
+      ...(rate?{target_request_rate:rate, ...(document.getElementById('draftRequestRate').dataset.trafficRate===String(rate)?{traffic_sample_rate:true}:{})}:{}), ...(journeyRate?{target_iteration_rate:journeyRate}:{}), ...(stages?{stages}:{}),
       ...(executorOptions?{executor_options:executorOptions}:{}), ...(rules.length?{thresholds:rules}:{})};
     const r=await fetch('/api/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json(); if(!r.ok) throw new Error(j.detail||'plan failed');
@@ -723,7 +734,7 @@ function renderSummary(){
   const sourceLabel=(source,previous,current,subject='')=>{
     if(!inputs) return '';
     const key=JSON.stringify(previous)===JSON.stringify(current)?source:'edited';
-    const label={user:'From you',suggested:'Suggested by PerfAgent',profile:'Load shape uses profile defaults',
+    const label={user:'From you',suggested:'Suggested by PerfAgent',profile:'Load shape uses profile defaults',traffic:'From an aggregate traffic sample',
       edited:'Edited in Review'}[key];
     return label?'<small class="review-source">'+esc(subject?subject+' · '+label:label)+'</small>':'';
   };
@@ -781,18 +792,23 @@ function renderSummary(){
     const journeySources=inputs?.sources.journeys[si];
     const journeyFields=value=>value&&[value.name,value.weight,value.think_time];
     const rows=scenario.steps.map((step,sti)=>{
-      const requestInputs=[step.path,...headers.map(([,value])=>value),...flattenBody(step.body||{}).map(field=>field.value)];
+      const requestInputs=[
+        ['Request path',step.path],
+        ...headers.map(([name,value])=>['Header '+name,value]),
+        ...flattenBody(step.body||{}).map(field=>['Body field '+pathLabel(field.path),field.value]),
+      ];
       const sources=new Set();
       const unavailable=new Set();
-      for(const input of requestInputs){
+      for(const [destination,input] of requestInputs){
         if(typeof input!=='string') continue;
         for(const match of input.matchAll(/\$\{([^}]+)\}/g)){
           const token=match[1].trim();
-          if(GEN_NAMES.has(token.split('(')[0])) sources.add('Generated · '+token.split('(')[0]);
-          else if(capturedHere.has(token)) sources.add('Earlier response · '+token);
-          else if(allCaptures.has(token)) unavailable.add('Check capture order · '+token);
-          else if(columns.has(token)) sources.add('Dataset · '+token);
-          else unavailable.add('Unresolved · '+token);
+          const generator=token.split('(')[0];
+          if(GEN_NAMES.has(generator)) sources.add('Generated · '+generator+' → '+destination);
+          else if(capturedHere.has(token)) sources.add('Earlier response · '+token+' → '+destination);
+          else if(allCaptures.has(token)) unavailable.add('Check capture order · '+token+' → '+destination);
+          else if(columns.has(token)) sources.add('Dataset · '+token+' → '+destination);
+          else unavailable.add('Unresolved · '+token+' → '+destination);
         }
       }
       if(unavailable.size) findings.push({si,sti,label:step.name||step.path||'Request',messages:[...unavailable]});
@@ -816,7 +832,7 @@ function renderSummary(){
         sourceLabel(stepSources?.body,originalStep?.body??null,step.body??null,'Request body')+
         group('Checks',checks.length?checks:['Default HTTP status check'])+
         sourceLabel(stepSources?.checks,originalStep?.assertions||[],step.assertions||[],'Checks')+
-        group('Changing inputs',[...sources,...unavailable])+group('Response values',captures)+'</div></li>';
+        group('Data sources',[...sources,...unavailable])+group('Capture for later requests',captures)+'</div></li>';
     }).join('');
     return '<div class="review-journey"><div class="review-journey-title"><strong>'+esc(scenario.name||'Journey')+
       '</strong><span>'+Math.round((scenario.weight||0)/totalWeight*100)+'% of traffic</span>'+
@@ -872,6 +888,9 @@ function stepKey(si,sti){ return si+':'+sti; }
 function resetReviewState(){
   openSteps=new Set(); jsonSteps=new Set(); advSteps=new Set(); dynUndo={}; _loadAsked=null;
   document.getElementById('previewBox').style.display='none';
+  document.getElementById('journeyWeightCsv').value='';
+  document.getElementById('journeyWeightStatus').textContent='';
+  document.getElementById('journeyWeightPreview').replaceChildren();
   // data file: use what the plan itself says (a file uploaded for another plan is dropped)
   const df=planModel.data_file;
   currentDataFileId=null;
@@ -883,6 +902,13 @@ function resetReviewState(){
   Object.entries(planModel.headers||{}).forEach(([k,v])=>addHeader(k,v));
   document.getElementById('connDetails').open=false;
   document.querySelectorAll('.review-editor, .review-advanced').forEach(editor=>{editor.open=false;});
+}
+
+export function openReviewEditor(contentId, focusId){
+  const panel=document.getElementById(contentId)?.closest('details');
+  if(!panel)return;
+  panel.open=true;
+  (focusId?document.getElementById(focusId):panel.querySelector('summary'))?.focus();
 }
 
 function renderPlanForm(){
@@ -1088,9 +1114,9 @@ function scenarioCard(sc,si){
     <div class="scn-head">
       <input class="name" value="${esc(sc.name||'')}" oninput="planModel.scenarios[${si}].name=this.value;renderSummary()" placeholder="Journey name" aria-label="Journey name"/>
       <div class="weightwrap">
-        <span class="muted" style="font-size:11px;white-space:nowrap">Traffic share<i class="infohint" data-tip="What share of virtual users run this journey. With several journeys the sliders split your users (e.g. 70% browse, 30% checkout). With one journey it is always 100%.">i</i></span>
+        <span class="muted" style="font-size:11px;white-space:nowrap">Traffic share<i class="infohint" data-tip="How much of the scheduled workload this journey receives. With several journeys, relative weights are normalized into shares. With one journey it is always 100%.">i</i></span>
         ${(planModel.scenarios||[]).length>1
-          ? `<input type="range" min="1" max="10" step="1" value="${Math.max(1,Math.round(sc.weight*10)||1)}" oninput="setWeight(${si},this.value)" aria-label="Traffic share"/>`
+          ? `<input type="number" min="0" max="1000000" step="any" value="${esc(sc.weight)}" onchange="if(!setWeight(${si},this.value)) this.value=planModel.scenarios[${si}].weight" aria-label="Relative journey weight"/>`
           : ''}
         <span class="wbadge" id="wb${si}">—</span>
       </div>
@@ -1535,7 +1561,75 @@ function setRuleValue(ti,text){
   t.value = t.metric==='error_rate' ? n/100 : n;
   renderSummary();
 }
-function setWeight(si,v){ planModel.scenarios[si].weight=(+v)/10; updateWeightBadges(); renderSummary(); }
+export async function previewJourneyWeights(file){
+  const editor=document.getElementById('journeyWeightPreview');
+  const status=document.getElementById('journeyWeightStatus');
+  const input=document.getElementById('journeyWeightCsv');
+  editor.replaceChildren();
+  status.textContent='';
+  if(!file||!planModel)return;
+  const plan=planModel;
+  const signature=()=>JSON.stringify([planModel?.scenarios,planModel?.load_profile]);
+  const current=signature();
+  if(plan.scenarios.length<2){status.textContent='Add at least two journeys before mapping the sample.';return;}
+  if(plan.load_profile.target_request_rate){
+    status.textContent='An exact HTTP request-rate target uses one journey. Choose a journey-start or virtual-user workload for multiple journeys.';
+    return;
+  }
+  try{
+    if(file.size>maxTrafficBytes)throw Error('Choose a CSV file up to 256 KiB.');
+    const summary=summarizeTraffic(await file.text());
+    if(input.files[0]!==file||planModel!==plan||signature()!==current)return;
+    const options=journeyRouteOptions(plan.scenarios,summary.mix);
+    if(options.some(items=>!items.length)){
+      const names=plan.scenarios.filter((_,index)=>!options[index].length).map(item=>item.name);
+      status.textContent='No exclusive sampled route for '+names.join(', ')+'. Adjust those weights manually.';
+      return;
+    }
+    editor.innerHTML=`<div class="release-grid">${options.map((items,index)=>`<label>${esc(plan.scenarios[index].name)}
+      <select>${items.map(item=>`<option>${esc(item.route)} · ${item.count.toLocaleString()} requests</option>`).join('')}</select>
+      <output></output></label>`).join('')}</div>
+      <p class="hint" data-rate-estimate></p><button type="button" class="btn ghost sm">Apply suggested weights</button>`;
+    const selectors=[...editor.querySelectorAll('select')];
+    const outputs=editor.querySelectorAll('output');
+    const weights=()=>normalizedJourneyWeights(selectors.map((select,index)=>options[index][select.selectedIndex]));
+    const render=()=>{
+      const shares=weights();
+      shares.forEach((share,index)=>{outputs[index].textContent=Number((share*100).toFixed(2))+'% suggested share';});
+      const avg=shares.reduce((sum,share,index)=>sum+share*plan.scenarios[index].steps.length,0);
+      const profile=plan.load_profile;
+      const rate=profile.arrival_rate&&!profile.target_request_rate&&!profile.executor_options?profile.arrival_rate:null;
+      editor.querySelector('[data-rate-estimate]').textContent='About '+Number(avg.toFixed(2))+' HTTP requests per journey start'+
+        (rate?' · about '+Number((rate*avg).toFixed(2))+' req/s at '+rate+' journey starts/s before k6 allocation rounding.':'. Actual throughput depends on the workload and target.');
+    };
+    for(const select of selectors)select.onchange=render;
+    render();
+    editor.querySelector('button').onclick=()=>{
+      if(planModel!==plan||signature()!==current){
+        editor.replaceChildren();
+        status.textContent='The journeys changed. Choose the CSV again to rebuild the mapping.';
+        input.value='';
+        return;
+      }
+      weights().forEach((weight,index)=>{plan.scenarios[index].weight=weight;});
+      editor.replaceChildren();
+      status.textContent='Applied. Review the updated journey shares before approving.';
+      input.value='';
+      renderPlanForm();
+    };
+    status.textContent='Choose one representative route per journey.';
+  }catch(error){
+    if(input.files[0]===file&&planModel===plan)status.textContent=error.message;
+  }
+}
+function setWeight(si,value){
+  const weight=Number(value);
+  if(!Number.isFinite(weight)||weight<=0||weight>1000000){showError('Journey weight must be greater than zero and no more than 1,000,000.');return false;}
+  planModel.scenarios[si].weight=weight;
+  updateWeightBadges();
+  renderSummary();
+  return true;
+}
 function updateWeightBadges(){
   const total=(planModel.scenarios||[]).reduce((a,s)=>a+(s.weight||0),0)||1;
   (planModel.scenarios||[]).forEach((s,i)=>{
@@ -1639,7 +1733,22 @@ async function attachStoredDataFile(id){
     renderPlanForm();
   }catch(e){}
 }
-function download(){ if(currentScriptId) location=`/api/scripts/${currentScriptId}/download`; }
+function download(){ if(currentScriptId) downloadArtifact('/api/scripts/'+encodeURIComponent(currentScriptId)+'/download','demo-script.js'); }
+
+function downloadArtifact(path, filename){
+  if(import.meta.env.MODE!=='demo'){location=path;return;}
+  void fetch(path).then(response=>{
+    if(!response.ok)throw Error('This demo download is unavailable.');
+    return response.blob();
+  }).then(blob=>{
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;
+    link.download=filename;
+    link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }).catch(error=>showError(error.message));
+}
 
 /* ---------- saved (non-secret) Git & Jenkins details ---------- */
 const GIT_FIELDS={repo_url:'gitRepo', branch:'gitBranch', framework:'gitFw', test:'gitTest'};
@@ -2067,15 +2176,29 @@ async function runScript(smoke=false){
   if(!currentScriptId){showError('Generate or import a script before running.');return;}
   try{ await ensureScriptId(); }catch(e){ showError(e.message); return; }
   goStep(4);
+  resetChart();
+  document.getElementById('liveRunScope').textContent=smoke?'Smoke test':'Full workload';
+  document.getElementById('runPill').textContent='Starting';
+  document.getElementById('runPill').className='pill ghost';
+  for(const id of ['mElapsed','mReqs','mRps','mErr','mP95','mP99','mActiveVus','mIterationRate','mIterations','mDroppedIterations']){
+    document.getElementById(id).textContent='—';
+  }
+  document.getElementById('mIterationsTile').hidden=true;
+  document.querySelector('#epTable tbody').replaceChildren();
+  document.getElementById('runLogs').textContent='';
+  document.getElementById('logCount').textContent='';
   const rs=document.getElementById('runStatus'); rs.className='statusline'; rs.textContent='Starting run…';
   try{ const av=await (await fetch('/api/run/available')).json();
-    if(!av.k6){ rs.className='statusline err'; rs.textContent='The load engine is not available on this platform. Ask your administrator to set PERFAGENT_K6_PATH.'; return; } }catch(e){}
+    if(!av.k6){ document.getElementById('runPill').textContent='Engine unavailable'; rs.className='statusline err'; rs.textContent=av.reason||'The load engine is not available on this platform. Ask your administrator to set PERFAGENT_K6_PATH.'; return; } }catch(e){}
   try{
     const r=await fetch(`/api/scripts/${currentScriptId}/run`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({smoke,release_label:document.getElementById('releaseLabel').value,baseline_id:smoke?null:getSelectedBaseline()})}); const j=await r.json();
     if(!r.ok) throw new Error(j.detail||'run failed');
-    currentRunId=j.run_id; resetChart(); document.getElementById('runBtn').disabled=true;
+    currentRunId=j.run_id; document.getElementById('runBtn').disabled=true;
     document.getElementById('stopBtn').disabled=false; pollTimer=setInterval(pollRun,500);
-  }catch(e){ rs.className='statusline err'; rs.textContent='Error: '+e.message; }
+  }catch(e){
+    document.getElementById('runPill').textContent='Start failed';
+    rs.className='statusline err'; rs.textContent='Error: '+e.message;
+  }
   }finally{runStarting=false;}
 }
 async function pollRun(){
@@ -2091,11 +2214,15 @@ async function pollRun(){
       rs.className=style;
       if(rs.textContent!==message)rs.textContent=message;
     };
-    pill.textContent=j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':j.status==='error'?'fail':'ghost');
+    pill.textContent=({running:'Running',finished:'Finished',stopped:'Stopped',error:'Run error'})[j.status]||j.status; pill.className='pill '+(j.status==='running'?'pass':j.status==='finished'?'pass':j.status==='error'?'fail':'ghost');
     const s=j.snapshot||{}; const lat=s.latency||{}; window._lastSnap=s; window._lastElapsed=j.elapsed_s;
     document.getElementById('mElapsed').textContent=(j.elapsed_s??0)+'s';
     document.getElementById('mReqs').textContent=s.requests??0;
     const planned=j.planned_load||{};
+    const runScope=[j.mode==='smoke'?'Smoke test':'Full workload'];
+    if(j.target)runScope.push(j.target);
+    if(planned.duration_seconds)runScope.push(planned.duration_seconds+' s planned');
+    document.getElementById('liveRunScope').textContent=runScope.join(' · ');
     document.getElementById('mRps').textContent=(s.rps??0)+(planned.requests_per_second?' / '+planned.requests_per_second:'');
     document.getElementById('mActiveVus').textContent=(s.active_vus??'—')+' / '+(planned.peak_users??'—');
     document.getElementById('mIterationRate').textContent=(s.iterations_per_second??'—')+' / '+(planned.iterations_per_second==null?'—':formatJourneyRate(planned.iterations_per_second));
@@ -2107,11 +2234,11 @@ async function pollRun(){
     }
     document.getElementById('mDroppedIterations').textContent=s.dropped_iterations??'—';
     document.getElementById('mErr').textContent=((s.error_rate??0)*100).toFixed(2)+'%';
-    document.getElementById('mP95').textContent=(lat.p95_ms??0)+' ms';
-    document.getElementById('mP99').textContent=(lat.p99_ms??0)+' ms';
-    pushChart(j.elapsed_s??0, s.rps??0, lat.p95_ms??0, s.error_rate??0);
+    document.getElementById('mP95').textContent=lat.samples===0||lat.p95_ms==null?'—':lat.p95_ms+' ms';
+    document.getElementById('mP99').textContent=lat.samples===0||lat.p99_ms==null?'—':lat.p99_ms+' ms';
+    pushChart(j.elapsed_s??0, s.rps??null, lat.samples===0?null:lat.p95_ms??null, s.error_rate??null);
     document.querySelector('#epTable tbody').innerHTML=(s.per_endpoint||[]).map(e=>
-      `<tr><td>${esc(e.name)}</td><td>${e.requests}</td><td>${e.failed}</td><td>${e.avg_ms}</td><td>${e.p95_ms}</td></tr>`).join('');
+      `<tr><td>${esc(e.name)}</td><td>${esc(e.requests??'—')}</td><td>${esc(e.failed??'—')}</td><td>${esc(e.avg_ms??'—')}</td><td>${esc(e.p95_ms??'—')}</td></tr>`).join('');
     // live logs
     const logs=j.logs||[];
     if(logs.length){
@@ -2122,7 +2249,7 @@ async function pollRun(){
       if(atBottom) pre.scrollTop=pre.scrollHeight;   // autoscroll unless user scrolled up
     }
     if(j.status==='starting'||j.status==='preparing')updateStatus('statusline',j.message||'Starting…');
-    else if(j.status==='running')updateStatus('statusline','Running against '+j.target+' …');
+    else if(j.status==='running')updateStatus('statusline',document.getElementById('stopBtn').disabled&&pollTimer?'Stopping run…':'Collecting measurements…');
     else{
       clearInterval(pollTimer); pollTimer=null;
       document.getElementById('runBtn').disabled=false; document.getElementById('stopBtn').disabled=true;
@@ -2138,7 +2265,19 @@ async function pollRun(){
     if(status.textContent!==message)status.textContent=message;
   }
 }
-async function stopRun(){if(!currentRunId)return;try{const r=await fetch(`/api/runs/${currentRunId}/stop`,{method:'POST'});if(!r.ok)throw Error('Stop request failed.');}catch(e){showError(e.message);}}
+async function stopRun(){
+  const runId=currentRunId;
+  const button=document.getElementById('stopBtn');
+  if(!runId||button.disabled)return;
+  button.disabled=true;
+  try{
+    const response=await fetch(`/api/runs/${encodeURIComponent(runId)}/stop`,{method:'POST'});
+    if(!response.ok)throw Error('Stop request failed.');
+  }catch(error){
+    if(currentRunId===runId&&pollTimer)button.disabled=false;
+    showError(error.message);
+  }
+}
 
 /* ---------- report ---------- */
 async function loadReport(){
@@ -2153,7 +2292,7 @@ async function loadReport(){
 /* ---------- report charts: time-series + trend ---------- */
 function _lineChart(canvas, series, opts={}){
   const c=canvas; if(!c) return;
-  const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=150;
+  const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=opts.height||150;
   c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
   const pad=30;
   const valid=p=>p.y!=null&&Number.isFinite(Number(p.y));
@@ -2164,7 +2303,7 @@ function _lineChart(canvas, series, opts={}){
   const [minX,maxX]=opts.domain||[Math.min(...allX),Math.max(...allX)];
   const sx=v=>pad+((v-minX)/((maxX-minX)||1))*(W-pad*1.4);
   const sy=v=>H-pad-(v/maxY)*(H-pad*1.5);
-  x.font='10px system-ui';
+  x.font='11px Geist Variable, system-ui';
   for(let index=0;index<=3;index++){
     const value=maxY*index/3, y=sy(value);
     x.strokeStyle='#e5e9f1'; x.lineWidth=1; x.beginPath(); x.moveTo(pad,y); x.lineTo(W-6,y); x.stroke();
@@ -2182,7 +2321,9 @@ function _lineChart(canvas, series, opts={}){
     const labels=opts.axisLabels||[minX+' s',maxX+' s'];
     x.fillText(labels[0],pad,H-10);
     x.textAlign='right'; x.fillText(labels[1],W-6,H-10); x.textAlign='left';
-    x.strokeStyle='#777185'; x.beginPath(); x.moveTo(sx(opts.selected),8); x.lineTo(sx(opts.selected),H-pad); x.stroke();
+    if(Number.isFinite(opts.selected)){
+      x.strokeStyle='#777185'; x.beginPath(); x.moveTo(sx(opts.selected),8); x.lineTo(sx(opts.selected),H-pad); x.stroke();
+    }
     if(Number.isFinite(opts.droppedAt)){
       x.strokeStyle='#a32d2d'; x.lineWidth=2;
       x.beginPath(); x.moveTo(sx(opts.droppedAt),8); x.lineTo(sx(opts.droppedAt),H-pad); x.stroke();
@@ -2190,6 +2331,7 @@ function _lineChart(canvas, series, opts={}){
   }
   series.forEach(s=>{
     if(s.data.length<1) return;
+    x.setLineDash(s.dash||[]);
     x.beginPath(); x.strokeStyle=s.color; x.lineWidth=2;
     let drawing=false;
     s.data.forEach(p=>{
@@ -2197,6 +2339,7 @@ function _lineChart(canvas, series, opts={}){
       const px=sx(p.x),py=sy(p.y); drawing?x.lineTo(px,py):x.moveTo(px,py); drawing=true;
     });
     x.stroke();
+    x.setLineDash([]);
     // dots for trend (few points)
     x.fillStyle=s.color;
     s.data.filter(p=>valid(p)&&(s.data.length<=12||p.x===opts.selected)).forEach(p=>{
@@ -2275,15 +2418,16 @@ async function loadTrend(planId){
 
 function renderReport(j){
   reportContext={planId:j.plan_id||null,scriptId:j.script_id||null,runId:j.run_id||null,savedId:j.saved_result_id||j.run_id||null,testName:j.execution?.test_name||'',workloadVersion:j.execution?.workload_version||'',mode:j.execution?.mode||'full'};
+  renderReleaseReport(j);
   renderReportDetails(j);
   renderReportEvidenceSummary(j);
   document.getElementById('rerunBtn').disabled=!reportContext.planId;
-  document.getElementById('rerunNote').textContent=reportContext.scriptId?'Uses the script saved with this report.':reportContext.planId?'Older report: opens the saved plan for review before running.':'This report has no saved plan to rerun.';
+  document.getElementById('verifyRerunNotice').hidden=true;
+  document.getElementById('rerunNote').textContent=reportContext.scriptId?'Opens Verify with the saved script so you can label the next run.':reportContext.planId?'Older report: opens the saved plan for review before running.':'This report has no saved plan to rerun.';
   try{
     const v=j.verdict.overall_passed;
     const hero=document.getElementById('verdictHero');
     hero.className='rpt-hero '+(v===true?'pass':v===false?'fail':'na');
-    document.getElementById('verdictEmoji').textContent=v===true?'✅':v===false?'❌':'⚠️';
     // Metrics belong to this report; older reports can have unavailable fields.
     const s=j.snapshot||{}; const lat=s.latency||{};
     const setK=(id,val)=>{const el=document.getElementById(id); if(el) el.textContent=val;};
@@ -2326,14 +2470,14 @@ function renderReport(j){
     } else if(cc){ cc.style.display='none'; }
 
     const outcomeLabel=j.status==='stopped'?'STOPPED — partial results':j.status==='error'?'ERROR — partial results':
-      v===true?'PASS — all thresholds met':v===false?'FAIL — a threshold was breached':'INCONCLUSIVE — no final verdict';
+      v===true?'k6 PASS — all thresholds met':v===false?'k6 FAIL — a threshold was breached':'INCONCLUSIVE — no final verdict';
     document.getElementById('verdictHeadline').textContent=outcomeLabel;
     const n=j.narrative||{};
     const checks=j.verdict.checks||[];
     const total=j.evidence?.total_thresholds??checks.length;
     const passed=j.evidence?.passed_count??checks.filter(check=>check.passed===true).length;
     document.getElementById('verdictSub').textContent=total?passed+' of '+total+' thresholds passed':n.headline||'';
-    document.getElementById('reportSummary').textContent=n.summary||'No explanation was recorded for this run.';
+    document.getElementById('reportSummary').textContent=j.release_readiness?.explanation||n.summary||'No explanation was recorded for this run.';
     const dropSummary=document.getElementById('reportDropsSummary');
     const dropLink=document.getElementById('reportDropsLink');
     dropSummary.hidden=!dropped&&!(s.dropped_iterations>0);
@@ -2418,7 +2562,7 @@ function downloadRunLogs(){
   a.download='run_logs.txt'; a.click(); URL.revokeObjectURL(a.href);
 }
 
-function downloadReport(){const id=reportContext?.savedId;if(id)location='/api/runs/'+encodeURIComponent(id)+'/report/download';else showError('Open a report before downloading.');}
+function downloadReport(){const id=reportContext?.savedId;if(id)downloadArtifact('/api/runs/'+encodeURIComponent(id)+'/report/download','demo-report.html');else showError('Open a report before downloading.');}
 
 
 
@@ -2616,7 +2760,7 @@ export function refreshDashboardTrend(){
   const canvas=document.getElementById('sdTrend');
   const caption=document.getElementById('sdTrendCaption');
   canvas.setAttribute('aria-label',label+' across matching runs');
-  _lineChart(canvas,[{data:points,color}]);
+  _lineChart(canvas,[{data:points,color}],{height:canvas.clientHeight});
   const isoDate=value=>value?new Date(value).toLocaleDateString():null;
   const first=isoDate(points[0]?.run.t), last=isoDate(points.at(-1)?.run.t);
   caption.textContent=points.length
@@ -2642,6 +2786,15 @@ export function openDashboardTrendPoint(clientX){
 }
 
 function renderDashboardAttention(overview){
+  const release=document.getElementById('sdReleaseReadiness');
+  if(release){
+    const decision=overview?.release_readiness;
+    release.hidden=!decision;
+    release.dataset.state=decision?.status||'';
+    release.innerHTML=decision?releaseDecisionMarkup(decision,'dashboardReleaseTitle')+
+      '<button type="button" class="btn ghost sm">Open candidate report</button>':'';
+    if(decision) release.querySelector('button').onclick=()=>openSavedReport(decision.candidate_id);
+  }
   renderDashboardRegression(overview?.regression);
   const panel=document.getElementById('sdAttention');
   const run=overview?.attention||overview?.latest;
@@ -2667,11 +2820,11 @@ function renderDashboardRegression(regression){
   if(!regression) return;
   const {run, baseline_id, changes}=regression;
   const name=run.test_name||run.script_name||'Saved run';
-  panel.innerHTML='<div><h3>Regression from baseline</h3><p class="dashboard-attention-title">'+
+  panel.innerHTML='<div><h3>Regression in recorded run comparison</h3><p class="dashboard-attention-title">'+
     esc(name)+' '+sdVerdict(run.verdict)+'</p><ul>'+changes.map(change=>
       '<li>'+esc(change.label)+' '+esc(change.previous_fmt)+' → '+esc(change.current_fmt)+'</li>'
     ).join('')+'</ul></div><div class="btnrow"><button class="btn ghost sm">Open regressed run</button>'+
-    '<button class="btn ghost sm">Open baseline</button></div>';
+    '<button class="btn ghost sm">Open comparison reference</button></div>';
   const [current, baseline]=panel.querySelectorAll('button');
   current.onclick=()=>openSavedReport(run.run_id);
   baseline.onclick=()=>openSavedReport(baseline_id);
@@ -2785,7 +2938,7 @@ async function loadStakeholder(offset=0,background=false){
   const worst=overview?.worst_p95_ms;
   tiles.innerHTML=
     '<div class="tile"><div class="v">'+(overview?total.toLocaleString():'—')+'</div><div class="l">Matching runs</div></div>'+
-    '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total)+'%':'—')+'</div><div class="l">Pass rate</div></div>'+
+    '<div class="tile"><div class="v">'+(total?Math.round(100*passes/total)+'%':'—')+'</div><div class="l">k6 pass rate</div></div>'+
     '<div class="tile"><div class="v">'+(overview?overview.requests.toLocaleString():'—')+'</div><div class="l">Total requests</div></div>'+
     '<div class="tile"><div class="v">'+(worst!=null?worst.toFixed(2)+' ms':'—')+'</div><div class="l">Worst p95</div></div>';
 
@@ -2841,20 +2994,50 @@ function renderRunComparison(){
   }).join('')+'</tbody></table><p class="muted">Lower latency and errors are better; higher throughput is better. Compare similar load profiles.</p>';
 }
 async function rerunReport(){
-  if(!reportContext||!reportContext.planId) return;
-  const context={...reportContext},button=document.getElementById('rerunBtn');
+  if(!reportContext?.planId)return;
+  const context=reportContext;
+  const button=document.getElementById('rerunBtn');
+  const note=document.getElementById('rerunNote');
   button.disabled=true;
   try{
-    if(!context.scriptId){await openPlan(context.planId);return;}
-    if(pollTimer) throw new Error('Wait for the active run to finish before starting another.');
+    if(pollTimer||runStarting)throw Error('Wait for the active run to finish before preparing another.');
+    if(!context.scriptId){
+      await openPlan(context.planId);
+      return;
+    }
+    note.textContent='Loading the saved script…';
     const response=await fetch('/api/scripts/'+encodeURIComponent(context.scriptId)+'/download');
-    if(!response.ok) throw new Error('The original script is no longer available. Open the saved plan in History.');
+    if(!response.ok)throw Error('The original script is unavailable. Open the saved test from the project workspace.');
     const content=await response.text();
-    currentScriptId=context.scriptId; currentPlanId=context.planId; currentDataFileId=null; _scriptEdited=false;
-    document.getElementById('scriptOut').textContent=content;
-    await runScript();
-  }catch(e){document.getElementById('rerunNote').textContent=e.message;}
-  finally{button.disabled=false;}
+    if(reportContext!==context||!document.getElementById('panel5').classList.contains('show'))return;
+    currentScriptId=context.scriptId;
+    currentPlanId=context.planId;
+    currentDataFileId=null;
+    scriptEditorSourceId=null;
+    _scriptEdited=false;
+    const script=document.getElementById('scriptOut');
+    script.textContent=content;
+    script.style.display='block';
+    document.getElementById('scriptEdit').style.display='none';
+    document.getElementById('editNote').style.display='none';
+    document.getElementById('regenBtn').style.display='none';
+    document.getElementById('editBtn').textContent='Edit script';
+    for(const id of ['runBtn','preflightBtn','validateBtn','dlBtn']){
+      document.getElementById(id).disabled=false;
+    }
+    document.getElementById('validateResult').style.display='none';
+    document.getElementById('scriptMeta').textContent='Saved script from '+(context.testName||'this report');
+    const release=document.getElementById('releaseLabel');
+    release.value='';
+    document.getElementById('verifyRerunNotice').hidden=false;
+    goStep(3);
+    if(context.savedId)publishRoute(projectPath()+'/runs/'+encodeURIComponent(context.savedId)+'?rerun=1');
+    release.focus({preventScroll:true});
+  }catch(error){
+    note.textContent=error.message;
+  }finally{
+    button.disabled=!reportContext?.planId;
+  }
 }
 
 /* ---------- runs & reports history ---------- */
@@ -2981,6 +3164,7 @@ function renderProjectFramework(project,plans){
     (chosen.includes('github')?'<p>Repository workflow · .github/workflows/perf-'+esc(folder)+'.yml</p>':'');
 }
 async function openPlan(id){
+  document.getElementById('verifyRerunNotice').hidden=true;
   document.getElementById('importNote').style.display='none';
   applyIntegrations(id);
   const j=await (await fetch(`/api/plans/${id}`)).json();
@@ -3245,33 +3429,32 @@ async function doPreflight(){
 }
 
 /* ---------- live chart ---------- */
-let chartData=[];  // [{t, rps, p95}]
+let chartData=[];
 function resetChart(){ chartData=[]; drawChart(); }
-function pushChart(elapsed, rps, p95, err){ chartData.push({t:elapsed,rps:rps||0,p95:p95||0,err:(err||0)*100}); if(chartData.length>300) chartData.shift(); drawChart(); }
-function drawChart(){
-  const c=document.getElementById('liveChart'); if(!c) return;
-  const dpr=window.devicePixelRatio||1; const W=c.clientWidth||600, H=120;
-  c.width=W*dpr; c.height=H*dpr; const x=c.getContext('2d'); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
-  if(chartData.length<2){ x.fillStyle='#9aa'; x.font='11px system-ui'; x.fillText('waiting for data…',10,20); return; }
-  const pad=24; const n=chartData.length;
-  const maxRps=Math.max(1,...chartData.map(d=>d.rps));
-  const maxP95=Math.max(1,...chartData.map(d=>d.p95));
-  function line(key,max,color){
-    x.beginPath(); x.strokeStyle=color; x.lineWidth=2;
-    chartData.forEach((d,i)=>{
-      const px=pad + (i/(n-1))*(W-pad*2);
-      const py=H-pad - (d[key]/max)*(H-pad*1.4);
-      i?x.lineTo(px,py):x.moveTo(px,py);
-    }); x.stroke();
-  }
-  line('rps',maxRps,'#0f6e56');   // teal = RPS
-  line('p95',maxP95,'#9a6412');   // amber = p95
-  x.fillStyle='#6b7280'; x.font='10px system-ui';
-  x.fillText('RPS (teal) · p95 ms (amber)',pad,12);
+function pushChart(elapsed, rps, p95, err){
+  chartData.push({t:elapsed,rps,p95,err:err==null?null:err*100});
+  if(chartData.length>300)chartData.shift();
+  drawChart();
+}
+export function drawChart(){
+  const canvas=document.getElementById('liveChart');
+  if(!canvas||!canvas.clientWidth)return;
+  const key=document.getElementById('liveMetric').value;
+  const [label,unit]={
+    rps:['Throughput','req/s'],p95:['p95 latency','ms'],err:['Error rate','%'],
+  }[key];
+  const data=chartData.map(sample=>({x:sample.t,y:sample[key]}));
+  const last=data.at(-1);
+  canvas.setAttribute('aria-label',label+' over elapsed time');
+  document.getElementById('liveChartReading').textContent=last?.y==null?
+    'Waiting for a measurement.':releaseNumber(last.y,unit)+' at '+last.x+' s';
+  _lineChart(canvas,[{data,color:'#3448bb'}],{height:canvas.clientHeight,
+    domain:[data[0]?.x||0,last?.x||0]});
 }
 
 /* ---------- sidebar navigation ---------- */
 const VIEW_META={
+  home:['Home','Plan, verify, and compare performance tests'],
   projects:['Projects','Create a project, open its test library, or import an existing Git framework'],
   admin:['Administrator overview','Run and workload summaries across every project'],
   create:['Test workspace','Describe, review, verify, and run your workload.'],
@@ -3280,6 +3463,16 @@ const VIEW_META={
   monitoring:['Monitoring','Your Grafana, Datadog and other dashboards in one place'],
   activity:['Activity','Audit log and AI call traces'],
 };
+export function openHomeAction(action){
+  if(!currentProject){
+    showView('projects');
+    document.getElementById('projectSearch')?.focus();
+    return;
+  }
+  if(action==='create')showNewTestForm();
+  else if(action==='import')startProjectImport('script');
+  else if(action==='dashboard')showView('dashboard');
+}
 function markNavigation(view){
   document.querySelectorAll('.sb-item').forEach(button=>{
     const active=button.dataset.view===view;
@@ -3288,7 +3481,7 @@ function markNavigation(view){
     else button.removeAttribute('aria-current');
   });
 }
-function showView(v){
+export function showView(v){
   if(['dashboard','history'].includes(v)&&!currentProject){showError('Open a project first.');v='projects';}
   document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-'+v));
   markNavigation(v);
@@ -3352,36 +3545,88 @@ function closeMobNav(){
 
 /* ---------- monitoring tools (Grafana / Datadog / etc) ---------- */
 const MON_KEY='perfagent.monitors';
-function monLoad(){ try{ return JSON.parse(localStorage.getItem(MON_KEY)||'[]'); }catch(e){ return []; } }
-function monSave(a){ try{ localStorage.setItem(MON_KEY, JSON.stringify(a)); }catch(e){} }
-function monAdd(){
+function monitoringUrl(value){
+  try{
+    const url=new URL(value);
+    if(!['http:','https:'].includes(url.protocol)||url.username||url.password)return null;
+    return url;
+  }catch{return null;}
+}
+function monLoad(){
+  try{
+    const saved=JSON.parse(localStorage.getItem(MON_KEY)||'[]');
+    return Array.isArray(saved)?saved.filter(item=>typeof item?.tool==='string'&&monitoringUrl(item.url)):[];
+  }catch{return [];}
+}
+function monSave(dashboards){localStorage.setItem(MON_KEY,JSON.stringify(dashboards));}
+export function monAdd(){
   const tool=document.getElementById('monTool').value;
-  const url=document.getElementById('monUrl').value.trim();
-  const st=document.getElementById('monStatus');
-  if(!/^https?:\/\//.test(url)){ st.className='statusline err'; st.textContent='Enter a full URL starting with http:// or https://'; return; }
-  const a=monLoad(); a.push({tool,url}); monSave(a);
-  document.getElementById('monUrl').value='';
-  st.className='statusline ok'; st.textContent=tool+' dashboard added.';
+  const field=document.getElementById('monUrl');
+  const url=monitoringUrl(field.value.trim());
+  const status=document.getElementById('monStatus');
+  status.className='statusline err';
+  if(!url){status.textContent='Enter a full HTTP or HTTPS URL without embedded credentials.';return;}
+  const saved=monLoad();
+  if(saved.some(item=>new URL(item.url).href===url.href)){status.textContent='This dashboard is already linked.';return;}
+  try{monSave([...saved,{tool,url:url.href}]);}
+  catch{status.textContent='Browser storage is unavailable. The dashboard could not be saved.';return;}
+  field.value='';
+  status.className='statusline ok';
+  status.textContent=tool+' dashboard linked.';
   monRender();
 }
-function monRemove(i){ const a=monLoad(); a.splice(i,1); monSave(a); monRender(); }
+function monRemove(index){
+  const saved=monLoad();
+  const status=document.getElementById('monStatus');
+  try{monSave(saved.filter((_,position)=>position!==index));}
+  catch{status.className='statusline err';status.textContent='The saved dashboard could not be removed.';return;}
+  status.className='statusline';
+  status.textContent='Dashboard removed.';
+  monRender();
+  document.getElementById('monUrl').focus();
+}
 function monRender(){
-  const host=document.getElementById('monList'); if(!host) return;
-  const a=monLoad();
-  if(!a.length){
-    host.innerHTML='<div class="monitor-card"><div class="monitor-empty">No dashboards linked yet. Add your Grafana or other monitoring URL above — it will embed right here.</div></div>';
-    return;
-  }
-  host.innerHTML=a.map((m,i)=>
-    '<div class="monitor-card"><div class="monitor-head">'+
-      '<span class="tool-chip">'+esc(m.tool)+'</span>'+
-      '<span class="url" title="'+esc(m.url)+'">'+esc(m.url)+'</span>'+
-      '<div class="spacer"></div>'+
-      '<a class="btn ghost sm" href="'+esc(m.url)+'" target="_blank" rel="noopener">Open ↗</a>'+
-      '<button class="btn danger sm" onclick="monRemove('+i+')">Remove</button>'+
-    '</div>'+
-    '<iframe class="monitor-frame" src="'+esc(m.url)+'" loading="lazy" referrerpolicy="no-referrer"></iframe>'+
-    '</div>').join('');
+  const host=document.getElementById('monList');
+  if(!host)return;
+  const saved=monLoad();
+  host.innerHTML=saved.map(({tool,url},index)=>`
+    <article class="monitor-card">
+      <div class="monitor-head">
+        <div><h4>${esc(tool)}</h4><p class="url">${esc(new URL(url).host)}</p></div>
+        <div class="btnrow">
+          <button type="button" class="btn ghost sm" data-monitor-preview="${index}">Preview</button>
+          <a class="btn ghost sm" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+          <button type="button" class="btn ghost sm" data-monitor-remove="${index}">Remove</button>
+        </div>
+      </div>
+      <div class="monitor-preview" hidden></div>
+    </article>`).join('')||'<div class="monitor-empty"><strong>No dashboards linked</strong><p>Add your first monitoring dashboard to open it from this workspace.</p></div>';
+  host.querySelectorAll('[data-monitor-remove]').forEach(button=>{
+    button.onclick=()=>monRemove(Number(button.dataset.monitorRemove));
+  });
+  host.querySelectorAll('[data-monitor-preview]').forEach(button=>{
+    const preview=button.closest('article').querySelector('.monitor-preview');
+    button.setAttribute('aria-expanded','false');
+    button.onclick=()=>{
+      const open=preview.hidden;
+      preview.hidden=!open;
+      button.textContent=open?'Close preview':'Preview';
+      button.setAttribute('aria-expanded',String(open));
+      preview.replaceChildren();
+      if(!open)return;
+      const {tool,url}=saved[Number(button.dataset.monitorPreview)];
+      const frame=document.createElement('iframe');
+      frame.className='monitor-frame';
+      frame.title=tool+' dashboard preview';
+      frame.referrerPolicy='no-referrer';
+      frame.sandbox.add('allow-scripts');
+      frame.src=url;
+      const notice=document.createElement('p');
+      notice.className='hint';
+      notice.textContent='If the dashboard requires sign-in or blocks previews, open it in a new tab.';
+      preview.append(notice,frame);
+    };
+  });
 }
 
 /* ---------- extra dashboard charts (donut, bars, error trend) ---------- */
@@ -3418,6 +3663,18 @@ function projectGitDefaults(){
 async function projectApi(url,options){
   return requestJson(url,options);
 }
+export function filterProjects(){
+  const query=document.getElementById('projectSearch').value.trim().toLowerCase();
+  const cards=[...document.querySelectorAll('#projectCards .project-card')];
+  let matches=0;
+  for(const card of cards){
+    card.hidden=!card.textContent.toLowerCase().includes(query);
+    if(!card.hidden)matches++;
+  }
+  const status=document.getElementById('projectSearchStatus');
+  status.hidden=!query||!cards.length;
+  status.textContent=matches?matches+' matching '+(matches===1?'project':'projects'):'No matching projects.';
+}
 async function loadProjects(){
   const cards=document.getElementById('projectCards');
   if(!cards.childElementCount){
@@ -3438,6 +3695,7 @@ async function loadProjects(){
         '<button class="btn ghost" data-project-id="'+esc(p.project_id)+'">Open project <span aria-hidden="true">→</span></button></article>';
     }).join('')||'<div class="card"><p>No projects yet. Create a project or import a framework to get started.</p></div>';
     document.querySelectorAll('#projectCards [data-project-id]').forEach(button=>button.onclick=()=>selectProject(button.dataset.projectId));
+    filterProjects();
     renderProjectContext();
   }catch(e){
     if(cards.querySelector('.project-skeleton')) cards.innerHTML='<p>Projects could not be loaded. Reopen Projects to retry.</p>';
@@ -3492,6 +3750,7 @@ function showNewTestForm(){
 if(currentProject) publishRoute('/projects/' + encodeURIComponent(currentProject.project_id) + '/tests/new');
 }
 function startNamedTest(){
+  document.getElementById('verifyRerunNotice').hidden=true;
   if(!currentProject)return;
   const name=document.getElementById('newTestName').value.trim();if(!name){showError('Give this test a name first.');return;}
   if(pollTimer){showError('Wait for the current run to finish before creating another test.');return;}
@@ -3499,6 +3758,8 @@ function startNamedTest(){
   document.getElementById('target').value=currentProject.target_url||'';
   document.getElementById('draftP95').value='';
   document.getElementById('draftErrorRate').value='';
+  window.dispatchEvent(new Event('perfagent:reset-traffic'));
+  delete document.getElementById('draftRequestRate').dataset.trafficRate;
   document.getElementById('draftSchedule').value='users';
   for(const id of ['draftRequestRate','draftJourneyRate','draftRampUp','draftHold','draftRampDown']) document.getElementById(id).value='';
   document.getElementById('endpoints').replaceChildren();
@@ -3531,7 +3792,7 @@ async function loadProjectSummary(background=false){
   if(summary.dataset.projectId!==project.project_id)summary.textContent='';
   summary.dataset.projectId=project.project_id;
   try{const j=await projectApi('/api/projects/'+project.project_id+'/dashboard'),s=j.summary;
-    if(currentProject?.project_id===project.project_id)summary.textContent=project.name+' · '+s.tests+' tests · '+s.runs+' runs · '+Number(s.requests).toLocaleString()+' requests · pass rate '+(s.pass_rate==null?'unavailable':s.pass_rate+'%');}
+    if(currentProject?.project_id===project.project_id)summary.textContent=project.name+' · '+s.tests+' tests · '+s.runs+' runs · '+Number(s.requests).toLocaleString()+' requests · k6 pass rate '+(s.pass_rate==null?'unavailable':s.pass_rate+'%');}
   catch(e){if(!background&&currentProject?.project_id===project.project_id)summary.textContent=e.message;}
 }
 async function loadAdminOverview(){
@@ -3625,15 +3886,151 @@ async function checkReadiness(){
       '</p><p>Verify test exercises the configured k6 journeys and checks with one virtual user. Validate checks script syntax without sending traffic.</p>';
   }catch(e){el.className='note err';el.textContent=e.message;}
 }
+const releaseStates={ready:'Ready',blocked:'Blocked',needs_evidence:'Needs evidence'};
+function releaseNumber(value,unit){
+  return Number.isFinite(value)?Number(value.toPrecision(6))+' '+unit:'Unavailable';
+}
+
+function releaseDecisionMarkup(decision,titleId){
+  const state=releaseStates[decision.status]||releaseStates.needs_evidence;
+  const resultClass=decision.status==='ready'?'pass':decision.status==='blocked'?'fail':'ghost';
+  const rules=(decision.rules||[]).map(rule=>`<tr><th scope="row">${esc(rule.name)}</th>
+    <td>${esc(releaseNumber(rule.actual,rule.unit))}</td><td>${esc(rule.op)} ${esc(releaseNumber(rule.limit,rule.unit))}</td>
+    <td>${rule.passed===true?'Met':rule.passed===false?'Breached':'Unavailable'}</td></tr>`).join('');
+  const metadata=decision.baseline_id?[
+    ['Environment',decision.environment||'Unlabeled'],
+    ['Baseline',decision.baseline_release||decision.baseline_id.slice(0,8)],
+    ['Candidate',decision.candidate_id===decision.baseline_id?null:decision.candidate_release||decision.candidate_id.slice(0,8)],
+    ['Average load',decision.candidate_rps==null?null:releaseNumber(decision.candidate_rps,'req/s')],
+    ['Planned load',decision.target_rps==null?null:releaseNumber(decision.target_rps,'req/s')],
+  ]:[];
+  return `<div class="release-heading"><h2 id="${titleId}">Release readiness</h2><span class="pill ${resultClass}">${state}</span></div>
+    <p class="release-headline">${esc(decision.reason)}</p>
+    ${decision.summary?'<p class="release-summary">'+esc(decision.summary)+'</p>':''}
+    ${metadata.length?`<dl class="release-context">${metadata.filter(([,value])=>value!==null).map(([label,value])=>
+      `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>`:''}
+    ${rules?`<div class="release-table"><table aria-label="Release budget results"><thead><tr><th scope="col">Budget</th><th scope="col">Actual</th><th scope="col">Limit</th><th scope="col">Result</th></tr></thead><tbody>${rules}</tbody></table></div>`:''}`;
+
+}
+
+function renderReleaseReport(report){
+  const panel=document.getElementById('reportReleaseReadiness');
+  const decision=report.release_readiness;
+  panel.hidden=!decision;
+  panel.dataset.state=decision?.status||'';
+  if(!decision){renderReleaseComparison(document.getElementById('reportReleaseComparison'),{});return;}
+  panel.querySelector('#reportReleaseDecision').innerHTML=releaseDecisionMarkup(decision,'releaseReadinessTitle');
+  const details=panel.querySelector('#reportReleasePolicy'), form=panel.querySelector('form');
+  const status=panel.querySelector('#releasePolicyStatus'), button=form.querySelector('button');
+  const id=reportContext.savedId;
+  details.open=false;
+  details.hidden=!(id&&report.plan_id&&report.status==='finished'&&report.verdict?.overall_passed===true&&
+    report.execution?.workload_version&&(report.execution?.mode||'full')==='full'&&report.snapshot?.requests>0&&
+    !report.snapshot?.dropped_iterations);
+  status.textContent='';
+  button.disabled=false;
+  panel.querySelector('#releasePolicyScope').textContent='Environment '+(decision.environment||'Unlabeled')+
+    '. Set at least one limit. Saving replaces the current baseline and budgets for this test environment.';
+  for(const field of form.querySelectorAll('input')) field.value=decision.budgets?.[field.name]??'';
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const budgets=Object.fromEntries([...new FormData(form)].filter(([,value])=>value!=='').map(([key,value])=>[key,Number(value)]));
+    if(!Object.keys(budgets).length){status.textContent='Set at least one release budget.';form.querySelector('input').focus();return;}
+    button.disabled=true;
+    status.textContent='Saving release policy…';
+    try{
+      const response=await fetch('/api/runs/'+encodeURIComponent(id)+'/release-policy',{
+        method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({budgets}),
+      });
+      const body=await response.json();
+      if(!response.ok)throw Error(typeof body.detail==='string'?body.detail:'Check the budget values and try again.');
+      if(reportContext?.savedId===id){
+        const updated=await fetch('/api/runs/'+encodeURIComponent(id)+'/saved-report');
+        if(!updated.ok)throw Error('Policy saved. Reopen the report to see the current decision.');
+        const saved=await updated.json();
+        if(reportContext?.savedId===id){
+          renderReleaseReport(saved);
+          details.open=true;
+          status.textContent='Baseline approved and budgets saved.';
+          button.focus();
+        }
+      }
+    }catch(error){if(reportContext?.savedId===id)status.textContent=error.message;}
+    finally{if(reportContext?.savedId===id)button.disabled=false;}
+  };
+  renderReleaseComparison(document.getElementById('reportReleaseComparison'),decision);
+}
+
+let releaseChartRedraw;
+const releaseChartResize=new ResizeObserver(()=>releaseChartRedraw?.());
+function renderReleaseComparison(panel,decision){
+  releaseChartResize.disconnect();
+  releaseChartRedraw=null;
+  const comparison=decision.comparison;
+  panel.hidden=!comparison;
+  panel.replaceChildren();
+  if(!comparison)return;
+  const metrics=[['Throughput','rps','rps','req/s'],['p95 latency','p95','p95_ms','ms'],['Request errors','err','error_percent','%']];
+  const sampleRows=[['Baseline',comparison.baseline],['Candidate',comparison.candidate]].flatMap(([label,points])=>
+    points.map(point=>`<tr><th scope="row">${label}</th><td>${esc(releaseNumber(point.t,'s'))}</td>
+      <td>${esc(releaseNumber(point.rps,'req/s'))}</td><td>${esc(releaseNumber(point.p95,'ms'))}</td>
+      <td>${esc(releaseNumber(point.err,'%'))}</td></tr>`)).join('');
+  const endpointRows=comparison.endpoints.map(item=>`<tr><th scope="row">${esc(item.name)}</th>
+    <td>${esc(releaseNumber(item.baseline_ms,'ms'))}</td><td>${esc(releaseNumber(item.candidate_ms,'ms'))}</td>
+    <td>${esc(releaseNumber(item.candidate_ms-item.baseline_ms,'ms'))}</td></tr>`).join('');
+  panel.innerHTML=`<div class="comparison-header">
+      <div><h3>Baseline versus candidate</h3><p class="muted">Elapsed time under the same workload</p></div>
+      <label for="releaseComparisonMetric">Metric <select id="releaseComparisonMetric">
+        ${metrics.map(([label,key])=>`<option value="${key}"${key==='p95'?' selected':''}>${label}</option>`).join('')}
+      </select></label>
+    </div>
+    <figure class="comparison-chart">
+      <figcaption class="comparison-key"></figcaption>
+      <canvas aria-hidden="true"></canvas>
+      <p class="muted">${esc(comparison.phases.map(phase=>phase.label+' '+phase.start_s+'–'+phase.end_s+' s').join(' · '))}</p>
+    </figure>
+    ${endpointRows?`<div class="release-table"><table aria-label="Endpoint p95 changes"><thead><tr><th scope="col">Endpoint</th>
+      <th scope="col">Baseline p95</th><th scope="col">Candidate p95</th><th scope="col">Change</th></tr></thead><tbody>${endpointRows}</tbody></table></div>`:''}
+    ${sampleRows?`<details><summary>Comparison sample data</summary>
+      <div class="release-table" tabindex="0" role="region" aria-label="Comparison sample data">
+        <table><thead><tr><th scope="col">Run</th><th scope="col">Elapsed</th><th scope="col">Throughput</th>
+        <th scope="col">p95 latency</th><th scope="col">Request errors</th></tr></thead>
+        <tbody>${sampleRows}</tbody></table>
+      </div></details>`:''}
+    <div class="btnrow"><button type="button" class="btn ghost sm">Open approved baseline</button></div>`;
+  panel.querySelector('button').onclick=()=>openSavedReport(decision.baseline_id);
+  const metric=panel.querySelector('select');
+  const canvas=panel.querySelector('canvas');
+  const caption=panel.querySelector('figcaption');
+  const redraw=()=>{
+    if(!canvas.isConnected||!canvas.clientWidth)return;
+    const key=metric.value;
+    const [, , summary,unit]=metrics.find(([,option])=>option===key);
+    caption.innerHTML=`<span class="comparison-baseline">Baseline ${esc(releaseNumber(comparison.baseline_metrics[summary],unit))}</span>
+      <span class="comparison-candidate">Candidate ${esc(releaseNumber(comparison.candidate_metrics[summary],unit))}</span>`;
+    const series=[['baseline','#637086',[5,4]],['candidate','#324ad2',[]]].map(([run,color,dash])=>({
+      color,dash,data:comparison[run].filter(point=>Number.isFinite(point.t)).map(point=>({x:point.t,y:point[key]})),
+    }));
+    const end=Math.max(0,...series.flatMap(item=>item.data.map(point=>point.x)));
+    _lineChart(canvas,series,{height:canvas.clientHeight,domain:[0,end],
+      boundaries:comparison.phases.map(phase=>phase.end_s)});
+  };
+  metric.onchange=redraw;
+  releaseChartRedraw=redraw;
+  releaseChartResize.observe(canvas);
+  requestAnimationFrame(redraw);
+
+}
+
 function renderReportDetails(j){
   const x=j.execution||{},snap=j.snapshot||{},lat=snap.latency||{};
-  document.getElementById('reportContext').textContent=(x.test_name||'Unnamed test')+' | '+(x.script_name||'Script not recorded')+' | '+(x.endpoint_summary||'Endpoints not recorded')+' | '+(j.status||'Recorded')+' · '+(x.mode||'full')+' · environment: '+(x.environment||'unlabeled')+' · release: '+(x.release_label||'unlabeled')+' · workload: '+(x.workload_version?.slice(0,12)||'not recorded')+' · baseline: '+(j.baseline_id?.slice(0,8)||'none')+(j.message?' · '+j.message:'');
+  document.getElementById('reportContext').textContent=(x.test_name||'Unnamed test')+' | '+(x.script_name||'Script not recorded')+' | '+(x.endpoint_summary||'Endpoints not recorded')+' | '+(j.status||'Recorded')+' · '+(x.mode||'full')+' · environment: '+(x.environment||'unlabeled')+' · release: '+(x.release_label||'unlabeled')+' · workload: '+(x.workload_version?.slice(0,12)||'not recorded')+' · run comparison reference: '+(j.baseline_id?.slice(0,8)||'none')+(j.message?' · '+j.message:'');
   document.getElementById('baselineSelection').textContent=getSelectedBaseline()?'Selected baseline: '+getSelectedBaseline().slice(0,8):'Automatic baseline: previous matching workload.';
   const endpoints=[...(snap.per_endpoint||[])].sort((a,b)=>(b.p95_ms||0)-(a.p95_ms||0));
   const formatThreshold=(metric,value)=>{
     if(value==null) return 'Unavailable';
     if(metric==='error_rate') return Number((value*100).toPrecision(15))+'%';
-    if(metric.endsWith('_ms')) return value+' ms';
+    if(metric.endsWith('_ms')) return Number(value.toPrecision(8))+' ms';
     return value;
   };
   const thresholdList=j.evidence?.thresholds||[...(j.verdict?.checks||[])].sort((a,b)=>
@@ -4098,6 +4495,8 @@ loadSlaProfiles();
 loadTraces();
 }
 export function dispose(){
+  releaseChartResize.disconnect();
+  releaseChartRedraw=null;
  if(pollTimer)clearInterval(pollTimer);if(jk.timer)clearInterval(jk.timer);
  if(dashboardFilterTimer)clearTimeout(dashboardFilterTimer);
  if(workspaceRefreshTimer)clearInterval(workspaceRefreshTimer);
@@ -4120,7 +4519,7 @@ function publishRoute(path){
 }
 function projectPath(){return currentProject?'/projects/'+encodeURIComponent(currentProject.project_id):'/projects';}
 function publishView(view){
-  const path={projects:'/projects',admin:'/admin/overview',monitoring:'/monitoring',activity:'/activity',dashboard:projectPath()+'/dashboard',history:projectPath()+'/tests'}[view];
+  const path={home:'/',projects:'/projects',admin:'/admin/overview',monitoring:'/monitoring',activity:'/activity',dashboard:projectPath()+'/dashboard',history:projectPath()+'/tests'}[view];
   if(path)publishRoute(path);
 }
 function publishStep(step){
@@ -4145,6 +4544,7 @@ export async function applyRoute(path){
       }
     }
     switch(route.kind){
+      case 'home':showView('home');break;
       case 'projects':showView('projects');break;
       case 'new-project':editProject();break;
       case 'project':showView('history');break;
@@ -4166,11 +4566,13 @@ export async function applyRoute(path){
       }
       case 'report':{
         const report=await requestJson('/api/runs/'+encodeURIComponent(route.runId)+'/saved-report');
-        if(report.plan_id){
+        if(report.project_id && report.project_id!==route.projectId)throw Error('This report belongs to another project.');
+        if(!report.project_id && report.plan_id){
           const plan=await requestJson('/api/plans/'+encodeURIComponent(report.plan_id));
           if(plan.project_id!==route.projectId)throw Error('This report belongs to another project.');
         }
         renderReport({...report,saved_result_id:route.runId});
+        if(route.rerun)await rerunReport();
         break;
       }
       case 'import-script':startProjectImport('script');break;

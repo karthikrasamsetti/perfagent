@@ -462,3 +462,73 @@ def test_dashboard_regression_requires_comparable_measurements(
         assert [change["metric"] for change in alert["changes"]] == (
             ["p95_ms"] if role == "viewer" else ["error_rate", "p95_ms"]
         )
+
+
+@pytest.mark.parametrize("p95,workload,status", [
+    (240, "v1", "ready"),
+    (256, "v1", "blocked"),
+    (240, "v2", "needs_evidence"),
+    (None, "v1", "needs_evidence"),
+])
+def test_release_policy_agrees_across_report_dashboard_and_download(setup, p95, workload, status):
+    client, engine, _, _, _ = setup
+    target = "http://fixture.test"
+    baseline_label = "<script>alert(1)</script>"
+    with Session(engine) as session:
+        for run_id, latency, version, release, day in [
+            ("release-baseline", 224, "v1", baseline_label, 1),
+            ("release-candidate", p95, workload, "candidate", 2),
+        ]:
+            payload = {
+                "run_id": run_id, "plan_id": "plan", "target": target, "tool": "k6",
+                "status": "finished", "execution": {"environment": "staging",
+                    "workload_version": version, "release_label": release, "target_request_rate": 15},
+                "snapshot": {"requests": 30, "rps": 15, "error_rate": 0,
+                             "latency": {"samples": 30 if latency is not None else 0, "p95_ms": latency},
+                             "per_endpoint": [{"name": "Checkout", "requests": 30, "p95_ms": latency}]},
+                "samples": [{"t": 1, "rps": 15, "p95": latency, "err": 0}],
+                "verdict": {"overall_passed": True, "checks": []},
+                "narrative": {"headline": "Run completed", "summary": "Measured checkout."},
+            }
+            session.add(RunResultRow(id=run_id, plan_id="plan", created_at=datetime(2026, 11, day),
+                                     target_base_url=target, verdict="pass", report_json=json.dumps(payload)))
+        session.commit()
+
+    path = "/api/runs/release-baseline/release-policy"
+    policy = {"budgets": {"max_p95_ms": 300, "max_p95_regression_percent": 10, "min_rps": 15}}
+    assert client.put(path, json=policy, headers={"Origin": "https://untrusted.test"}).status_code == 403
+    assert client.put(path, json={"budgets": {}}).status_code == 422
+    assert client.put(path, json={"budgets": {"max_p95_ms": "300"}}).status_code == 422
+    assert client.put(path, json=policy).status_code == 200
+    audit = client.get("/api/audit").json()["events"]
+    assert any(event["action"] == "release.baseline_approved" and event["entity_id"] == "release-baseline"
+               for event in audit)
+    candidate = "/api/runs/release-candidate"
+    report = client.get(candidate + "/saved-report").json()
+    decision = report["release_readiness"]
+    assert decision["status"] == status and report["verdict"]["overall_passed"] is True
+    assert client.get(candidate + "/report").json()["release_readiness"] == decision
+    overview = client.get("/api/reporting/runs", params={
+        "include_overview": "true", "role": "engineer",
+    }).json()["overview"]
+    assert overview["release_readiness"]["status"] == status
+    viewer = client.get("/api/reporting/runs?include_overview=true&role=viewer").json()
+    assert viewer["overview"]["release_readiness"] is None
+    download = client.get(candidate + "/report/download")
+    assert download.headers["Cache-Control"] == "no-store"
+    html = download.text
+    assert "Content-Security-Policy" in html
+    assert "Release readiness · " + status.replace("_", " ").capitalize() in html
+    assert decision["reason"] in html
+    assert baseline_label not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    if p95 and workload == "v1":
+        assert decision["comparison"]["endpoints"][0]["name"] == "Checkout"
+    if status == "blocked":
+        explanation = "The run passed its k6 thresholds. The release is blocked."
+        assert explanation in decision["explanation"]
+        assert explanation in html
+        assert "Measured checkout." not in html
+        assert not decision["rules"][-1]["passed"]
+        assert decision["rules"][0]["passed"]
+        assert client.put(path, json={"budgets": {"max_p95_regression_percent": 20}}).status_code == 200
+        assert client.get(candidate + "/saved-report").json()["release_readiness"]["status"] == "ready"

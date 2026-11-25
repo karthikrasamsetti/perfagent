@@ -151,6 +151,18 @@ class RunResultRow(Base):
     report_json: Mapped[str] = mapped_column(Text, default="")  # full saved report (verdict, diagnosis, narrative...)
 
 
+class ReleasePolicyRow(Base):
+    """An approved reference and its budgets for one test environment."""
+
+    __tablename__ = "release_policies"
+
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id", ondelete="CASCADE"), primary_key=True)
+    environment: Mapped[str] = mapped_column(Text, primary_key=True)
+    baseline_id: Mapped[str] = mapped_column(ForeignKey("run_results.id", ondelete="CASCADE"))
+    budgets_json: Mapped[str] = mapped_column(Text)
+    approved_at: Mapped[datetime]
+
+
 class AuditRow(Base):
     """A durable record of a consequential action — who/what/when, for the activity log.
 

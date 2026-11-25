@@ -35,7 +35,9 @@ change. Write a clear, honest, plain-language explanation.
 Rules:
 - Use ONLY the numbers provided. Never invent or estimate figures.
 - Be plain and non-alarmist. Explain what the numbers mean in practice.
-- If it passed, say so clearly. If it failed, explain which threshold and by how much.
+- Describe this run’s k6 thresholds. Release readiness and regression budgets are separate decisions.
+- Describe measured throughput. Only call it acceptable if a provided threshold evaluates it.
+- Error-rate targets and measurements include percent signs. Preserve their units.
 - Recommendations are hypotheses to investigate, not proven causes. Phrase them as \
 suggestions ("consider", "investigate"), never as certainties.
 - Keep it concise.
@@ -70,7 +72,8 @@ def _facts_block(target: str, snapshot: dict, verdict: dict) -> str:
     for c in verdict.get("checks", []):
         status = "PASS" if c["passed"] else "FAIL" if c["passed"] is False else "N/A"
         lines.append(
-            f"  - {c['metric']} {c['op']} {c['target']} | actual {c['actual']} | {status}"
+            f"  - {c['metric']} {c['op']} {format_threshold_value(c['metric'], c['target'])}"
+            f" | actual {format_threshold_value(c['metric'], c['actual'])} | {status}"
         )
     lines.append("")
     lines.append("Per-endpoint:")

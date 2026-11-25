@@ -19,7 +19,9 @@ def draft_review_sources(request: PlanRequest, model: LoadModel) -> dict:
         journeys.append({"source": "suggested", "steps": steps})
     return {
         "target": "user",
-        "load": "user" if request.stages or request.target_request_rate or request.target_iteration_rate or request.executor_options else "profile",
+        "load": ("traffic" if request.traffic_sample_rate and request.target_request_rate
+                 else "user" if request.stages or request.target_request_rate
+                 or request.target_iteration_rate or request.executor_options else "profile"),
         "thresholds": "user" if request.thresholds is not None else "suggested",
         "journeys": journeys,
     }

@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { resolveRoute } from './routes'
 
 describe('workspace routes', () => {
+  it('opens Home at the root and keeps the project library addressable', () => {
+    expect(resolveRoute('/').kind).toBe('home')
+    expect(resolveRoute('/projects').kind).toBe('projects')
+  })
   it('recognizes project-scoped screens and test steps', () => {
     expect(resolveRoute('/projects/commerce/dashboard')).toMatchObject({ kind: 'dashboard', projectId: 'commerce' })
     expect(resolveRoute('/projects/commerce/tests/checkout?step=3')).toMatchObject({ kind: 'test', testId: 'checkout', step: 3 })

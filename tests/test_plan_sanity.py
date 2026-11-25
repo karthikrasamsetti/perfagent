@@ -182,7 +182,11 @@ def test_exact_stages_and_request_rate_are_owned_by_the_planner():
 
     custom = draft_plan(PlanRequest(**args, stages=stages), _Fake(model.model_copy(deep=True)))
     assert custom.load_model.load_profile.stages == stages
-    rate = draft_plan(PlanRequest(**args, target_request_rate=15), _Fake(model))
+    from perfagent.planner.review_sources import draft_review_sources
+
+    request = PlanRequest(**args, target_request_rate=15, traffic_sample_rate=True)
+    rate = draft_plan(request, _Fake(model))
+    assert draft_review_sources(request, rate.load_model)["load"] == "traffic"
     assert rate.load_model.load_profile.arrival_rate == 15
     assert rate.load_model.load_profile.target_request_rate == 15
     assert rate.load_model.load_profile.total_seconds == 60

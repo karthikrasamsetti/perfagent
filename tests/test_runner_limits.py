@@ -73,3 +73,72 @@ def test_service_variables_are_excluded_from_k6_subprocesses(tmp_path, monkeypat
     assert "K6_WEB_DASHBOARD" not in env
     assert env["SSL_CERT_FILE"] == "/etc/ssl/fixture.pem"
     assert env["HOME"] == env["TMPDIR"] == str(tmp_path)
+
+
+@pytest.mark.parametrize("outcome", ["finished", "timeout", "stop"])
+def test_managed_lifecycle_streams_summary_and_cleans_up(monkeypatch, outcome):
+    import json
+    import subprocess
+    import sys
+    from contextlib import contextmanager
+
+    from perfagent.contracts.load_model import LoadModel
+    from perfagent.generator import render
+    from perfagent.runner.worker_protocol import WORKER_SUMMARY_TYPE
+
+    model = LoadModel.model_validate({
+        "target_base_url": "https://fixture.test",
+        "scenarios": [{"name": "Browse", "steps": [{"name": "Products", "path": "/products"}]}],
+        "load_profile": {"stages": [{"duration_seconds": 1, "target_users": 0}],
+                         "arrival_rate": 1, "target_request_rate": 1, "pre_allocated_vus": 1,
+                         "graceful_stop_seconds": 0},
+    })
+    expected = {"http_req_duration": {"thresholds": {"p(95)<500": True}}}
+    summary = json.dumps({"type": WORKER_SUMMARY_TYPE, "metrics": expected})
+    metric = json.dumps({"type": "Point", "metric": "http_reqs", "data": {"value": 1}})
+    cleaned = Event()
+    sockets = []
+
+    @contextmanager
+    def fake_docker(image, bridge, content, **limits):
+        sockets.append(bridge)
+        assert bridge.is_socket()
+        body = f"print({metric!r}, flush=True); print({summary!r}, flush=True)"
+        if outcome != "finished":
+            body += "; import time; time.sleep(10)"
+        with subprocess.Popen([sys.executable, "-c", body], stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True) as proc:
+            try:
+                yield proc
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                cleaned.set()
+
+    monkeypatch.setattr(k6_runner, "docker_worker", fake_docker)
+    policy = k6_runner.ManagedWorkerOptions(
+        image="sha256:" + "1" * 64, pinned_address="127.0.0.1",
+        approved_origins=("https://fixture.test",), max_vus=1, max_rps=1, max_seconds=1,
+    )
+    run = k6_runner.start_run(
+        uuid4().hex, "script", "k6", model.target_base_url, render(model)[1],
+        model.model_dump_json(), metadata={"generated": True, "workload_version": "native"},
+        managed=policy,
+    )
+    deadline = monotonic() + 5
+    if outcome == "stop":
+        while run.status != "running" and monotonic() < deadline:
+            sleep(.01)
+        assert k6_runner.stop_run(run.run_id)
+    while run.run_id in k6_runner._ACTIVE_RUNS and monotonic() < deadline:
+        sleep(.01)
+    assert cleaned.is_set()
+    assert sockets and not sockets[0].exists()
+    assert run.status == ("finished" if outcome == "finished" else "stopped"), run.message
+    assert run.metadata["workload_version"] != "native"
+    if outcome == "finished":
+        assert run.summary_metrics == expected
+        assert run.snapshot["requests"] == 1
+    if outcome == "timeout":
+        assert "execution limit" in run.message

@@ -154,5 +154,5 @@ def format_threshold_value(metric: str, value: float | None) -> str:
         return "Unavailable"
     if metric == "error_rate":
         return f"{(Decimal(str(value)) * 100).normalize():f}%"
-    number = str(value).removesuffix(".0")
+    number = f"{value:.8g}"
     return f"{number} ms" if metric.endswith("_ms") else number

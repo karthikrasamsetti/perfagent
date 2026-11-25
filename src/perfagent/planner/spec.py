@@ -41,6 +41,7 @@ class PlanRequest(BaseModel):
     insecure_tls: bool = False
     thresholds: list[Threshold] | None = None
 
+    traffic_sample_rate: bool = Field(default=False, description="Request rate selected from a local aggregate sample.")
     target_request_rate: int | None = Field(default=None, ge=1, le=1_000_000)
     target_iteration_rate: int | None = Field(default=None, ge=1, le=1_000_000)
     stages: list[Stage] | None = Field(default=None, min_length=1, max_length=20)

@@ -121,4 +121,25 @@ def _fmt(metric: str, v: float) -> str:
         return f"{v*100:.2f}%"
     if metric == "rps":
         return f"{v:.2f}/s"
-    return f"{v:.0f} ms"
+    return f"{v:.4g} ms"
+
+
+def refresh_baseline_display(baseline: dict | None) -> dict | None:
+    """Update the display of metrics in persisted comparisons."""
+    if not baseline:
+        return baseline
+    result = dict(baseline)
+    deltas = []
+    for delta in baseline.get("deltas", []):
+        metric = delta["metric"]
+        deltas.append({**delta, "previous_fmt": _fmt(metric, delta["previous"]),
+                       "current_fmt": _fmt(metric, delta["current"])})
+    result["deltas"] = deltas
+    worse = [delta for delta in deltas if delta["direction"] == "worse"]
+    if worse:
+        top = max(worse, key=lambda delta: abs(delta["pct_change"]))
+        result["headline"] = (
+            f"Regression: {top['label']} got {abs(top['pct_change'])*100:.0f}% worse "
+            f"({top['previous_fmt']} → {top['current_fmt']})"
+        )
+    return result

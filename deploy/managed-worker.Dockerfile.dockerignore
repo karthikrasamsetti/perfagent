@@ -1,0 +1,11 @@
+**
+!deploy/
+!deploy/managed-worker.Dockerfile
+!src/
+!src/perfagent/
+!src/perfagent/runner/
+!src/perfagent/runner/process_environment.py
+!src/perfagent/runner/worker_bridge.py
+!src/perfagent/runner/worker_http.py
+!src/perfagent/runner/worker_job.py
+!src/perfagent/runner/worker_protocol.py

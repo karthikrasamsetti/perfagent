@@ -1,3 +1,4 @@
+import { Icon } from '../components/Icon'
 import type { CSSProperties } from 'react'
 import { handlers } from '../workspace/controller'
 
@@ -5,12 +6,16 @@ export function ActivityPage() {
 return <>
 <section className={"view"} id={"view-activity"}>
 <div className="viewwrap activity-workspace">
-<div className={"card"}>
+<header className="workspace-page-heading">
+  <h2>Workspace history</h2>
+  <p>See what changed across plans, scripts, runs, and AI calls.</p>
+</header>
+<div className="card activity-stream">
 <div className="section-header activity-section-heading">
 <h2>
 {"Activity log"}
 </h2>
-<button className="btn ghost sm refresh-action" type="button" aria-label="Refresh activity log" title="Refresh activity log" onClick={handlers.h94}>↻</button>
+<button className="btn ghost sm refresh-action" type="button" aria-label="Refresh activity log" title="Refresh activity log" onClick={handlers.h94}><Icon name="refresh" /></button>
 <span className={"muted"}>
 {"Plan, script, and run events"}
 </span>
@@ -42,12 +47,12 @@ return <>
 </table>
 </div>
 </div>
-<div className={"card"}>
+<div className="card activity-stream">
 <div className="section-header activity-section-heading">
 <h2>
 {"AI call traces"}
 </h2>
-<button className="btn ghost sm refresh-action" type="button" aria-label="Refresh AI traces" title="Refresh AI traces" onClick={handlers.h95}>↻</button>
+<button className="btn ghost sm refresh-action" type="button" aria-label="Refresh AI traces" title="Refresh AI traces" onClick={handlers.h95}><Icon name="refresh" /></button>
 <span className={"muted"}>
 {"Model, latency, token usage, and redaction counts"}
 </span>

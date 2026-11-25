@@ -3,10 +3,11 @@ import json
 import secrets
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import Request, APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import case, func, text
 
+from perfagent.api.project_access import project_grants
 from perfagent.api.docs import doc
 from perfagent.config import get_settings
 from perfagent.contracts.load_model import LoadProfile, Threshold
@@ -125,10 +126,14 @@ def require_admin(x_perfagent_admin: str | None = Header(default=None)):
 
 
 @router.get("/api/projects", **doc("GET", "/api/projects"))
-def list_projects():
+def list_projects(request: Request):
+    grants = project_grants(request)
     with get_session() as s:
+        projects = s.query(ProjectRow)
+        if grants is not None:
+            projects = projects.filter(ProjectRow.id.in_(grants))
         return {"projects": [{**project_dict(p), "tests": s.query(PlanRow).filter(PlanRow.project_id == p.id).count()}
-                             for p in s.query(ProjectRow).order_by(ProjectRow.created_at.desc()).all()]}
+                             for p in projects.order_by(ProjectRow.created_at.desc()).all()]}
 
 
 @router.post("/api/projects", **doc("POST", "/api/projects"))

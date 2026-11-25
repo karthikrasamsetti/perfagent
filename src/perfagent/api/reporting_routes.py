@@ -24,6 +24,7 @@ from sqlalchemy import JSON, case, cast, func
 
 from perfagent.db import RunResultRow, PlanRow, get_session
 from perfagent.api.docs import doc
+from perfagent.api.release_policies import release_readiness
 from perfagent.api.test_identity import saved_identity
 from perfagent.analyzer.baseline import compare
 
@@ -186,7 +187,10 @@ def _overview(query, role: Role, session) -> dict:
         func.sum(case((RunResultRow.verdict == "pass", 1), else_=0)).label("passed"),
         func.sum(case((RunResultRow.verdict == "fail", 1), else_=0)).label("failed"),
     ).group_by(day).order_by(day.desc()).limit(_DASHBOARD_TREND_LIMIT).all()
+    readiness = (release_readiness(session, latest, json.loads(latest.report_json))
+                 if latest and latest.report_json and role != Role.VIEWER else None)
     return {
+        "release_readiness": readiness if readiness and readiness.get("baseline_id") else None,
         "total": total,
         "passed": passed or 0,
         "failed": failed or 0,

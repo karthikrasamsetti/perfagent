@@ -75,10 +75,25 @@ def test_real_app_applies_managed_access_before_routes(monkeypatch):
     with TestClient(app) as client:
         assert client.get("/api/tools").status_code == 401
         assert client.post("/api/preflight", json={}).status_code == 401
-        response = client.get("/api/tools", headers={
+        assert client.put("/api/runs/any/release-policy", json={}).status_code == 401
+        headers = {
             "X-PerfAgent-Gateway-Secret": "fixture-" * 5,
             "X-PerfAgent-Subject": "member",
             "X-PerfAgent-Assurance": "mfa",
-        })
+        }
+        response = client.get("/api/tools", headers=headers)
         assert response.status_code == 200
         assert "k6" in response.json()["tools"]
+        available = client.get("/api/run/available", headers=headers).json()
+        assert available == {"k6": False, "reason": access.MANAGED_EXECUTION_DETAIL}
+        for path, body in [
+            ("/api/preflight", {"script_id": "any"}),
+            ("/api/preflight", {}),
+            ("/api/scripts/any/validate", {}),
+            ("/api/scripts/any/run", {}),
+            ("/api/scripts/any/run", {"smoke": True}),
+            ("/api/jenkins/trigger", {}),
+        ]:
+            denied = client.post(path, json=body, headers=headers)
+            assert denied.status_code == 403, path
+            assert denied.json()["detail"] == access.MANAGED_EXECUTION_DETAIL

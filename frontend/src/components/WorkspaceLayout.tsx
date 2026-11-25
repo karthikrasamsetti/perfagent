@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { handlers } from '../workspace/controller'
+import { HomePage } from '../pages/HomePage'
 import { ProjectsPage } from '../pages/ProjectsPage'
 import { TestWorkspacePage } from '../pages/TestWorkspacePage'
 import { DashboardPage } from '../pages/DashboardPage'
@@ -36,7 +37,11 @@ return <>
 <Sidebar />
 <div className={"main"}>
 <Topbar />
+{import.meta.env.MODE === 'demo' && <aside className="demo-banner" aria-label="Demo mode">
+  <strong>Demo workspace</strong><span>Sample data. Runs and verification are simulated.</span>
+</aside>}
 <main id="workspace-content" tabIndex={-1}>
+<HomePage />
 <ProjectsPage />
 <AdminPage />
 <TestWorkspacePage />

@@ -34,19 +34,22 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, Response  
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.convertors import Convertor, register_url_convertor
 from pydantic import BaseModel, Field
 
 from perfagent import __version__, audit, tracing
-from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline
+from perfagent.analyzer.baseline import compare, metrics_from_snapshot, no_baseline, refresh_baseline_display
 from perfagent.analyzer.diagnostics import Finding, diagnose
 from perfagent.observability.correlation import correlate
 from perfagent.analyzer.verdict import evaluate_k6_summary
 from perfagent.analyzer.report_evidence import report_evidence
-from perfagent.api.access import WorkspaceAccess
+from perfagent.api import access
+from perfagent.api.access import (
+    MANAGED_EXECUTION_DETAIL, WorkspaceAccess, managed_execution_blocked, require_local_execution,
+)
 from perfagent.api.browser_security import BrowserWriteProtection
 from perfagent.api.chat_routes import router as chat_router
 from perfagent.api.docs import API_DESCRIPTION, API_TITLE, TAGS, doc
@@ -54,6 +57,8 @@ from perfagent.api.export_routes import router as export_router
 from perfagent.api.git_import_routes import router as git_import_router
 from perfagent.api.integration_routes import router as integration_router
 from perfagent.api.jenkins_routes import router as jenkins_router
+from perfagent.api.project_access import enforce_project_access
+from perfagent.api.release_policies import release_readiness, router as release_policy_router
 from perfagent.api.reporting_routes import router as reporting_router
 from perfagent.check_suggest import (
     CHECK_SUGGEST_SYSTEM_PROMPT,
@@ -98,6 +103,8 @@ from perfagent.api.projects import begin_name_write, check_test_name, require_pr
 from perfagent.db.models import ScriptSnapshotRow, ScriptVerificationRow
 from perfagent.runner import get_run, k6_available, start_run, stop_run
 from perfagent.runner.k6_runner import RunCapacityExceeded
+from perfagent.runner.admission import admission_checks
+from perfagent.runner.isolated_validation import validate_isolated
 from perfagent.runner.validator import preflight_script, validate_script
 
 app = FastAPI(
@@ -105,6 +112,7 @@ app = FastAPI(
     description=API_DESCRIPTION,
     version=__version__,
     openapi_tags=TAGS,
+    dependencies=[Depends(enforce_project_access)],
 )
 app.add_middleware(WorkspaceAccess)
 app.add_middleware(BrowserWriteProtection)
@@ -114,6 +122,7 @@ app.include_router(jenkins_router)
 app.include_router(integration_router)
 app.include_router(chat_router)
 app.include_router(reporting_router)
+app.include_router(release_policy_router)
 app.include_router(projects_router)
 _configure_logging()
 _log = get_logger("perfagent.api")
@@ -339,8 +348,13 @@ def get_saved_report(result_id: str) -> dict:
         try:
             report = json.loads(r.report_json)
             report.setdefault("plan_id", r.plan_id)
+            plan = s.get(PlanRow, r.plan_id)
+            report["project_id"] = plan.project_id if plan else None
             report["execution"] = {**saved_identity(r, s), **report.get("execution", {})}
-            return {**report, "evidence": report_evidence(report)}
+            if report.get("baseline"):
+                report["baseline"] = refresh_baseline_display(report["baseline"])
+            return {**report, "evidence": report_evidence(report),
+                    "release_readiness": release_readiness(s, r, report, comparison_details=True)}
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=500, detail="corrupt saved report") from e
 
@@ -837,6 +851,7 @@ class PreflightBody(BaseModel):
 @app.post("/api/preflight", **doc("POST", "/api/preflight"))
 def api_preflight(body: PreflightBody) -> dict:
     """Verify every k6 journey or check a plan’s endpoint reachability."""
+    require_local_execution()
     model = body.load_model
     if body.script_id:
         with get_session() as s:
@@ -891,6 +906,10 @@ def api_preflight(body: PreflightBody) -> dict:
 @app.post("/api/scripts/{script_id}/validate", **doc("POST", "/api/scripts/{script_id}/validate"))
 def api_validate_script(script_id: str) -> dict:
     """Parse a script's syntax and configuration with k6 inspect; sends no traffic."""
+    managed = managed_execution_blocked()
+    image = access.get_settings().perfagent_managed_k6_image if managed else ""
+    if managed and not image:
+        require_local_execution()
     with get_session() as s:
         row = s.get(ScriptRow, script_id)
         if row is None:
@@ -902,8 +921,10 @@ def api_validate_script(script_id: str) -> dict:
             data_filename, data_content = frozen.data_filename, frozen.data_content
         elif plan is not None:
             data_filename, data_content = _data_for_plan(s, plan)
-        return validate_script(row.content, data_filename=data_filename,
-                               data_content=data_content)
+        content = row.content
+    if managed:
+        return validate_isolated(image, content, data_filename, data_content)
+    return validate_script(content, data_filename=data_filename, data_content=data_content)
 
 
 
@@ -1018,6 +1039,8 @@ def upload_script(body: UploadScriptBody) -> dict:
 @app.get("/api/run/available", **doc("GET", "/api/run/available"))
 def run_available() -> dict:
     """Tell the UI whether k6 is installed so it can show a helpful message."""
+    if managed_execution_blocked():
+        return {"k6": False, "reason": MANAGED_EXECUTION_DETAIL}
     return {"k6": k6_available()}
 
 
@@ -1076,21 +1099,31 @@ def execution_readiness(script_id: str) -> dict:
         metadata = json.loads(saved.metadata_json) if saved else {}
         filename, content = ((saved.data_filename, saved.data_content) if saved else
                              _data_for_plan(s, plan))
+        blocked = managed_execution_blocked()
         checks = [
-            {"name": "Load engine", "ok": script.tool == "k6" and k6_available(),
-             "detail": "k6 installed or available for first-run setup"},
+            {"name": "Load engine", "ok": not blocked and script.tool == "k6" and k6_available(),
+             "detail": MANAGED_EXECUTION_DETAIL if blocked else "k6 installed or available for first-run setup"},
             {"name": "Target", "ok": bool(model.target_base_url), "detail": model.target_base_url},
             {"name": "Test data", "ok": not model.data_file or bool(content),
              "detail": filename or "No data file required"},
             {"name": "Execution version", "ok": bool(saved),
              "detail": "Frozen plan and data" if saved else "Legacy script: inputs freeze on its next run"},
         ]
+        if blocked:
+            settings = access.get_settings()
+            checks.extend(admission_checks(
+                model, metadata, settings.perfagent_managed_target_origins.get(
+                    plan.project_id if plan else "", []),
+                max_vus=settings.perfagent_managed_max_vus,
+                max_seconds=settings.perfagent_managed_max_seconds,
+                max_requests_per_second=settings.perfagent_managed_max_rps,
+            ))
         return {"checks": checks, "target": model.target_base_url,
                 "verification": _latest_verification(s, script_id) if saved is not None else None,
                 "execution": {**metadata, "duration_seconds": model.load_profile.total_seconds,
                               "peak_users": model.load_profile.peak_users,
                               "arrival_rate": model.planned_iteration_rate},
-                "smoke_supported": script.tool == "k6" and bool(metadata.get("generated")) and not metadata.get("script_edited")}
+                "smoke_supported": not blocked and script.tool == "k6" and bool(metadata.get("generated")) and not metadata.get("script_edited")}
 
 
 class RunOptions(BaseModel):
@@ -1102,6 +1135,7 @@ class RunOptions(BaseModel):
 @app.post("/api/scripts/{script_id}/run", **doc("POST", "/api/scripts/{script_id}/run"))
 def run_script(script_id: str, body: RunOptions | None = None) -> dict:
     """Execute a frozen script version; smoke runs create a separate bounded version."""
+    require_local_execution()
     body = body or RunOptions()
     with get_session() as s:
         row = s.get(ScriptRow, script_id)
@@ -1186,7 +1220,10 @@ def run_status(run_id: str) -> dict:
         "status": run.status,
         "message": run.message,
         "elapsed_s": round((run.ended_at or time.time()) - run.started_at, 1),
+        "mode": run.metadata.get("mode", "full"),
         "planned_load": {
+            "duration_seconds": run.metadata.get("duration_seconds") if run.metadata.get("generated")
+            and not run.metadata.get("script_edited") else None,
             "iterations": run.metadata.get("planned_iterations") if run.metadata.get("generated")
             and not run.metadata.get("script_edited") else None,
             "peak_users": run.metadata.get("peak_users") if run.metadata.get("generated")
@@ -1267,7 +1304,12 @@ def _saved_report(session, run_id):
 def run_report(run_id: str) -> dict:
     with _report_lock:
         payload = _finish_report(run_id)
-    return {**payload, "evidence": report_evidence(payload)}
+    with get_session() as s:
+        row = _saved_report(s, run_id)
+        readiness = release_readiness(s, row, payload, comparison_details=True) if row else None
+    if payload.get("baseline"):
+        payload = {**payload, "baseline": refresh_baseline_display(payload["baseline"])}
+    return {**payload, "evidence": report_evidence(payload), "release_readiness": readiness}
 
 
 def _finish_report(run_id: str) -> dict:
@@ -1457,6 +1499,8 @@ def run_report_download(run_id: str) -> HTMLResponse:
     with get_session() as s:
         row = _saved_report(s, run_id)
         payload = json.loads(row.report_json) if row is not None else None
+        if row is not None:
+            payload["release_readiness"] = release_readiness(s, row, payload, comparison_details=True)
     if payload is None:
         payload = run_report(run_id)
     report_html = render_report_html(
@@ -1465,9 +1509,10 @@ def run_report_download(run_id: str) -> HTMLResponse:
         narrative=Narrative.model_validate(payload["narrative"]),
         plan_id=payload.get("plan_id", ""), run_id=payload.get("run_id", run_id),
         execution=payload.get("execution"), status=payload.get("status"),
-        samples=payload.get("samples"))
+        samples=payload.get("samples"), release_readiness=payload.get("release_readiness"))
     return HTMLResponse(report_html, headers={
-        "Content-Disposition": f'attachment; filename="report_{run_id[:8]}.html"'})
+        "Content-Disposition": f'attachment; filename="report_{run_id[:8]}.html"',
+        "Cache-Control": "no-store"})
 
 
 @app.get("/api/metrics", **doc("GET", "/api/metrics"))

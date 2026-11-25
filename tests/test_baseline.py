@@ -48,3 +48,17 @@ def test_metrics_from_snapshot():
             "latency": {"p95_ms": 200, "p99_ms": 300, "avg_ms": 120}}
     m = metrics_from_snapshot(snap)
     assert m["requests"] == 100 and m["p95_ms"] == 200 and m["rps"] == 5.0
+
+
+
+def test_small_latency_keeps_precision_in_new_and_saved_comparisons():
+    from perfagent.analyzer.baseline import refresh_baseline_display
+
+    baseline = compare({"p95_ms": 1.5}, {"p95_ms": .69})
+    assert "0.69 ms → 1.5 ms" in baseline["headline"]
+    delta = baseline["deltas"][0]
+    delta.update(previous_fmt="1 ms", current_fmt="2 ms")
+    refreshed = refresh_baseline_display(baseline)
+    assert refreshed["deltas"][0]["previous_fmt"] == "0.69 ms"
+    assert refreshed["deltas"][0]["current_fmt"] == "1.5 ms"
+    assert delta["previous_fmt"] == "1 ms"

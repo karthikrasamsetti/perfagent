@@ -5,11 +5,24 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 
+from fastapi import HTTPException
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from perfagent.config import get_settings
+
+
+MANAGED_EXECUTION_DETAIL = "Execution is unavailable in managed workspaces until an isolated runner is configured."
+
+
+def managed_execution_blocked() -> bool:
+    return get_settings().perfagent_access_mode == "managed"
+
+
+def require_local_execution() -> None:
+    if managed_execution_blocked():
+        raise HTTPException(status_code=403, detail=MANAGED_EXECUTION_DETAIL)
 
 
 @dataclass(frozen=True)

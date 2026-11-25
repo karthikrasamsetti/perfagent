@@ -1,83 +1,37 @@
-import type { CSSProperties } from 'react'
-import { handlers } from '../workspace/controller'
+import { Icon } from '../components/Icon'
+import { monAdd } from '../workspace/controller'
+
+const tools = ['Grafana', 'Datadog', 'Prometheus', 'Kibana', 'New Relic', 'Custom']
 
 export function MonitoringPage() {
-return <>
-<section className={"view"} id={"view-monitoring"}>
-<div className={"viewwrap"}>
-<div className={"card"}>
-<div style={{"display": "flex", "alignItems": "center", "gap": "10px", "flexWrap": "wrap"} as CSSProperties}>
-<h2 style={{"margin": "0", "fontSize": "15px"} as CSSProperties}>
-{"📡 Monitoring tools"}
-</h2>
-<span className={"muted"}>
-{"link your own Grafana, Datadog, Prometheus or any dashboard — it embeds here"}
-</span>
-</div>
-<p className={"hint"} style={{"margin": "10px 0 0"} as CSSProperties}>
-{"Add the URL of a dashboard you already run. It is stored only in this browser. If the tool blocks embedding, use "}
-<b>
-{"Open ↗"}
-</b>
-{" to view it in a new tab. For Grafana embedding, the Grafana admin must set "}
-<code className={"k"}>
-{"allow_embedding = true"}
-</code>
-{"."}
-</p>
-<div className={"grid3"} style={{"marginTop": "14px"} as CSSProperties}>
-<div className={"field"}>
-<label>
-{"Tool"}
-</label>
-<select id={"monTool"}>
-<option>
-{"Grafana"}
-</option>
-<option>
-{"Datadog"}
-</option>
-<option>
-{"Prometheus"}
-</option>
-<option>
-{"Kibana"}
-</option>
-<option>
-{"New Relic"}
-</option>
-<option>
-{"Custom"}
-</option>
-</select>
-</div>
-<div className={"field"} style={{"gridColumn": "span 2"} as CSSProperties}>
-<label>
-{"Dashboard URL"}
-</label>
-<input id={"monUrl"} placeholder={"https://grafana.mycompany.com/d/abc/perf?kiosk"} autoComplete={"off"} />
-</div>
-</div>
-<div className={"btnrow"}>
-<button className={"btn"} onClick={handlers.h93}>
-{"+ Add dashboard"}
-</button>
-<span className={"hint"} style={{"margin": "0"} as CSSProperties}>
-{"Tip: append "}
-<code className={"k"}>
-{"&kiosk"}
-</code>
-{" to a Grafana URL to hide its menus."}
-</span>
-</div>
-<div className={"statusline"} id={"monStatus"}>
-
-</div>
-</div>
-<div id={"monList"}>
-
-</div>
-</div>
-</section>
-</>
+  return (
+    <section className="view" id="view-monitoring">
+      <div className="viewwrap monitoring-workspace">
+        <header className="workspace-page-heading">
+          <h2>Dashboards</h2>
+          <p>Keep your service dashboards close to your performance test results.</p>
+        </header>
+        <section className="card monitor-setup" aria-labelledby="monitorSetupTitle">
+          <h3 id="monitorSetupTitle">Link a dashboard</h3>
+          <p className="hint">Saved in this browser. Use a dashboard URL without access tokens or credentials.</p>
+          <form onSubmit={event => { event.preventDefault(); monAdd() }}>
+            <div className="field">
+              <label htmlFor="monTool">Tool</label>
+              <select id="monTool">{tools.map(tool => <option key={tool}>{tool}</option>)}</select>
+            </div>
+            <div className="field">
+              <label htmlFor="monUrl">Dashboard URL</label>
+              <input id="monUrl" type="url" required maxLength={2048} placeholder="https://grafana.example.com/d/services" autoComplete="off" />
+            </div>
+            <button type="submit" className="btn"><Icon name="add" /> Link dashboard</button>
+          </form>
+          <p className="statusline" id="monStatus" role="status" />
+        </section>
+        <section aria-labelledby="monitorSavedTitle">
+          <h3 id="monitorSavedTitle" className="section-heading">Linked dashboards</h3>
+          <div id="monList" />
+        </section>
+      </div>
+    </section>
+  )
 }

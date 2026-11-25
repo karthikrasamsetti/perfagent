@@ -6,11 +6,15 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "demo:build": "tsc -b && vite build --mode demo",
+    "demo": "npm run demo:build && vite preview --mode demo --host 127.0.0.1 --port 4174 --strictPort",
     "preview": "vite preview --host 127.0.0.1",
     "api:types": "node scripts/generate-api.mjs",
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "react-router": "7.18.6"

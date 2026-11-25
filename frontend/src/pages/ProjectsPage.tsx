@@ -1,5 +1,6 @@
+import { Icon } from '../components/Icon'
 import type { CSSProperties } from 'react'
-import { handlers } from '../workspace/controller'
+import { filterProjects, handlers } from '../workspace/controller'
 
 export function ProjectsPage() {
 return <>
@@ -11,8 +12,8 @@ return <>
     <p>Group tests, environments, and run history by application.</p>
   </div>
   <div className="btnrow">
-    <button className="btn" onClick={handlers.h0}>Create project</button>
-    <button className="btn ghost" onClick={handlers.h1}>Import from Git</button>
+    <button className="btn" onClick={handlers.h0}><Icon name="add" /> Create project</button>
+    <button className="btn ghost" onClick={handlers.h1}><Icon name="git" /> Import from Git</button>
   </div>
 </section>
 <div id={"projectForm"} className={"card"} style={{"display": "none"} as CSSProperties}>
@@ -154,7 +155,14 @@ return <>
 </button>
 </div>
 </div>
-<h2 className="section-heading">Project library</h2>
+<div className="section-header project-library-heading">
+  <h2 className="section-heading">Project library</h2>
+  <div className="project-library-search">
+    <label className="sr-only" htmlFor="projectSearch">Search projects</label>
+    <input type="search" id="projectSearch" placeholder="Search projects" onInput={filterProjects} />
+  </div>
+</div>
+<p className="muted" id="projectSearchStatus" role="status" hidden />
 <div id={"projectCards"} className={"project-grid"}>
 
 </div>

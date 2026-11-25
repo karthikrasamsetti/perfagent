@@ -52,9 +52,19 @@ Start with the [project workflow](PROJECT_WORKFLOW.md) for project creation, sep
 
 ---
 
+## Interactive demo preview
+
+From the repository root, run `npm --prefix frontend run demo`, then open
+`http://127.0.0.1:4174`. Open **Commerce Demo → Checkout API** to verify the example
+script, start a simulated run, and inspect the report and dashboard. The example
+release compares **v2.3** with **v2.4** and shows a blocked regression. The demo
+uses in-browser sample data, which resets on reload. It requires no PerfAgent
+backend, AI key, or test target. `npm --prefix frontend run demo:build` produces a
+separate static build in `frontend/dist-demo`.
+
 ## Screenshots
 
-The screenshots use sample projects, requests, and run results.
+The screenshots use sample projects, requests, and run results. Home opens at `/`, with shortcuts to create a test, import a k6 script, or review a release. [Desktop Home](docs/screenshots/home.png) · [Mobile Home](docs/screenshots/home-mobile.png)
 
 | Performance dashboard | Run report |
 |---|---|
@@ -241,6 +251,19 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 - **AI evaluation** — plan grounding (no invented endpoints) + report citation (no fabricated numbers).
 - **Fail-closed verdict** — an unmeasurable threshold → **INCONCLUSIVE**, never a silent PASS.
 
+### Plan from sampled traffic
+
+1. In **Describe → Traffic and duration**, open **Plan from sampled traffic**.
+2. Download the example CSV or prepare a file with `window_start,window_seconds,method,route,requests`. Use UTC timestamps, non-overlapping windows, and one aggregate count per method and route template in each window. Keep queries, headers, request bodies, and customer identifiers out of the file.
+3. Import the CSV. Review the route shares, the busiest window and the time-weighted average. Choose a rate and select **Use … requests/s**. The file stays in your browser.
+4. Set the target, endpoints, duration, and virtual-user allocation. Draft the plan, then confirm the requested HTTP rate, the estimated journey starts per second, the executor, and the order of the steps in **Review plan**. Route counts show traffic mix. Journey order and relationships need to come from the test you define.
+
+[Traffic planning screen](docs/screenshots/traffic-planning.png)
+
+For multiple journeys, open **Review plan → Suggest journey weights from traffic** and choose the aggregate CSV again. Select one observed route unique to each journey. PerfAgent divides the sampled route count by its occurrences in that journey, then turns those estimated starts into relative weights. It previews the shares and the ideal HTTP request rate for a constant journey-start workload before you apply them. Shared routes and journeys without a sampled route need manual weights. For example, 800 browse starts and 200 checkout starts suggest an 80/20 allocation. If browse sends one request and checkout sends two, 10 journey starts/s imply about 12 HTTP requests/s before k6 allocation rounding.
+
+[Journey weighting screen](docs/screenshots/journey-weighting.png)
+
 ### 🔎 Run & diagnose
 - **Pre-flight check**, **script validation** (`k6 inspect`), **live monitoring + chart**,
   **live run logs** (k6's output streamed as it runs — threshold crossings, the checks
@@ -252,6 +275,7 @@ API: `POST /api/chat/sessions`, `POST /api/chat/sessions/{id}/messages`,
 ### 📊 Report & history
 - **Performance dashboard** shows comparable historical runs across latency, throughput, error rate, and daily outcomes, with environment and release filters and links to saved reports.
 - **Run report** opens with the verdict, What happened, and linked key evidence, followed by thresholds, synchronized timelines, endpoint rankings, and baseline comparison. When samples record dropped iterations, the report links to the first affected sample.
+- **Release readiness** uses approved baselines and budgets stored per test and environment. Open a completed full run that passed its k6 thresholds without dropped iterations, then use **Set release budgets and approve this run as the baseline**. Run the same workload against a new release to see the decision in the project dashboard, saved report, and HTML export. Review the rule, endpoint comparisons, and recorded throughput before sharing the result. Saved reports evaluate the current policy when reopened. An exported HTML file captures the decision at download time.
 - **Response checks panel** — each assertion with its pass/fail count, so you can see exactly
   which checks failed and why the run passed or failed.
 - **Run logs** — the full k6 output for the run is shown on the report, **saved with it**, and
@@ -781,7 +805,45 @@ flowchart LR
 
 The UI also supports importing existing k6 scripts and recovering saved reports after a server restart.
 Local and managed access have different deployment requirements. Managed gateway checks apply at the
-workspace boundary. Per-project authorization and PostgreSQL row-level security remain hosted deployment work.
+workspace boundary. Managed mode blocks preflight, load and smoke runs, and Jenkins triggers
+at the API. Local mode supports those operations. In managed mode, set `PERFAGENT_PROJECT_GRANTS` to a JSON
+object mapping gateway subjects to existing project IDs and `viewer` or `editor` roles.
+Viewers can see scoped test listings, metrics, and saved reports. Editors can also open or
+edit scripts, update project settings, save workload presets, and approve release policies.
+Project provisioning, new test drafts, and unscoped integrations stay in local mode for this
+increment. An administrator can enable **offline script validation** for editors by preloading a trusted
+Docker k6 image and setting `PERFAGENT_MANAGED_K6_IMAGE` to its repository and SHA-256 digest.
+Inspection runs as an unprivileged user in a read-only container with networking disabled, bounded
+resources, and a deadline. Script readiness reports the configured project origin and workload
+limits. Managed traffic still requires a worker with enforced egress and PostgreSQL row-level
+security remains separate hosted deployment work.
+
+The managed egress broker is tested against a local TLS fixture. It accepts only origin-relative
+requests, connects to one operator-pinned IP, verifies the configured HTTPS certificate hostname, and
+returns redirect responses without following them. It bounds admitted request rate, concurrent
+connections, request and response size, and run duration. The API still blocks managed traffic
+until isolated workers can reach this broker as their only egress route. The private
+per-run Unix socket transport carries bounded request and response frames, exposes no TCP
+listener, and closes the broker and socket when the session ends. The worker job starts k6 and an ephemeral loopback adapter together, overrides the target with that adapter,
+disables redirects, and streams k6 metrics to its supervisor. The Docker launcher pins the worker image, disables networking, and mounts only the frozen inputs
+and that run’s private broker socket as read-only. Run the broker and Docker daemon on the same
+Linux host so they share the Unix socket. Docker Desktop on macOS could build and run the
+network-disabled image, but its daemon could not mount the host socket across the VM boundary.
+
+On a Linux Docker host, build and verify the worker using the local TLS fixture.
+
+```bash
+docker build --network=none -f deploy/managed-worker.Dockerfile -t perfagent-managed-worker:local .
+PERFAGENT_TEST_WORKER_IMAGE="$(docker image inspect perfagent-managed-worker:local --format '{{.Id}}')" \
+  .venv/bin/pytest -q tests/test_managed_egress.py
+```
+
+The runner can collect the managed worker’s metric stream and final k6 threshold summary.
+Stop and timeout close its broker and clean up the worker before freeing the run slot.
+Brokered runs have a separate workload fingerprint so release comparisons only match runs
+using the same transport. Managed Start remains disabled pending Linux end-to-end verification
+and API activation.
+
 
 ---
 
@@ -886,12 +948,18 @@ checks + saved runs & logs history** · **Save to Git (GitHub/Jenkins/Azure/GitL
 Import from Git · Run in Jenkins** · run-an-existing-script · logging, audit, token usage &
 AI traces · modern UI with inline guidance.
 
-**🔭 Planned next**
-- **More protocols** — gRPC (needs the k6 gRPC extension + `.proto`) and WebSocket streaming.
-- **Live runners for JMeter / Gatling** (scripts generate today; a live runner is k6-only).
-- **Autonomy** — extend the conversation graph so the agent sequences generate → run → diagnose → report itself, with approval as an interrupt.
-- **Scheduled & CI-triggered runs**; trend alerting on regression.
-- **Reliability for the hub** — durable/concurrent run state, load workers, target allow-list & VU caps.
+**🔭 Remaining work in priority order**
+
+| SNO | Priority | Feature | Remarks |
+| --- | --- | --- | --- |
+| 1 | Next | First-visit guided tour | Offer Start tour and Skip tour. Guide users through Home, Projects, Describe, Review, Verify, Run, Report, and Dashboard with Previous, Next, Done, progress, and replay from Help. Use mock data. Tour controls guide navigation without approving plans or starting real tests. |
+| 2 | Release verification | Manual VoiceOver walkthrough | Check the full workflow and tour on macOS, including keyboard navigation, focus restoration, step and status announcements, chart alternatives, and tables. |
+| 3 | Release verification | k6 workflow regression pass | Verify a webpage, an authenticated API, and a multi-step journey. Cover failed authentication, malformed responses, breached thresholds, stop and restart, and report consistency. |
+| 4 | Infrastructure dependency | Managed k6 release verification | Use the requested Linux environment to verify the isolated worker and enforced egress end to end. Validate PostgreSQL row-level isolation before enabling managed runs. |
+| 5 | After managed k6 | Run reliability and release automation | Finish durable and concurrent run handling, scheduled and CI-triggered runs, and regression alerts. |
+| 6 | After managed k6 | Approval-based orchestration | Extend the guided flow from generation through diagnosis and reporting, with a user approval before execution. |
+| 7 | Later | Additional protocols | Evaluate k6 coverage for gRPC and WebSocket streaming. |
+| 8 | Later | Distributed execution and other engines | Add multiple load generators and evaluate live JMeter and Gatling runners after the managed k6 workflow is verified. |
 
 ---
 

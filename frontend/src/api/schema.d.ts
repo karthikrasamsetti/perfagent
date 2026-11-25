@@ -441,6 +441,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/release-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Approve a release baseline
+         * @description Set the reference run and release budgets for its test environment.
+         *
+         *     **Access level:** `write` — creates or changes stored data.
+         */
+        put: operations["approve_release_policy_api_runs__run_id__release_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects": {
         parameters: {
             query?: never;
@@ -1790,6 +1812,12 @@ export interface components {
             insecure_tls?: boolean;
             /** Thresholds */
             thresholds?: components["schemas"]["Threshold"][] | null;
+            /**
+             * Traffic Sample Rate
+             * @description Request rate selected from a local aggregate sample.
+             * @default false
+             */
+            traffic_sample_rate?: boolean;
             /** Target Request Rate */
             target_request_rate?: number | null;
             /** Target Iteration Rate */
@@ -1797,6 +1825,10 @@ export interface components {
             /** Stages */
             stages?: components["schemas"]["Stage"][] | null;
             executor_options?: components["schemas"]["ExecutorOptions"] | null;
+        };
+        /** PolicyInput */
+        PolicyInput: {
+            budgets: components["schemas"]["ReleaseBudgets"];
         };
         /** PreflightBody */
         PreflightBody: {
@@ -1853,6 +1885,17 @@ export interface components {
             duration_seconds: number;
             /** Target Rate */
             target_rate: number;
+        };
+        /** ReleaseBudgets */
+        ReleaseBudgets: {
+            /** Max P95 Ms */
+            max_p95_ms?: number | null;
+            /** Max Error Percent */
+            max_error_percent?: number | null;
+            /** Min Rps */
+            min_rps?: number | null;
+            /** Max P95 Regression Percent */
+            max_p95_regression_percent?: number | null;
         };
         /** RequestPreviewBody */
         RequestPreviewBody: {
@@ -2925,6 +2968,43 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description `metric`, `target`, `plan_id`, `points`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_release_policy_api_runs__run_id__release_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyInput"];
+            };
+        };
+        responses: {
+            /** @description Successful response */
             200: {
                 headers: {
                     [name: string]: unknown;

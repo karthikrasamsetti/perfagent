@@ -1,3 +1,4 @@
+import { Icon } from '../components/Icon'
 import type { CSSProperties } from 'react'
 import { handlers, openDashboardTrendPoint, refreshDashboardTrend } from '../workspace/controller'
 
@@ -11,7 +12,7 @@ return <>
 <div className="card dashboard-results">
 <div className="section-header dashboard-heading">
 <h2>Performance overview</h2>
-<button className="btn ghost sm refresh-action" type="button" aria-label="Refresh dashboard" title="Refresh dashboard" onClick={handlers.h79}>↻</button>
+<button className="btn ghost sm refresh-action" type="button" aria-label="Refresh dashboard" title="Refresh dashboard" onClick={handlers.h79}><Icon name="refresh" /></button>
 <small className="refresh-caption" id="sdRefreshStatus">Updates automatically</small>
 <div className={"spacer"}>
 
@@ -102,6 +103,7 @@ return <>
 </span>
 </div>
 </details>
+<section className="release-panel" id="sdReleaseReadiness" aria-label="Release readiness" hidden />
 <div className={"tiles"} id={"sdTiles"} style={{"gridTemplateColumns": "repeat(4,1fr)", "margin": "14px 0 4px"} as CSSProperties}>
 
 </div>
@@ -113,30 +115,9 @@ return <>
     <span className="ui-skeleton skeleton-panel" />
   </div>
 </div>
-<div className="dashboard-findings">
-<section className="dashboard-attention" id="sdAttention" aria-label="Run to review" />
-<section className="dashboard-attention" id="sdRegression" aria-label="Regression from baseline" hidden />
-</div>
-<section className="dashboard-history-charts" aria-label="Workload metrics and daily outcomes">
-  <div className="dashboard-chart-header">
-    <div><h3>Performance over time</h3><p className="muted" id="sdWorkloadScope" /></div>
-    <button className="btn ghost sm" id="sdInspectReport" type="button">Open selected run</button>
-  </div>
-  <div className="report-sample-picker results-sample-picker">
-    <label htmlFor="sdInspectRun">Inspect a run</label>
-    <input id="sdInspectRun" type="range" min="0" step="1" />
-    <output id="sdInspectRunNote" htmlFor="sdInspectRun" />
-  </div>
-  <div className="dashboard-chart-grid">
-    <figure><figcaption>Latency (ms)</figcaption><p className="hint" id="sdLatencyLegend">p50 teal · p95 purple · p99 amber</p><canvas id="sdLatency" role="img" aria-label="Latency percentiles across comparable runs" /></figure>
-    <figure><figcaption>Throughput (req/s)</figcaption><p className="hint">Achieved teal · target purple</p><canvas id="sdThroughput" role="img" aria-label="Achieved and target throughput across comparable runs" /></figure>
-    <figure><figcaption>Error rate (%)</figcaption><canvas id="sdErrors" role="img" aria-label="Error rate across comparable runs" /></figure>
-    <figure><figcaption>Run outcomes by day (UTC)</figcaption><div id="sdOutcomes" /></figure>
-  </div>
-</section>
-<details className="dashboard-trend" aria-labelledby="sdTrendTitle">
-  <summary id="sdTrendTitle">Trend data and report links</summary>
+<section className="dashboard-trend" aria-labelledby="sdTrendTitle">
   <div className="section-header">
+    <h3 id="sdTrendTitle">Performance trend</h3>
     <div className="dashboard-trend-control">
       <label htmlFor="sdTrendMetric">Metric</label>
       <select id="sdTrendMetric" onChange={refreshDashboardTrend} defaultValue="p95_ms">
@@ -152,8 +133,31 @@ return <>
   <p id="sdTrendCaption" className="muted" />
   <canvas id="sdTrend" role="img" aria-label="Performance trend" aria-describedby="sdTrendCaption"
     height={150} onClick={event => openDashboardTrendPoint(event.clientX)} />
-  <div id="sdTrendData" className="table-scroll" />
-</details>
+  <details className="dashboard-trend-data"><summary>Trend data and report links</summary>
+    <div id="sdTrendData" className="table-scroll" />
+  </details>
+</section>
+<section className="dashboard-history-charts" aria-label="Workload metrics and daily outcomes">
+  <div className="dashboard-chart-header">
+    <div><h3>Historical metrics</h3><p className="muted" id="sdWorkloadScope" /></div>
+    <button className="btn ghost sm" id="sdInspectReport" type="button">Open selected run</button>
+  </div>
+  <div className="report-sample-picker results-sample-picker">
+    <label htmlFor="sdInspectRun">Inspect a run</label>
+    <input id="sdInspectRun" type="range" min="0" step="1" />
+    <output id="sdInspectRunNote" htmlFor="sdInspectRun" />
+  </div>
+  <div className="dashboard-chart-grid">
+    <figure><figcaption>Latency (ms)</figcaption><p className="hint" id="sdLatencyLegend">p50 teal · p95 purple · p99 amber</p><canvas id="sdLatency" role="img" aria-label="Latency percentiles across comparable runs" /></figure>
+    <figure><figcaption>Throughput (req/s)</figcaption><p className="hint">Achieved teal · target purple</p><canvas id="sdThroughput" role="img" aria-label="Achieved and target throughput across comparable runs" /></figure>
+    <figure><figcaption>Error rate (%)</figcaption><canvas id="sdErrors" role="img" aria-label="Error rate across comparable runs" /></figure>
+    <figure><figcaption>Run outcomes by day (UTC)</figcaption><div id="sdOutcomes" /></figure>
+  </div>
+</section>
+<div className="dashboard-findings">
+<section className="dashboard-attention" id="sdAttention" aria-label="Run to review" />
+<section className="dashboard-attention" id="sdRegression" aria-label="Regression in recorded run comparison" hidden />
+</div>
 <h3 className="dashboard-history-title">Recent runs</h3>
 <div className={"table-scroll"} role={"region"} aria-label={"Recent runs"} tabIndex={0}>
 <table id={"sdTable"} style={{"marginTop": "4px"} as CSSProperties}>

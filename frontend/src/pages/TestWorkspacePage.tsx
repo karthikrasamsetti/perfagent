@@ -1,6 +1,9 @@
+import { Icon } from '../components/Icon'
 import type { CSSProperties } from 'react'
-import { handlers } from '../workspace/controller'
+import { applyTrafficRate, drawChart, handlers, openReviewEditor, previewJourneyWeights } from '../workspace/controller'
 import { initializeDisabled } from '../components/initializeDisabled'
+
+import { TrafficImport } from '../components/TrafficImport'
 
 export function TestWorkspacePage() {
 return <>
@@ -125,10 +128,10 @@ return <>
 </div>
 <div role="tabpanel" aria-labelledby="modeManualBtn" id={"modeManual"}>
 <p className={"hint"}>
-{"Enter a URL for a page test, or add endpoints for an API or journey. Review the suggested workload before sending traffic."}
+{"Start with the target and the actions you want to measure."}
 </p>
 <div className="describe-section">
-  <h3>Target</h3>
+  <h3>Target and journey</h3>
   <div className="grid2">
     <div className="field">
       <label htmlFor="target">Target URL</label>
@@ -140,19 +143,35 @@ return <>
     </div>
   </div>
 </div>
+<div className="describe-endpoints">
+  <div className="section-header">
+    <h4>Requests in this journey</h4>
+    <button type="button" className="btn ghost sm" id="impdz" onClick={handlers.h22}><Icon name="upload" /> Import endpoints</button>
+  </div>
+  <p className="hint">For a single page test, the target URL is enough. For a journey, list requests in the order they run.</p>
+  <input type="file" id="importFile" accept=".json,.har" hidden onChange={handlers.h23} />
+  <div className="note info" id="importInfo" style={{display: 'none'}} role="status" />
+  <div id="endpoints" />
+  <button type="button" className="btn ghost sm" onClick={handlers.h24}><Icon name="add" /> Add request</button>
+</div>
 <div className="describe-section describe-load">
   <h3>Traffic and duration</h3>
+  <TrafficImport onApply={applyTrafficRate} />
   <div className="grid2">
     <div className="field">
       <label htmlFor="draftSchedule">How should traffic be scheduled?</label>
       <select id="draftSchedule" defaultValue="users">
+        <optgroup label="Common workloads">
         <option value="users">Virtual users with stages</option>
         <option value="rate">Requests per second</option>
+        </optgroup>
+        <optgroup label="Other execution schedules">
         <option value="journey-rate">Journey starts per second</option>
         <option value="constant-vus">Keep virtual users steady</option>
         <option value="ramping-arrival-rate">Ramp journey starts per second</option>
         <option value="shared-iterations">Complete a total number of journeys</option>
         <option value="per-vu-iterations">Complete a set number of journeys per user</option>
+        </optgroup>
       </select>
     </div>
     <div className="field">
@@ -226,43 +245,12 @@ return <>
   </div>
   <p className="hint">Leave both blank to get suggested rules.</p>
 </details>
-<div className={"field"} style={{"marginTop": "4px"} as CSSProperties}>
-<div className={"lblrow"}>
-<label>
-{"Import endpoints (optional)"}
-</label>
-<i className={"infohint"} data-tip={"Load endpoints automatically from an OpenAPI/Swagger spec, a Postman collection, or a HAR capture — instead of typing them."}>
-{"i"}
-</i>
-</div>
-<div className={"dz"} id={"impdz"} onClick={handlers.h22} style={{"padding": "10px"} as CSSProperties}>
-{"\n          📥 Click to import from OpenAPI / Postman / HAR\n        "}
-</div>
-<input type={"file"} id={"importFile"} accept={".json,.har"} style={{"display": "none"} as CSSProperties} onChange={handlers.h23} />
-<div className={"note info"} id={"importInfo"} style={{"display": "none"} as CSSProperties}>
-
-</div>
-</div>
-<div className={"lblrow"}>
-<label>
-{"Endpoints"}
-</label>
-<i className={"infohint"} data-tip={"The API paths to test (method + path, e.g. POST /login). Add a body for POST/PUT. These become the requests each virtual user sends."}>
-{"i"}
-</i>
-</div>
-<div id={"endpoints"}>
-
-</div>
-<button className={"btn ghost sm"} onClick={handlers.h24}>
-{"+ Add endpoint"}
-</button>
 <div className={"btnrow"}>
 <button className={"btn"} id={"planBtn"} onClick={handlers.h25}>
-{"Draft test"}
+{"Draft test plan"}
 </button>
 <span className={"hint"} style={{"margin": "0"} as CSSProperties}>
-{"Calls your configured LLM (key in .env)"}
+{"You can edit the draft in Review before any traffic is sent."}
 </span>
 </div>
 <div className={"statusline"} id={"planStatus"} role="status">
@@ -407,7 +395,7 @@ return <>
     <section className="review-guide" aria-labelledby="reviewGuideTitle">
       <h3 id="reviewGuideTitle">Before you approve</h3>
       <p id="reviewDraftExplanation" hidden />
-      <p>Confirm the target and load, then open each request to check what it sends and what a successful response looks like.</p>
+      <p>Check the target and traffic first. Then confirm the request data, checks, and captured values for each step.</p>
       <ul id="reviewFindings" />
     </section>
     <div className="review-layout">
@@ -509,6 +497,20 @@ return <>
               <dt>Value from an earlier response</dt>
               <dd>Open the request that returns the value and add a capture, such as <code>order.id</code> saved as <code>order_id</code>. In a later request in the same journey, choose From an earlier response for a body field or use <code>{'${order_id}'}</code> in its path.</dd>
             </dl>
+          </details>
+          <nav className="review-flow-links" aria-label="Journey setup">
+            <button type="button" className="btn ghost sm" onClick={() => openReviewEditor('dataFile', 'dz')}>Attach test data</button>
+            <button type="button" className="btn ghost sm" onClick={() => openReviewEditor('scenarios')}>Edit requests, checks &amp; captures</button>
+          </nav>
+          <details className="review-advanced journey-weighting">
+            <summary>Suggest journey weights from traffic</summary>
+            <p className="hint">Use the aggregate CSV from Describe. Choose a route unique to each journey to estimate how often that journey starts. Shared routes cannot identify a journey.</p>
+            <div className="field">
+              <label htmlFor="journeyWeightCsv">Traffic summary CSV</label>
+              <input id="journeyWeightCsv" type="file" accept=".csv,text/csv" onChange={event => void previewJourneyWeights(event.target.files?.[0])} />
+            </div>
+            <p id="journeyWeightStatus" role="status" />
+            <div id="journeyWeightPreview" />
           </details>
           <div id="reviewRequestsOverview" />
           <details className="review-editor" name="review-editors">
@@ -716,24 +718,42 @@ return <>
       </div>
       <span className="pill ghost" id="scriptPill" style={{display: 'none'}} />
     </header>
-    <p className="verify-description">Verify sends requests with one virtual user to check each journey. Start load only when you’re ready to run the configured workload.</p>
-    <div className="verify-controls">
+    <div className="verify-choices">
+      <section aria-labelledby="verifyLocalHeading">
+        <h3 id="verifyLocalHeading">Check the setup</h3>
+        <p className="hint">Review execution inputs or validate k6 syntax. These actions send no requests to the target.</p>
+        <div className="btnrow">
+          <button className="btn ghost sm" type="button" onClick={handlers.h58}>Check readiness</button>
+          <button className="btn ghost sm" type="button" id="validateBtn" onClick={handlers.h64} ref={initializeDisabled}>Validate syntax</button>
+        </div>
+        <div id="readinessResult" className="note info" style={{display: 'none'}} role="status" />
+        <div className="note" id="validateResult" role="status" style={{display: 'none'}} />
+      </section>
+      <section aria-labelledby="verifyTrafficHeading">
+        <h3 id="verifyTrafficHeading">Verify against the target</h3>
+        <p className="hint">Verify exercises the journey and checks with a lightweight workload. Smoke sends a short k6 workload.</p>
+        <div className="btnrow">
+          <button className="btn ghost sm" id="preflightBtn" onClick={handlers.h65} ref={initializeDisabled}>Verify test</button>
+          <button className="btn ghost sm" onClick={handlers.h59}>Run 10-second smoke test</button>
+        </div>
+        <div className="note" id="preflightResult" role="status" style={{display: 'none'}} />
+      </section>
+    </div>
+    <p id="verifyRerunNotice" className="note info" hidden>Saved workload loaded. Enter a new release label, then select Start load test.</p>
+    <div className="verify-launch">
+      <div>
+        <h3>Start the planned workload</h3>
+        <p className="hint">Send the full approved load to the target.</p>
+      </div>
       <div className="field">
-        <label htmlFor="releaseLabel">Release or commit label <span className="muted">(optional)</span></label>
+        <label htmlFor="releaseLabel">Release or commit <span className="muted">(optional)</span></label>
         <input id="releaseLabel" maxLength={100} placeholder="e.g. release-2.4" />
       </div>
-      <div className="btnrow">
-        <button className="btn" id="preflightBtn" onClick={handlers.h65} ref={initializeDisabled}>Verify test</button>
-        <button className="btn ghost" id="runBtn" onClick={handlers.h66} ref={initializeDisabled}>Start load test</button>
-      </div>
+      <button className="btn" id="runBtn" onClick={handlers.h66} ref={initializeDisabled}>Start load test</button>
     </div>
-    <div className="note" id="preflightResult" role="status" style={{display: 'none'}} />
     <div className="verify-secondary btnrow">
       <button className="btn ghost sm" onClick={handlers.h60}>Back to plan</button>
-      <button className="btn ghost sm" onClick={handlers.h58}>Check readiness</button>
-      <button className="btn ghost sm" onClick={handlers.h59}>Run 10-second smoke test</button>
     </div>
-    <div id="readinessResult" className="note info" style={{display: 'none'}} role="status" />
     <div className="note warn" id="runHint" style={{display: 'none'}} />
   </section>
   <details className="card script-details">
@@ -742,9 +762,7 @@ return <>
       <button className="btn ghost sm" id="editBtn" onClick={handlers.h61}>Edit script</button>
       <button className="btn ghost sm" id="regenBtn" onClick={handlers.h62} style={{display: 'none'}}>Regenerate</button>
       <button className="btn ghost sm" id="dlBtn" onClick={handlers.h63} ref={initializeDisabled}>Download</button>
-      <button className="btn ghost sm" id="validateBtn" onClick={handlers.h64} ref={initializeDisabled}>Validate syntax</button>
     </div>
-    <div className="note" id="validateResult" role="status" style={{display: 'none'}} />
     <pre id="scriptOut">The generated script appears here.</pre>
     <textarea id="scriptEdit" aria-label="Edit generated script" style={{display: 'none'}} />
     <div className="note info" id="editNote" style={{display: 'none'}}>Edits create a new script version when you verify, validate, or run.</div>
@@ -755,6 +773,7 @@ return <>
     <div id="scriptVersionList" />
     <pre id="scriptVersionPreview" hidden />
   </details>
+<details className="card verify-integrations"><summary>Git and Jenkins integrations</summary>
 <div className={"card"} id={"gitCard"}>
 <div style={{"display": "flex", "alignItems": "center", "gap": "10px", "flexWrap": "wrap"} as CSSProperties}>
 <h2 style={{"margin": "0"} as CSSProperties}>
@@ -976,29 +995,21 @@ return <>
 
 </pre>
 </div>
+</details>
 </div>
 <div className={"panel"} id={"panel4"}>
-<div className={"card"}>
-<div style={{"display": "flex", "alignItems": "center", "gap": "10px"} as CSSProperties}>
-<h2 style={{"margin": "0"} as CSSProperties}>
-{"Live run"}
-</h2>
-<span className={"pill ghost"} id={"runPill"}>
-{"idle"}
-</span>
-<div className={"spacer"}>
-
-</div>
-<button className={"btn danger sm"} id={"stopBtn"} onClick={handlers.h73} ref={initializeDisabled}>
-{"■ Stop"}
-</button>
-</div>
-<div className="statusline" id="runStatus" role="status">
-
-</div>
-<canvas id={"liveChart"} role="img" aria-label="Live throughput, latency, and errors over time" height={"120"} style={{"width": "100%", "margin": "6px 0 14px", "border": "1px solid var(--line)", "borderRadius": "12px", "background": "#fcfcfb"} as CSSProperties}>
-
-</canvas>
+<div className="card live-run-card">
+  <header className="section-header live-run-header">
+    <div>
+      <h2>Live run</h2>
+      <p id="liveRunScope" className="muted">Start a run from Verify to see live measurements.</p>
+    </div>
+    <div className="btnrow">
+      <span className="pill ghost" id="runPill">Idle</span>
+      <button className="btn danger sm" id="stopBtn" onClick={handlers.h73} ref={initializeDisabled}>Stop run</button>
+    </div>
+  </header>
+  <div className="statusline" id="runStatus" role="status" />
 <div className={"tiles"}>
 <div className={"tile"}>
 <div className={"v"} id={"mElapsed"}>
@@ -1065,6 +1076,20 @@ return <>
   <div className="l">Dropped iterations</div>
 </div>
 </div>
+<section className="live-run-chart" aria-labelledby="liveChartTitle">
+  <div className="section-header">
+    <h3 id="liveChartTitle">Measurements over time</h3>
+    <label htmlFor="liveMetric">Metric <select id="liveMetric" defaultValue="rps" onChange={drawChart}>
+      <option value="rps">Throughput (req/s)</option>
+      <option value="p95">p95 latency (ms)</option>
+      <option value="err">Error rate (%)</option>
+    </select></label>
+  </div>
+  <canvas id="liveChart" role="img" aria-label="Live throughput over elapsed time" height={170} />
+  <p id="liveChartReading" className="hint" />
+</section>
+<h3 className="live-endpoints-heading">Endpoint results</h3>
+<div className="table-scroll" role="region" aria-label="Live endpoint results" tabIndex={0}>
 <table id={"epTable"}>
 <thead>
 <tr>
@@ -1089,9 +1114,10 @@ return <>
 
 </tbody>
 </table>
+</div>
 <details style={{"marginTop": "14px"} as CSSProperties} id={"logDetails"}>
 <summary style={{"cursor": "pointer", "fontSize": "13px", "fontWeight": "600", "color": "var(--teal-d)"} as CSSProperties}>
-{"📜 Live run logs "}
+{"Live run logs "}
 <span className={"muted"} id={"logCount"}>
 
 </span>
@@ -1104,21 +1130,34 @@ return <>
 </div>
 <div className={"panel"} id={"panel5"}>
 <div className="card report-result" style={{"padding": "0", "overflow": "hidden"} as CSSProperties}>
-<div className={"rpt-hero na"} id={"verdictHero"}>
-<div className={"rpt-hero-emoji"} id={"verdictEmoji"}>
-{"⏳"}
-</div>
-<div style={{"flex": "1"} as CSSProperties}>
-<div className={"rpt-hero-title"} id={"verdictHeadline"}>
-{"Waiting for a finished run…"}
-</div>
-<div className={"rpt-hero-sub"} id={"verdictSub"}>
-
-</div>
-</div>
-<button className={"btn"} onClick={handlers.h74} style={{"background": "rgba(255,255,255,.22)", "border": "1px solid rgba(255,255,255,.3)"} as CSSProperties}>
-{"⬇ Download report"}
-</button>
+<section id="reportReleaseReadiness" className="release-panel" aria-labelledby="releaseReadinessTitle" hidden>
+  <div id="reportReleaseDecision" />
+  <details id="reportReleasePolicy">
+    <summary>Set release budgets and approve this run as the baseline</summary>
+    <p className="hint" id="releasePolicyScope" />
+    <form id="releasePolicyForm" aria-describedby="releasePolicyScope">
+      <div className="release-grid">
+        <label>Maximum p95 (ms)<input type="number" name="max_p95_ms" min="0.000001" max="3600000" step="any" /></label>
+        <label>Maximum request errors (%)<input type="number" name="max_error_percent" min="0" max="100" step="any" /></label>
+        <label>Minimum requests/s<input type="number" name="min_rps" min="0.000001" max="1000000" step="any" /></label>
+        <label>Maximum p95 increase (%)<input type="number" name="max_p95_regression_percent" min="0" max="1000" step="any" /></label>
+      </div>
+      <button type="submit" className="btn sm">Approve baseline and save budgets</button>
+      <p id="releasePolicyStatus" role="status" />
+    </form>
+  </details>
+</section>
+<div className="report-header">
+  <div className="rpt-hero na" id="verdictHero">
+    <span className="report-run-dot" aria-hidden="true" />
+    <div>
+      <div className="rpt-hero-title" id="verdictHeadline">Waiting for a finished run…</div>
+      <div className="rpt-hero-sub" id="verdictSub" />
+    </div>
+  </div>
+  <button className="btn ghost" type="button" onClick={handlers.h74}>
+    <Icon name="download" /> Download HTML
+  </button>
 </div>
 <div id="reportContext" className="report-identity" />
 <div className="report-overview">
@@ -1130,7 +1169,8 @@ return <>
 </section>
 <aside className="report-evidence-summary" id="reportEvidenceSummary" aria-label="Key evidence" hidden />
 </div>
-<div className={"btnrow"} style={{"margin": "16px 0"} as CSSProperties}>
+<section id="reportReleaseComparison" className="release-comparison" aria-label="Baseline comparison" hidden />
+<div className="btnrow report-rerun-actions">
 <button className={"btn"} id={"rerunBtn"} onClick={handlers.h75} ref={initializeDisabled}>
 {"Run again"}
 </button>
@@ -1138,12 +1178,12 @@ return <>
 
 </span>
 </div>
-<details className="report-baseline-actions"><summary>Baseline options</summary><div className={"btnrow"}>
+<details className="report-baseline-actions"><summary>One-off run comparison</summary><div className={"btnrow"}>
 <button className={"btn ghost sm"} onClick={handlers.h76}>
-{"Use as baseline"}
+{"Compare my next run to this one"}
 </button>
 <button className={"btn ghost sm"} onClick={handlers.h77}>
-{"Clear selected baseline"}
+{"Clear comparison selection"}
 </button>
 <span className={"muted"} id={"baselineSelection"} role={"status"}>
 
