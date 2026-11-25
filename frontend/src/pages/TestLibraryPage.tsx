@@ -1,5 +1,5 @@
 import { Icon } from '../components/Icon'
-import { handlers } from '../workspace/controller'
+import { handlers, recoverProjectRuns } from '../workspace/controller'
 
 export function TestLibraryPage() {
   return (
@@ -48,7 +48,11 @@ export function TestLibraryPage() {
         </div>
         <details className="card project-reports">
           <summary>Runs &amp; reports</summary>
-          <div className="btnrow"><button className="btn ghost sm refresh-action" type="button" aria-label="Refresh reports" title="Refresh reports" onClick={handlers.h92}><Icon name="refresh" /></button></div>
+          <div className="btnrow">
+            <button className="btn ghost sm refresh-action" type="button" aria-label="Refresh reports" title="Refresh reports" onClick={handlers.h92}><Icon name="refresh" /></button>
+            {document.documentElement.dataset.demo !== 'true' && <button className="btn ghost sm" type="button" onClick={recoverProjectRuns}>Recover interrupted local runs</button>}
+          </div>
+          <p className="hint" id="projectRunRecoveryStatus" role="status" />
           <div className="table-scroll" role="region" aria-label="Project reports" tabIndex={0}>
             <table id="runsTable">
               <thead><tr><th scope="col">When</th><th scope="col">Verdict</th><th scope="col">Target</th><th scope="col">Test / script</th><th scope="col">Requests</th><th scope="col">Errors</th><th scope="col">p95</th><th scope="col">Open report</th></tr></thead>

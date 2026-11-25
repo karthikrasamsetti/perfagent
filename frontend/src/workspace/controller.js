@@ -4,7 +4,7 @@
  * Window bindings exist only for generated editor rows with legacy DOM handlers.
  * New UI state should use React hooks and the typed API client instead.
  */
-import { requestJson } from '../api/client'
+import { ApiError, requestJson } from '../api/client'
 import { resolveRoute } from '../routing/routes'
 import { maxTrafficBytes, summarizeTraffic } from './trafficSummary'
 import { journeyRouteOptions, normalizedJourneyWeights } from './journeyWeights'
@@ -19,11 +19,11 @@ function goStep(n){
   const priorPanel=document.querySelector('#view-create.show .panel.show');
   const shouldMoveFocus=priorPanel&&priorPanel.id!=='panel'+n&&priorPanel.contains(document.activeElement);
   const verification=document.getElementById('preflightResult');
-  if(n===3 && verification && verification.dataset.scriptId!==currentScriptId){
-    verification.style.display='none';
-    if(currentScriptId) loadSavedVerification(currentScriptId, verification);
+  if(n===3){
+    if(verification && verification.dataset.scriptId!==currentScriptId) verification.style.display='none';
+    updateVerifyExecution();
+    loadScriptHistory();
   }
-  if(n===3) loadScriptHistory();
   // the 5 panels live inside the Create view; make sure it is the visible view
   document.querySelectorAll('.view').forEach(s=>s.classList.toggle('show', s.id==='view-create'));
   markNavigation('create');
@@ -1769,18 +1769,20 @@ async function attachStoredDataFile(id){
 function download(){ if(currentScriptId) downloadArtifact('/api/scripts/'+encodeURIComponent(currentScriptId)+'/download','demo-script.js'); }
 
 function downloadArtifact(path, filename){
-  if(import.meta.env.MODE!=='demo'){location=path;return;}
+  if(document.documentElement.dataset.demo!=='true'){location=path;return;}
   void fetch(path).then(response=>{
     if(!response.ok)throw Error('This demo download is unavailable.');
     return response.blob();
-  }).then(blob=>{
-    const url=URL.createObjectURL(blob);
-    const link=document.createElement('a');
-    link.href=url;
-    link.download=filename;
-    link.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
-  }).catch(error=>showError(error.message));
+  }).then(blob=>saveDownload(blob,filename)).catch(error=>showError(error.message));
+}
+
+function saveDownload(blob, filename){
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement('a');
+  link.href=url;
+  link.download=filename;
+  link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
 /* ---------- saved (non-secret) Git & Jenkins details ---------- */
@@ -2170,6 +2172,7 @@ function toggleEditScript(){
     document.getElementById('editNote').style.display='none';
     document.getElementById('editBtn').textContent='✏️ Edit script';
   }
+  updateVerifyExecution();
 }
 async function regenScript(){
   // re-generate from the plan, discarding edits
@@ -2197,6 +2200,7 @@ async function ensureScriptId(){
   currentScriptId=j.script_id; _scriptEdited=false;
   if(j.script_edited){
     document.getElementById('scriptMeta').textContent='Edited script · Latest version';
+    updateVerifyExecution();
     loadScriptHistory();
   }
   return currentScriptId;
@@ -2208,6 +2212,7 @@ async function runScript(smoke=false){
   try{
   if(!currentScriptId){showError('Generate or import a script before running.');return;}
   try{ await ensureScriptId(); }catch(e){ showError(e.message); return; }
+  currentRunId=null;
   goStep(4);
   resetChart();
   document.getElementById('liveRunScope').textContent=smoke?'Smoke test':'Full workload';
@@ -2228,19 +2233,18 @@ async function runScript(smoke=false){
     if(!r.ok) throw new Error(j.detail||'run failed');
     currentRunId=j.run_id; document.getElementById('runBtn').disabled=true;
     document.getElementById('stopBtn').disabled=false; pollTimer=setInterval(pollRun,500);
+    publishStep(4);
   }catch(e){
     document.getElementById('runPill').textContent='Start failed';
     rs.className='statusline err'; rs.textContent='Error: '+e.message;
   }
   }finally{runStarting=false;}
 }
-async function pollRun(){
+async function pollRun(existing){
   const runId=currentRunId, timer=pollTimer;
   if(!runId) return;
   try{
-    const response=await fetch(`/api/runs/${runId}`);
-    if(!response.ok)throw new Error('Unable to refresh run status.');
-    const j=await response.json();
+    const j=existing||await requestJson('/api/runs/'+encodeURIComponent(runId));
     if(runId!==currentRunId||timer!==pollTimer)return;
     const rs=document.getElementById('runStatus'); const pill=document.getElementById('runPill');
     const updateStatus=(style,message)=>{
@@ -2597,6 +2601,21 @@ function downloadRunLogs(){
 
 function downloadReport(){const id=reportContext?.savedId;if(id)downloadArtifact('/api/runs/'+encodeURIComponent(id)+'/report/download','demo-report.html');else showError('Open a report before downloading.');}
 
+export async function downloadReportJson(event){
+  const id=reportContext?.savedId;
+  if(!id){showError('Open a saved report before downloading.');return;}
+  const button=event.currentTarget;
+  setWorkflowBusy(button,true);
+  try{
+    const report=await requestJson('/api/runs/'+encodeURIComponent(id)+'/saved-report');
+    const blob=new Blob([JSON.stringify(report,null,2)+'\n'],{type:'application/json'});
+    const safeId=String(id).replace(/[^a-zA-Z0-9_-]/g,'_');
+    saveDownload(blob,'perfagent-report-'+safeId+'.json');
+  }catch(error){showError('Could not download the report: '+error.message);}
+  finally{setWorkflowBusy(button,false);}
+}
+
+
 
 
 /* ---------- AI call traces ---------- */
@@ -2705,7 +2724,7 @@ function sdFmt(k,v){
 }
 function sdVerdict(v){
   const m={pass:['pass','PASS'],fail:['fail','FAIL'],inconclusive:['na','INCONCLUSIVE']}[v]||['ghost',(v||'?').toUpperCase()];
-  return '<span class="pill '+m[0]+'">'+m[1]+'</span>';
+  return '<span class="pill '+m[0]+'">'+esc(m[1])+'</span>';
 }
 let dashboardTrend=[], dashboardOutcomeDay='';
 const trendMetrics={
@@ -2824,9 +2843,14 @@ function renderDashboardAttention(overview){
     const decision=overview?.release_readiness;
     release.hidden=!decision;
     release.dataset.state=decision?.status||'';
+    const budgetsOpen=release.querySelector('.release-budget-details')?.open;
     release.innerHTML=decision?releaseDecisionMarkup(decision,'dashboardReleaseTitle')+
       '<button type="button" class="btn ghost sm">Open candidate report</button>':'';
-    if(decision) release.querySelector('button').onclick=()=>openSavedReport(decision.candidate_id);
+    if(decision){
+      release.querySelector('button').onclick=()=>openSavedReport(decision.candidate_id);
+      const budgets=release.querySelector('.release-budget-details');
+      if(budgets&&budgetsOpen!==undefined) budgets.open=budgetsOpen;
+    }
   }
   renderDashboardRegression(overview?.regression);
   const panel=document.getElementById('sdAttention');
@@ -3074,6 +3098,27 @@ async function rerunReport(){
 }
 
 /* ---------- runs & reports history ---------- */
+export async function recoverProjectRuns(event){
+  const projectId=currentProject?.project_id;
+  if(!projectId)return;
+  const button=event.currentTarget;
+  const status=document.getElementById('projectRunRecoveryStatus');
+  setWorkflowBusy(button,true);
+  status.textContent='Checking for interrupted runs…';
+  try{
+    const result=await requestJson('/api/projects/'+encodeURIComponent(projectId)+'/runs/recover',{method:'POST'});
+    if(currentProject?.project_id!==projectId)return;
+    const count=result.recovered;
+    status.textContent=count?count+' interrupted '+(count===1?'run recovered.':'runs recovered.'):
+      (result.failed?'No interrupted runs were recovered.':'No interrupted runs to recover.');
+    if(result.failed)status.textContent+=' '+result.failed+' could not be recovered.';
+    if(result.more)status.textContent+=' Select Recover again to check the next batch.';
+    await Promise.all([loadRuns(),loadPlans()]);
+  }catch(error){
+    if(currentProject?.project_id===projectId)status.textContent=error.message;
+  }finally{setWorkflowBusy(button,false);}
+}
+
 async function loadRuns(background=false){
   const projectId=currentProject?.project_id;
   const loading=beginTableRefresh('runsTable',projectId,8);
@@ -3163,10 +3208,18 @@ function renderProjectTests(plans){
       '</strong><span class="project-test-target">'+esc(plan.target||'')+'</span>'+
       (plan.goal&&plan.goal!==plan.test_name?'<small>'+esc(plan.goal)+'</small>':'')+
       '</td><td>'+(plan.script_count?'<button class="btn ghost sm" data-version-test="'+esc(plan.plan_id)+'">View history</button>':'—')+'</td><td><button class="btn ghost sm" data-open-test="'+
-      esc(plan.plan_id)+'">Open</button></td></tr>').join('')||
+      esc(plan.plan_id)+'">Resume test</button>'+
+      (plan.latest_report?'<div class="project-latest-report"><button class="btn ghost sm" type="button" data-latest-test-report="'+
+        esc(plan.latest_report.run_id)+'">Latest report</button>'+sdVerdict(plan.latest_report.verdict)+'</div>':'')+
+      '</td></tr>').join('')||
       '<tr><td colspan="3" class="workspace-list-empty">'+
       (plans.length?'No tests match your search.':'Create a test or import a script to get started.')+'</td></tr>';
-    body.querySelectorAll('[data-open-test]').forEach(button=>button.onclick=()=>openPlan(button.dataset.openTest));
+    body.querySelectorAll('[data-open-test]').forEach(button=>{
+      button.onclick=()=>openPlan(button.dataset.openTest).catch(error=>showError(error.message));
+    });
+    body.querySelectorAll('[data-latest-test-report]').forEach(button=>{
+      button.onclick=()=>openSavedReport(button.dataset.latestTestReport);
+    });
     body.querySelectorAll('[data-version-test]').forEach(button=>{
       button.onclick=async()=>{
         await openPlan(button.dataset.versionTest);
@@ -3187,6 +3240,11 @@ function frameworkTestFolder(name){
 }
 
 function renderProjectFramework(project,plans){
+  const recoveryStatus=document.getElementById('projectRunRecoveryStatus');
+  if(recoveryStatus&&recoveryStatus.dataset.projectId!==project.project_id){
+    recoveryStatus.dataset.projectId=project.project_id;
+    recoveryStatus.textContent='';
+  }
   document.getElementById('libraryProjectName').textContent=project.name;
   document.getElementById('libraryProjectDescription').textContent=project.description||'';
   const config=[['Repository',project.repo_url||'Set a repository in Project settings'],
@@ -3208,11 +3266,18 @@ function renderProjectFramework(project,plans){
     '<li>results/</li><li>perfagent.json</li><li>README.md</li></ul></details>'+
     (chosen.includes('github')?'<p>Repository workflow · .github/workflows/perf-'+esc(folder)+'.yml</p>':'');
 }
-async function openPlan(id){
+async function openPlan(id, saved){
+  if((pollTimer||runStarting)&&id!==currentPlanId) throw Error('Finish or stop the active run before opening another test.');
+  const j=saved||await requestJson('/api/plans/'+encodeURIComponent(id));
+  if(j.project_id&&currentProject&&j.project_id!==currentProject.project_id) throw Error('This test belongs to another project.');
   document.getElementById('verifyRerunNotice').hidden=true;
   document.getElementById('importNote').style.display='none';
   applyIntegrations(id);
-  const j=await (await fetch(`/api/plans/${id}`)).json();
+  if(id!==currentPlanId&&!pollTimer) currentRunId=null;
+  _scriptEdited=false;
+  document.getElementById('scriptEdit').style.display='none';
+  document.getElementById('editNote').style.display='none';
+  document.getElementById('scriptOut').style.display='';
   currentPlanId=id; planModel=j.load_model; planRationale=''; setReviewSources(j.review_sources);
   renderPlanForm(); renderRawFromModel();
   document.getElementById('guardrailBadge').style.display='none';
@@ -3227,7 +3292,9 @@ async function openPlan(id){
   if(scripts.length){
     const latest=scripts[scripts.length-1];   // most recent
     try{
-      const content=await (await fetch(`/api/scripts/${latest.script_id}/download`)).text();
+      const response=await fetch('/api/scripts/'+encodeURIComponent(latest.script_id)+'/download');
+      if(!response.ok) throw Error('Saved script could not be loaded.');
+      const content=await response.text();
       currentScriptId=latest.script_id; currentDataFileId=null;
       document.getElementById('scriptOut').textContent=content;
       document.getElementById('dlBtn').disabled=false;
@@ -3241,6 +3308,29 @@ async function openPlan(id){
   }
   // land on the Script step if a script is ready, else the Review step
   goStep(currentScriptId ? 3 : 2);
+}
+
+async function resumeLiveRun(runId, plan){
+  if(pollTimer&&currentRunId!==runId) throw Error('Another run is active in this workspace.');
+  let run;
+  try{run=await requestJson('/api/runs/'+encodeURIComponent(runId));}
+  catch(error){
+    if(!(error instanceof ApiError)||error.status!==404) throw error;
+    const report=await requestJson('/api/runs/'+encodeURIComponent(runId)+'/saved-report');
+    if(report.plan_id!==plan.plan_id) throw Error('This report belongs to another test.');
+    renderReport({...report,saved_result_id:runId});
+    goStep(5);
+    return;
+  }
+  if(!(plan.scripts||[]).some(script=>script.script_id===run.script_id)) throw Error('This run belongs to another test.');
+  currentRunId=runId;
+  goStep(4);
+  resetChart();
+  const active=['starting','preparing','running'].includes(run.status);
+  document.getElementById('stopBtn').disabled=!active;
+  document.getElementById('runBtn').disabled=active||!currentScriptId;
+  if(active&&!pollTimer) pollTimer=setInterval(pollRun,500);
+  await pollRun(run);
 }
 
 let scriptHistoryRequest=0;
@@ -3410,23 +3500,59 @@ async function doValidate(){
   finally{ setWorkflowBusy(button,false); }
 }
 
-async function loadSavedVerification(scriptId, el){
+let verifyExecutionRequest=0;
+export async function updateVerifyExecution(){
+  const status=document.getElementById('verifyExecutionStatus');
+  const summary=document.getElementById('verifyExecutionSummary');
+  const verificationResult=document.getElementById('preflightResult');
+  if(!status||!summary)return;
+  const request=++verifyExecutionRequest;
+  const scriptId=currentScriptId;
+  summary.hidden=true;
+  if(!scriptId){status.textContent='Save or import a script to see its execution details.';return;}
+  if(_scriptEdited||currentScriptText()!==document.getElementById('scriptOut').textContent){
+    status.textContent='Script changes are pending. Save them by validating or verifying the script before reviewing its execution details.';
+    verificationResult.style.display='none';
+    return;
+  }
+  status.textContent='Loading saved workload…';
   try{
-    const response=await fetch('/api/scripts/'+encodeURIComponent(scriptId)+'/readiness');
-    if(!response.ok) return;
-    const {verification}=await response.json();
-    if(!verification || currentScriptId!==scriptId || _scriptEdited ||
-      el.dataset.scriptId===scriptId || document.getElementById('preflightBtn').disabled ||
-      currentScriptText()!==document.getElementById('scriptOut').textContent) return;
-    el.dataset.scriptId=scriptId;
-    el.style.display='flex';
-    el.className=verification.all_ok?'note ok':'note warn';
+    const result=await requestJson('/api/scripts/'+encodeURIComponent(scriptId)+'/readiness');
+    if(request!==verifyExecutionRequest||currentScriptId!==scriptId)return;
+    const execution=result.execution||{};
+    const generated=execution.generated===true&&!execution.script_edited;
+    const label=[
+      ['Saved script',document.getElementById('scriptMeta').textContent],
+      ['Target configured in the plan',result.target],
+      ['Environment',execution.environment],
+      ['Executor',generated?execution.executor:null],
+      ['Planned duration',generated&&Number.isFinite(execution.duration_seconds)?execution.duration_seconds+' s':null],
+      [execution.arrival_rate?'Preallocated VUs':'Peak VUs',generated?execution.peak_users:null],
+      ['Target throughput',generated&&execution.target_request_rate?execution.target_request_rate+' req/s':null],
+      ['Planned iterations',generated?execution.planned_iterations:null],
+    ].filter(([,value])=>value!==null&&value!==undefined&&value!=='');
+    summary.innerHTML=label.map(([name,value])=>'<div><dt>'+name+'</dt><dd>'+esc(value)+'</dd></div>').join('');
+    summary.hidden=false;
+    status.textContent=generated?'These settings are saved with this script version.':
+      'This script defines its own execution settings. Review the script before starting load.';
+    const verification=result.verification;
+    if(verificationResult.dataset.scriptId===scriptId&&!document.getElementById('preflightBtn').disabled){
+      verificationResult.style.display='flex';
+      return;
+    }
+    if(!verification||document.getElementById('preflightBtn').disabled||
+      _scriptEdited||currentScriptText()!==document.getElementById('scriptOut').textContent)return;
+    verificationResult.dataset.scriptId=scriptId;
+    verificationResult.style.display='flex';
+    verificationResult.className=verification.all_ok?'note ok':'note warn';
     const date=new Date(verification.verified_at*1000).toLocaleString();
     const count=verification.journeys_checked;
-    el.textContent=(verification.all_ok?'Verification passed':'Verification needs review')+
+    verificationResult.textContent=(verification.all_ok?'Verification passed':'Verification needs review')+
       ' · '+count+(count===1?' journey':' journeys')+' · '+date;
   }catch(e){
-    // A saved result is optional. The Verify test action remains available.
+    if(request===verifyExecutionRequest&&currentScriptId===scriptId){
+      status.textContent='Saved workload details are unavailable. Review the script before starting load.';
+    }
   }
 }
 
@@ -3979,12 +4105,21 @@ function releaseDecisionMarkup(decision,titleId){
     ['Average load',decision.candidate_rps==null?null:releaseNumber(decision.candidate_rps,'req/s')],
     ['Planned load',decision.target_rps==null?null:releaseNumber(decision.target_rps,'req/s')],
   ]:[];
-  return `<div class="release-heading"><h2 id="${titleId}">Release readiness</h2><span class="pill ${resultClass}">${state}</span></div>
+  const p95=decision.p95_comparison;
+  const endpoint=decision.largest_endpoint_increase;
+  return `<div class="release-hero">
+    <div class="release-heading"><h2 id="${titleId}">Release readiness</h2><span class="pill ${resultClass}">${state}</span></div>
     <p class="release-headline">${esc(decision.reason)}</p>
-    ${decision.summary?'<p class="release-summary">'+esc(decision.summary)+'</p>':''}
+    </div>
+    ${p95||endpoint?`<dl class="release-evidence">
+      ${p95?`<div><dt>Overall p95</dt><dd>${esc(releaseNumber(p95.candidate_ms,'ms'))}</dd>
+        <small>Baseline ${esc(releaseNumber(p95.baseline_ms,'ms'))}</small></div>`:''}
+      ${endpoint?`<div><dt>Largest endpoint p95 increase</dt><dd>+${esc(releaseNumber(endpoint.candidate_ms-endpoint.baseline_ms,'ms'))}</dd>
+        <small>${esc(endpoint.name)} · ${esc(releaseNumber(endpoint.baseline_ms,'ms'))} baseline · ${esc(releaseNumber(endpoint.candidate_ms,'ms'))} candidate</small></div>`:''}
+      </dl>`:decision.summary?'<p class="release-summary">'+esc(decision.summary)+'</p>':''}
     ${metadata.length?`<dl class="release-context">${metadata.filter(([,value])=>value!==null).map(([label,value])=>
       `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>`:''}
-    ${rules?`<div class="release-table"><table aria-label="Release budget results"><thead><tr><th scope="col">Budget</th><th scope="col">Actual</th><th scope="col">Limit</th><th scope="col">Result</th></tr></thead><tbody>${rules}</tbody></table></div>`:''}`;
+    ${rules?`<details class="release-budget-details" open><summary>Release budget results</summary><div class="release-table"><table aria-label="Release budget results"><thead><tr><th scope="col">Budget</th><th scope="col">Actual</th><th scope="col">Limit</th><th scope="col">Result</th></tr></thead><tbody>${rules}</tbody></table></div></details>`:''}`;
 
 }
 
@@ -4600,7 +4735,11 @@ function publishView(view){
 function publishStep(step){
   if(!currentProject)return;
   if(step===5&&reportContext?.savedId){publishRoute(projectPath()+'/runs/'+encodeURIComponent(reportContext.savedId));return;}
-  if(currentPlanId){publishRoute(projectPath()+'/tests/'+encodeURIComponent(currentPlanId)+'?step='+step);return;}
+  if(currentPlanId){
+    const run=step===4&&currentRunId?'&run='+encodeURIComponent(currentRunId):'';
+    publishRoute(projectPath()+'/tests/'+encodeURIComponent(currentPlanId)+'?step='+step+run);
+    return;
+  }
   try{sessionStorage.setItem('perfagent.new-test:'+currentProject.project_id,newTestName||'');}catch{}
   publishRoute(projectPath()+'/tests/new?stage=setup&step='+step);
 }
@@ -4643,8 +4782,10 @@ export async function applyRoute(path){
         }
         const plan=await requestJson('/api/plans/'+encodeURIComponent(route.testId));
         if(plan.project_id!==route.projectId)throw Error('This test belongs to another project.');
-        await openPlan(route.testId);
-        goStep(route.step);
+        await openPlan(route.testId,plan);
+        if(route.liveRunId) await resumeLiveRun(route.liveRunId,plan);
+        else if(route.explicitStep&&(route.step===2||route.step===3&&currentScriptId||
+            document.documentElement.dataset.tour==='true')) goStep(route.step);
         break;
       }
       case 'report':{

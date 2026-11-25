@@ -2,6 +2,34 @@
 
 [Back to the roadmap](roadmap.md)
 
+## Continuous integration
+
+The [standalone release workflow](../.github/workflows/release-checks.yml) runs on pull requests, pushes to the default branches, and manual dispatch. The backend job provisions the checksum-verified k6 binary before pytest so the localhost walkthrough can execute. The frontend job runs Vitest, builds the workspace, and exercises it in Chrome with fixture APIs.
+
+The jobs use temporary test data. Hosted sign-in, managed workers, and Safari VoiceOver have separate verification.
+
+## Gate an existing release report
+
+On a saved report, choose **Download JSON**. Use that file with the gate. To fetch a fresh report in CI from a local PerfAgent instance, substitute the saved candidate ID:
+
+```bash
+curl --fail --silent --show-error \
+  http://127.0.0.1:8080/api/runs/REPLACE_WITH_SAVED_RUN_ID/saved-report \
+  --output candidate-report.json
+uv run python -m perfagent.ci.release_gate candidate-report.json \
+  --environment staging --release v2.4
+```
+
+Use the exit code in your CI job:
+
+| Code | Outcome |
+| --- | --- |
+| 0 | An exact environment and release match was found, the full run finished, k6 passed, and release readiness is ready. |
+| 1 | The matching full run has a blocked release decision. |
+| 2 | The saved report is absent, invalid, mismatched, incomplete, or lacks sufficient release evidence. |
+
+The gate evaluates the report file without sending traffic. Fetch a fresh report from the trusted workspace service in CI so it reflects the applicable release policy.
+
 ## Real k6
 
 Run from the repository root with an installed k6 binary:
@@ -19,6 +47,14 @@ The walkthrough uses real k6 with a loopback HTTP fixture, an isolated SQLite da
 | Failed authentication | Verification reports HTTP 401. The real run breaches the error threshold. |
 | Multi-step journey | Capture an order ID from a POST and use it in a following GET. Malformed JSON fails verification. Restoring the JSON response yields a passing run. |
 | Stop and restart | Stop a running workload. Its report is inconclusive. Run the same script under a new release label and verify it finishes and passes. |
+
+## Interrupted-run recovery
+
+The runner saves a launch record and periodically checkpoints measurements. If the backend loses its in-memory owner, the bookmark can reopen a partial report once the 30-second lease expires. The recovery test simulates process loss, checks that the saved measurements and logs survive, and verifies that no load starts.
+
+```bash
+uv run pytest -q tests/test_run_reliability.py -k expired_checkpoint
+```
 
 ## Safari with VoiceOver
 

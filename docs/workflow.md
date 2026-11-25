@@ -10,6 +10,12 @@ From a project, choose **Create test** to describe a target and its requests. Us
 
 Open **Help → Guided tour** for a walkthrough of the actual screens. The tour uses an isolated sample project. **Next** and **Previous** navigate between pages and place the tour card beside the highlighted control.
 
+## Resume a saved test or run
+
+In a project’s Test Library, select **Latest report** to open the most recent saved result and see its k6 verdict. Select **Resume test** to continue working on the test. A saved plan opens in Review. When a full script has been generated, the test opens in Verify and restores verification for that script version if available.
+
+Use **Copy run link** after the run starts, or **Copy report link** from a saved report. A recipient needs access to the workspace. You can also bookmark Live Run after the run starts. Reloading that URL reconnects to the same run while the backend still has it. PerfAgent saves completed and stopped reports even if the browser tab is closed. The same bookmark opens the saved report after the run is no longer in memory. If the backend loses an active run, the bookmark initially waits for the runner’s checkpoint. After the checkpoint expires, it opens an inconclusive partial report with the last saved measurements. Opening the bookmark never starts traffic. If you no longer have the bookmark, open **Runs & reports** in the Test Library and select **Recover interrupted local runs**. Opening a saved plan, run, or report sends no load. In Verify, **Workload to run** shows the target and settings saved with the selected script. Imported or edited scripts define their own execution settings. **Start load test** is the explicit action that starts a new run.
+
 ## Reviewing the plan
 
 Start with **Before you approve** and **What will run**. Confirm the target, masked authentication,

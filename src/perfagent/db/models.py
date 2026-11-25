@@ -130,6 +130,17 @@ class ScriptVerificationRow(Base):
     journeys_checked: Mapped[int]
 
 
+class RunCheckpointRow(Base):
+    """Short-lived execution evidence until a terminal report is saved."""
+
+    __tablename__ = "run_checkpoints"
+
+    run_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    script_id: Mapped[str] = mapped_column(ForeignKey("scripts.id", ondelete="CASCADE"))
+    updated_at: Mapped[float] = mapped_column(Float)
+    payload_json: Mapped[str] = mapped_column(Text)
+
+
 class RunResultRow(Base):
     """A finished run's key metrics — stored so later runs can compare against it
     (baseline / regression). One row per completed run of a plan."""

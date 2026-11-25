@@ -170,7 +170,9 @@ def test_managed_grants_scope_lists_and_direct_resource_access(setup, monkeypatc
     projects = client.get("/api/projects", headers=viewer).json()["projects"]
     assert [item["project_id"] for item in projects] == [allowed]
     assert client.get("/api/plans", headers=viewer).status_code == 403
-    assert client.get("/api/plans", params={"project_id": allowed}, headers=viewer).status_code == 200
+    listed = client.get("/api/plans", params={"project_id": allowed}, headers=viewer)
+    assert listed.status_code == 200
+    assert [item["latest_report"]["run_id"] for item in listed.json()["plans"]] == ["visible-run"]
     assert client.get("/api/plans", params={"project_id": denied}, headers=editor).status_code == 404
     assert client.get("/api/plans/plan", headers=viewer).status_code == 404
     assert client.get("/api/plans/plan", headers=editor).status_code == 200

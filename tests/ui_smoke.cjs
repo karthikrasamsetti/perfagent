@@ -12,7 +12,8 @@ const runs=[
 const report={run_id:'original-a',plan_id:'plan-a',script_id:'script-a',target:'https://example.test',execution:{test_name:'Product browsing',script_name:'products.js',endpoint_summary:'GET /products'},verdict:{overall_passed:true,checks:[{metric:'p95_ms',op:'<=',target:150,actual:120,passed:true}]},narrative:{headline:'The run met its k6 thresholds',summary:'Product browsing sustained its request target. Tail latency rose during steady load and exceeded the release budget.',observations:[],recommendations:[]},snapshot:{requests:100,error_rate:.01,rps:20,latency:{p95_ms:120,p99_ms:149,avg_ms:81}},logs:['fixture log']};
 const releaseDecision={status:'blocked',reason:'p95 change from baseline breached its release budget.',
  environment:'staging',baseline_id:'saved-b',candidate_id:'saved-a',candidate_rps:20,target_rps:20,
- baseline_release:'v1.4.0',candidate_release:'v1.5.0',summary:'p95 latency was 120 ms. The approved baseline was 100 ms.',
+ baseline_release:'v1.4.0',candidate_release:'v1.5.0',p95_comparison:{baseline_ms:100,candidate_ms:120},
+ largest_endpoint_increase:{name:'GET /products',baseline_ms:100,candidate_ms:120},summary:'p95 latency was 120 ms. The approved baseline was 100 ms.',
  budgets:{max_p95_regression_percent:10},rules:[{name:'p95 change from baseline',actual:20,limit:10,op:'≤',unit:'%',passed:false}]};
 const releaseSeries=Array.from({length:12},(_,index)=>({t:(index+1)*5,
   p95:[75,85,93,95,100,98,96,99,101,97,95,94][index],rps:[6,11,17,20,20,21,19,20,21,19,19,20][index],err:0}));
@@ -32,7 +33,7 @@ async function main(){
   if(pathname.startsWith('/assets/')){
    const asset=path.resolve(webRoot,'.'+pathname);
    if(!asset.startsWith(webRoot+path.sep)||!fs.existsSync(asset)){res.statusCode=404;res.end();return;}
-   res.setHeader('Content-Type',asset.endsWith('.css')?'text/css':asset.endsWith('.woff2')?'font/woff2':'application/javascript');res.end(fs.readFileSync(asset));return;
+   res.setHeader('Content-Type',asset.endsWith('.css')?'text/css':asset.endsWith('.woff2')?'font/woff2':asset.endsWith('.png')?'image/png':asset.endsWith('.jpg')?'image/jpeg':'application/javascript');res.end(fs.readFileSync(asset));return;
   }
   if(pathname==='/fixture-dashboard'){res.setHeader('Content-Type','text/html');res.end('<title>Service dashboard</title><h1>Service dashboard</h1>');return;}
   if(!pathname.startsWith('/api/')){res.setHeader('Content-Type','text/html');res.end(pathname==='/legacy'?fs.readFileSync('src/perfagent/web/index.html'):html);return;}
@@ -43,7 +44,8 @@ async function main(){
   }else if(p==='/api/admin/dashboard'){
    if(req.headers['x-perfagent-admin']!=='fixture-admin'){res.statusCode=403;data={detail:'Administrator access requires the configured admin token'};}
    else data={summary:{tests:4,runs:4,requests:550},projects:projects.map(project=>({...project,runs:project.tests,requests:100,pass_rate:100}))};
-  }else if(p.startsWith('/api/projects/')&&p.endsWith('/dashboard'))data={project:projects[0],summary:{tests:3,runs:3,requests:450,pass_rate:67}};
+  }else if(p==='/api/projects/project-a/runs/recover'&&req.method==='POST')data={recovered:1,failed:0,more:false};
+  else if(p.startsWith('/api/projects/')&&p.endsWith('/dashboard'))data={project:projects[0],summary:{tests:3,runs:3,requests:450,pass_rate:67}};
   else if(p==='/api/plan'){
    const arrival=body.target_request_rate||body.target_iteration_rate;
    lastPlanRequest=body;data={plan_id:'named-plan',provider:'fixture',load_model:{test_name:body.test_name,target_base_url:body.target_base_url,scenarios:[{name:'Browse',weight:1,steps:[{name:'Products',method:'GET',path:'/products'}],think_time:{min_seconds:1,max_seconds:2}}],load_profile:arrival?{type:'ramp',arrival_rate:arrival,target_request_rate:body.target_request_rate,pre_allocated_vus:body.max_users,stages:[{duration_seconds:body.duration_seconds,target_users:body.max_users}]}:{type:'ramp',stages:[{duration_seconds:30,target_users:3}]},thresholds:[]}};
@@ -61,7 +63,7 @@ async function main(){
     {script_id:'version-first',filename:'products.js',tool:'k6',source:'generated',created_at:'2026-11-17T10:00:00'},
     {script_id:'version-latest',filename:'products.js',tool:'k6',source:'edited',created_at:'2026-11-18T10:00:00'},
    ];
-  }else if(p==='/api/plans')data={plans:runs.filter(r=>!url.searchParams.get('project_id')||r.project_id===url.searchParams.get('project_id')).map(r=>({plan_id:r.plan_id,test_name:r.test_name,target:r.target,script_count:1,created_at:r.created_at}))};
+  }else if(p==='/api/plans')data={plans:runs.filter(r=>!url.searchParams.get('project_id')||r.project_id===url.searchParams.get('project_id')).map(r=>({plan_id:r.plan_id,test_name:r.test_name,target:r.target,script_count:1,created_at:r.created_at,latest_report:{run_id:r.run_id,verdict:r.verdict}}))};
   else if(p==='/api/reporting/runs'||p==='/api/runs'){
    const visible=runs.filter(r=>(!url.searchParams.get('project_id')||r.project_id===url.searchParams.get('project_id'))&&(!url.searchParams.get('plan_id')||r.plan_id===url.searchParams.get('plan_id'))&&(!url.searchParams.get('target')||r.target.includes(url.searchParams.get('target'))));
    data={runs:visible.map(r=>url.searchParams.get('role')==='viewer'?{run_id:r.run_id,created_at:r.created_at,verdict:r.verdict,p95_ms:r.p95_ms,requests:r.requests,test_name:r.test_name,script_name:r.script_name,mode:r.mode}:{...r,has_report:true}),total:visible.length};
@@ -86,13 +88,15 @@ async function main(){
   }else if(p==='/api/scripts/script-a/validate'){validationCalls.push(req.method);data={ok:true};}
   else if(p==='/api/scripts/script-a/run'){fixtureRunStarts++;data={run_id:'fixture-live',status:'running'};}
   else if(p==='/api/preflight'){preflightCalls.push({method:req.method,body});data={all_ok:true,ok:1,total:1,results:[{method:'GET',path:'/products',status:200,ok:true}]};}
-  else if(p==='/api/runs/fixture-live')data={status:'running',mode:'full',target:'https://shop.example.test',
+  else if(p==='/api/runs/saved-a'){res.statusCode=404;data={detail:'run not found'};}
+  else if(p==='/api/runs/fixture-live')data={script_id:'version-latest',status:'running',mode:'full',target:'https://shop.example.test',
    elapsed_s:32,planned_load:{duration_seconds:60,requests_per_second:20,peak_users:12,iterations_per_second:10},
    snapshot:{requests:632,rps:19.8,active_vus:8,iterations:316,iterations_per_second:9.9,dropped_iterations:0,
     error_rate:.004,latency:{samples:632,p95_ms:120,p99_ms:149},
     per_endpoint:[{name:'GET /products',requests:316,failed:0,avg_ms:54,p95_ms:90},
       {name:'POST /checkout',requests:316,failed:2,avg_ms:85,p95_ms:120}]},logs:['running checkout workload']};
-  else if(p.endsWith('/readiness'))data={checks:[{name:'Engine',ok:true,detail:'Ready'}],execution:{duration_seconds:30,peak_users:3},smoke_supported:true};
+  else if(p.endsWith('/readiness'))data={checks:[{name:'Engine',ok:true,detail:'Ready'}],target:'https://shop.example.test',execution:{duration_seconds:30,peak_users:3,environment:'staging',executor:'ramping-vus',generated:!p.includes('version-latest'),script_edited:p.includes('version-latest')},smoke_supported:true,
+    verification:p.includes('version-latest')?{all_ok:true,journeys_checked:1,verified_at:1700000000}:null};
   else if(p.endsWith('/report/download')){downloads.push(p);res.setHeader('Content-Disposition','attachment; filename="fixture-report.html"');res.setHeader('Content-Type','text/html');res.end('<h1>Fixture report</h1>');return;}
   else if(p==='/api/runs/saved-a/release-policy'&&req.method==='PUT'){
    savedReleasePolicy=body;
@@ -146,25 +150,109 @@ async function main(){
    await evaluate("document.querySelector('.public-preview-switch button:last-child').click()");
    await check('Landing lets users switch the product preview with a button', "document.querySelector('.public-preview-switch button:last-child').getAttribute('aria-pressed')==='true' && document.querySelector('#public-preview').alt.includes('dashboard')");
    await evaluate("document.querySelector('.public-preview-switch button:first-child').click()");
+   await check('Original landing artwork loads beside a visible demo action', "document.querySelector('.public-hero-art img').naturalWidth===1536 && document.querySelector('.public-hero .public-primary').getBoundingClientRect().width>0");
    await capture('landing');
+   await evaluate("document.querySelector('.public-nav-workflow').click()");
+   await pause(120);
+   await check('How it works scrolls to and focuses the workflow', "location.hash==='#workflow' && document.activeElement.id==='workflow' && Math.abs(document.getElementById('workflow').getBoundingClientRect().top)<40");
+   for(const [view,panel] of [['review','panel2'],['verify','panel3'],['report','panel5']]){
+     await evaluate(`document.querySelector('.public-steps a[href="/demo?view=${view}"]').click()`);
+     await pause(550);
+     await check('Workflow links directly to sample '+view, `location.pathname==='/demo' && document.querySelector('#${panel}.show')!==null && performance.getEntriesByType('resource').every(entry=>!new URL(entry.name).pathname.startsWith('/api/'))`);
+     await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/#workflow'});await pause(500);
+   }
+   await evaluate("window.scrollTo({top:0,behavior:'instant'})");
+   await check('Sample release starts above the latency budget', "document.querySelector('.public-budget-result strong').textContent==='Budget breached'");
+   await evaluate("document.getElementById('public-budget-limit').focus()");
+   for(let step=0;step<10;step++){
+     await send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+     await send('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+   }
+   await check('Keyboard can set the budget at the inclusive pass boundary', "document.querySelector('.public-budget-result strong').textContent==='Budget met' && document.getElementById('public-budget-limit').value==='20'");
+   await capture('landing-release-budget');
+   await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/'});await pause(500);
    await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
    await pause(160);
    await check('Landing fits mobile and shows the demo action', "document.documentElement.scrollWidth<=390 && document.querySelector('.public-primary').getBoundingClientRect().width>0");
    await capture('landing-mobile');
+   await evaluate("document.querySelector('.public-hero .public-secondary').click()");
+   await pause(120);
+   await check('Mobile workflow action scrolls to the section', "location.hash==='#workflow' && document.activeElement.id==='workflow'");
    await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
    await evaluate("document.querySelector('.public-nav a[href=\"/sign-in\"]').click()");
    await pause(400);
    await check('Sign-in entry explains invite access and continues to the workspace', "location.pathname==='/sign-in' && document.querySelector('#access-title').textContent.includes('Sign in') && document.querySelector('.public-primary').getAttribute('href')==='/workspace'");
    await capture('sign-in');
+   await evaluate("document.querySelector('.public-nav-workflow').click()");
+   await pause(500);
+   await check('How it works from sign-in opens and focuses the landing workflow', "location.pathname==='/' && location.hash==='#workflow' && document.activeElement.id==='workflow'");
+   await evaluate("document.querySelector('.public-nav-signup').click()");
+   await pause(500);
+   await check('Get access opens the invite page with clear next actions', "location.pathname==='/sign-up' && document.getElementById('access-title').textContent==='Get access to PerfAgent' && document.querySelector('.public-access .public-primary').getAttribute('href')==='/sign-in'");
+   await check('Get access loads the artwork while keeping its invite action visible', "document.querySelector('.public-access-art img').naturalWidth===1536 && document.querySelector('.public-access .public-primary').getBoundingClientRect().width>0");
+   await capture('sign-up');
+   await evaluate("document.querySelector('.public-access .public-primary').click()");
+   await pause(500);
+   await check('Invite page continues to sign-in', "location.pathname==='/sign-in' && document.querySelector('.public-access .public-primary').getAttribute('href')==='/workspace'");
    await evaluate("document.querySelector('.public-access .public-secondary').click()");
    await pause(650);
    await check('Landing demo opens the isolated sample workspace', "location.pathname==='/demo' && document.querySelector('.demo-banner') && !!document.querySelector('#view-home.show')");
    await evaluate("document.querySelector('.guided-tour-actions button:first-child').click()");
    await pause(100);
-   await evaluate("document.querySelector('.home-lead a').click()");
+   await check('Demo account indicator uses the sample context', "document.querySelector('.workspace-account summary').textContent.trim()==='Demo'");
+   await capture('demo-home');
+   await evaluate("document.querySelector('.home-actions a').click()");
+   await pause(460);
+   await check('Demo Home links directly to the sample release report', "document.querySelector('#panel5.show')!==null && document.querySelector('#reportReleaseDecision .release-evidence').textContent.includes('Submit checkout')");
+   await check('Demo reports do not expose a signed-in workspace link', "!document.querySelector('.report-header .run-link')");
+
+   await check('Public demo downloads the sample report through the local simulation', `new Promise(resolve=>{
+     const create=URL.createObjectURL;
+     URL.createObjectURL=blob=>{
+       URL.createObjectURL=create;
+       resolve(blob.text().then(html=>html.includes('Simulated performance report')));
+       return create(blob);
+     };
+     document.querySelector('.report-header button').click();
+     setTimeout(()=>{URL.createObjectURL=create;resolve(false);},1200);
+   })`);
+   await check('Demo JSON export includes the saved release decision', `new Promise(resolve=>{
+     const create=URL.createObjectURL;
+     URL.createObjectURL=blob=>{
+       URL.createObjectURL=create;
+       resolve(blob.text().then(text=>{
+         const report=JSON.parse(text);
+         return blob.type==='application/json' && report.run_id==='demo-candidate' &&
+           report.release_readiness.status==='blocked' && report.verdict.overall_passed===true;
+       }));
+       return create(blob);
+     };
+     [...document.querySelectorAll('.report-header button')].find(button=>button.textContent.includes('Download JSON')).click();
+     setTimeout(()=>{URL.createObjectURL=create;resolve(false);},1200);
+   })`);
+   await evaluate("document.querySelector('[data-view=home]').click()");
+   await pause(300);
+   await evaluate("document.querySelector('.home-lead .btnrow a:first-child').click()");
+   await pause(450);
+   await check('Checkout shortcut opens Verify with the sample script', "document.querySelector('#panel3.show')!==null && document.getElementById('scriptMeta').textContent.includes('checkout.js')");
+   await check('Verify displays the exact saved checkout workload before approval', "document.getElementById('verifyExecutionSummary').textContent.includes('checkout.demo.test') && document.getElementById('verifyExecutionSummary').textContent.includes('15 req/s') && document.getElementById('verifyExecutionSummary').textContent.includes('30 s')");
+
+   await evaluate("document.getElementById('preflightBtn').click()");
+   await pause(200);
+   await check('Public demo verifies the sample checkout', "document.getElementById('preflightResult').classList.contains('ok')");
+   await evaluate("document.getElementById('releaseLabel').value='Demo walkthrough';document.getElementById('runBtn').click()");
+   await pause(800);
+   await check('Public demo enters Live Run with simulated measurements', "document.querySelector('#panel4.show')!==null && document.getElementById('runLogs').textContent.includes('Simulating')");
+   for(let attempt=0;attempt<22;attempt++){
+     if(await evaluate("document.querySelector('#panel5.show')!==null")) break;
+     await pause(350);
+   }
+   await check('Public demo completes with a report for the labeled run', "document.querySelector('#panel5.show')!==null && document.getElementById('reportContext').textContent.includes('Demo walkthrough')");
+   await evaluate("document.querySelector('[data-view=home]').click()");
+   await pause(260);
+   await evaluate("document.querySelector('.home-lead a[href=\"/projects\"]').click()");
    await pause(380);
    await check('Demo navigation shows the sample project and avoids network APIs', "document.querySelector('.project-card')?.textContent.includes('Commerce Demo') && location.pathname==='/demo' && performance.getEntriesByType('resource').every(entry=>!new URL(entry.name).pathname.startsWith('/api/'))");
-   await check('Demo account indicator uses the sample context', "document.querySelector('.workspace-account summary').textContent.trim()==='Demo'");
    await evaluate("localStorage.removeItem('perfagent:guided-tour:v2')");
    await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/workspace'});
    await pause(900);
@@ -252,6 +340,7 @@ async function main(){
    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
    await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
    await check('Escape closes account disclosure and restores focus', "!document.querySelector('.workspace-account').open && document.activeElement===document.querySelector('.workspace-account summary')");
+   await check('Workspace Home distinguishes its sample comparison and keeps the main actions visible', "document.querySelector('.home-comparison header span').textContent==='Sample' && document.querySelector('.home-comparison footer strong').textContent==='Budget breached' && document.querySelector('.home-lead .btnrow button').textContent.includes('Create a test')");
    await capture('home');
    await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
    await check('Home fits a narrow viewport','document.documentElement.scrollWidth<=390');
@@ -483,6 +572,14 @@ async function main(){
    await check('Test Library retry restores the saved test count', "document.getElementById('projectTestsRetry').hidden && document.getElementById('projectTestListStatus').textContent.includes('saved tests')");
    await evaluate("document.getElementById('projectTestSearch').value='checkout';document.getElementById('projectTestSearch').dispatchEvent(new Event('input'))");
    await check('Workspace test search narrows the list',"document.querySelectorAll('#plansTable [data-open-test]').length===1&&document.querySelector('#plansTable tbody').textContent.includes('Checkout flow')");
+   await evaluate("document.getElementById('projectTestSearch').value='';document.getElementById('projectTestSearch').dispatchEvent(new Event('input'))");
+   await check('Test Library shows the latest report beside the resume action', "document.querySelector('[data-latest-test-report=saved-a]').closest('td').textContent.includes('PASS')");
+   await evaluate("document.querySelector('[data-latest-test-report=saved-a]').click()");await pause(200);
+   await check('Latest report shortcut opens the saved run', "location.pathname==='/projects/project-a/runs/saved-a' && document.querySelector('#panel5.show')!==null");
+   await evaluate("showView('history');const reports=document.querySelector('.project-reports');reports.open=true;[...reports.querySelectorAll('button')].find(button=>button.textContent.includes('Recover interrupted')).click()");
+   await pause(160);
+   await check('Test Library recovery shows how many interrupted reports it saved', "document.getElementById('projectRunRecoveryStatus').textContent==='1 interrupted run recovered.'");
+
  }
  dashboardDelay=spaMode?350:0;
  await evaluate("selectProject('project-a');toggleSidebar();showView('dashboard')");await pause(100);
@@ -499,6 +596,12 @@ async function main(){
    await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  }
  await check('Release verdict is above run history', "!document.getElementById('sdReleaseReadiness').hidden&&document.getElementById('sdReleaseReadiness').textContent.includes('Blocked')");
+ await check('Dashboard surfaces comparable p95 and the largest endpoint increase', "document.querySelector('#sdReleaseReadiness .release-evidence').textContent.includes('GET /products') && document.querySelector('#sdReleaseReadiness .release-evidence').textContent.includes('Baseline 100 ms')");
+ await evaluate("document.querySelector('#sdReleaseReadiness .release-budget-details').open=false;loadStakeholder(0,true)");
+ await pause(150);
+ await check('Dashboard refresh preserves the collapsed release budget table', "!document.querySelector('#sdReleaseReadiness .release-budget-details').open");
+ await evaluate("document.querySelector('#sdReleaseReadiness .release-budget-details').open=true");
+
  await check('Dashboard prioritizes a failed run', "document.getElementById('sdAttention').textContent.includes('Needs attention')&&document.getElementById('sdAttention').textContent.includes('Checkout flow')");
  await check('Baseline regression displays measured change and both reports', "!document.getElementById('sdRegression').hidden&&document.getElementById('sdRegression').textContent.includes('100 ms → 140 ms')&&document.querySelectorAll('#sdRegression button').length===2");
  await check('Trend has a keyboard-accessible data table', "document.querySelectorAll('#sdTrendData tbody tr').length===3&&document.querySelector('#sdTrendData button')!==null");
@@ -526,6 +629,7 @@ async function main(){
  if(spaMode){
  await check('Release decision, comparison, and escaped endpoint are visible',
    "document.getElementById('reportReleaseDecision').textContent.includes('Blocked')&&document.querySelectorAll('#reportReleaseComparison canvas').length===1&&document.getElementById('reportReleaseComparison').textContent.includes('<img src=x')&&!document.querySelector('#reportReleaseComparison img')");
+ await check('Report surfaces the endpoint regression before the comparison charts', "document.querySelector('#reportReleaseReadiness .release-evidence').textContent.includes('+20 ms') && document.querySelector('#reportReleaseReadiness .release-evidence').textContent.includes('GET /products')");
  await check('Release comparison metric switches with the keyboard-accessible select', `(()=>{
    const select=document.getElementById('releaseComparisonMetric');
    select.value='rps';select.dispatchEvent(new Event('change'));
@@ -699,6 +803,10 @@ async function main(){
  await send('Page.reload');await pause(600);await check('Dashboard remains after refresh',"document.getElementById('view-dashboard').classList.contains('show')");
  await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/projects/project-a/runs/saved-a'});await pause(600);
  await check('Report opens from deep link',"reportContext?.savedId==='saved-a'&&document.getElementById('reportSummary').textContent.startsWith('Product browsing sustained')");
+ await evaluate(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async url=>{window.fixtureCopiedLink=url}}});
+   document.querySelector('.report-header .run-link button').click()`);
+ await check('Report copy action provides a canonical workspace link', "window.fixtureCopiedLink===location.origin+'/projects/project-a/runs/saved-a' && document.querySelector('.report-header .run-link-status').textContent==='Link copied'");
+
  await check('Run again is aligned with report content', "document.getElementById('rerunBtn').getBoundingClientRect().left>document.querySelector('.report-result').getBoundingClientRect().left+8");
  await evaluate("document.getElementById('releaseLabel').value='demo-v1';document.getElementById('rerunBtn').click()");
  await pause(200);
@@ -708,6 +816,30 @@ async function main(){
  await check('Reload preserves the rerun script and Verify screen',
    "location.search==='?rerun=1'&&currentScriptId==='script-a'&&document.getElementById('panel3').classList.contains('show')&&!document.getElementById('runBtn').disabled");
  checks.push({name:'Preparing a rerun sends no run request',result:fixtureRunStarts===0});
+ await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/projects/project-a/tests/plan-a'});await pause(600);
+ await check('Draft-only test link resumes at Review', "document.querySelector('#panel2.show')!==null && !currentScriptId");
+ showScriptHistoryFixture=true;
+ await send('Page.reload');await pause(600);
+ await check('Test link resumes the latest script and restores its exact verification', "document.querySelector('#panel3.show')!==null && currentScriptId==='version-latest' && document.getElementById('preflightResult').textContent.includes('Verification passed')");
+ await check('Verify avoids applying planned load numbers to edited scripts', "!document.getElementById('verifyExecutionSummary').textContent.includes('Planned duration') && document.getElementById('verifyExecutionStatus').textContent.includes('own execution settings')");
+ await evaluate("document.getElementById('editBtn').click();const editor=document.getElementById('scriptEdit');editor.value+='\\n// pending edit';editor.dispatchEvent(new Event('input',{bubbles:true}))");
+ await check('Unsaved edits invalidate the execution preview and previous verification', "document.getElementById('verifyExecutionSummary').hidden && document.getElementById('verifyExecutionStatus').textContent.includes('pending') && document.getElementById('preflightResult').style.display==='none'");
+
+ await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/projects/project-a/tests/plan-a?step=4&run=fixture-live'});await pause(600);
+ await check('Live bookmark reconnects to the existing run', "document.querySelector('#panel4.show')!==null && currentRunId==='fixture-live' && document.getElementById('mReqs').textContent==='632'");
+ await evaluate(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Permission denied')}}});
+   document.querySelector('.live-run-header .run-link button').click()`);
+ await pause(100);
+ await check('Live copy action selects the resume URL when clipboard access is denied', "document.activeElement.getAttribute('aria-label')==='Live run URL' && document.activeElement.value===location.href && document.activeElement.selectionEnd===location.href.length");
+
+ await send('Page.reload');await pause(600);
+ await check('Reloading the live bookmark preserves the active run', "document.querySelector('#panel4.show')!==null && currentRunId==='fixture-live'");
+ await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/projects/project-a/tests/plan-a?step=4&run=saved-a'});await pause(600);
+ await check('An expired live bookmark opens its saved report', "document.querySelector('#panel5.show')!==null && reportContext.savedId==='saved-a'");
+ await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/projects/project-a/tests/plan-b?step=4&run=fixture-live'});await pause(600);
+ await check('A bookmarked run must belong to the test', "document.querySelector('.spa-error')?.textContent.includes('another test')");
+ checks.push({name:'Resuming plans and runs sends no run-start request',result:fixtureRunStarts===0});
+ showScriptHistoryFixture=false;
  await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/projects/project-b/runs/saved-a'});await pause(600);
  await check('Mismatched project report is rejected',"document.querySelector('.spa-error')?.textContent.includes('another project')");
  await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/unknown-workspace-page'});await pause(600);

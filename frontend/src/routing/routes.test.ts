@@ -12,6 +12,12 @@ describe('workspace routes', () => {
     expect(resolveRoute('/projects/commerce/tests/new?stage=setup&step=1')).toMatchObject({ kind: 'new-test', setup: true, step: 1 })
     expect(resolveRoute('/projects/commerce/runs/run-a')).toMatchObject({ kind: 'report', runId: 'run-a' })
   })
+  it('recognizes live bookmarks and limits them to the run step', () => {
+    expect(resolveRoute('/projects/a/tests/b')).toMatchObject({ explicitStep: false })
+    expect(resolveRoute('/projects/a/tests/b?step=4&run=abc-42')).toMatchObject({ explicitStep: true, liveRunId: 'abc-42' })
+    expect(resolveRoute('/projects/a/tests/b?step=3&run=abc-42').liveRunId).toBeUndefined()
+    expect(resolveRoute('/projects/a/tests/b?step=4&run=abc%2F42').liveRunId).toBeUndefined()
+  })
   it('keeps imports separate from test creation', () => {
     expect(resolveRoute('/projects/a/import/script').kind).toBe('import-script')
     expect(resolveRoute('/projects/a/import/git').kind).toBe('import-git')

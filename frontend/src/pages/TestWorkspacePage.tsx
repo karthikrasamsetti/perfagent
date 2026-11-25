@@ -1,6 +1,7 @@
+import { RunLink } from '../components/RunLink'
 import { Icon } from '../components/Icon'
 import type { CSSProperties } from 'react'
-import { applyTrafficRate, drawChart, handlers, openReviewEditor, previewJourneyWeights } from '../workspace/controller'
+import { applyTrafficRate, downloadReportJson, drawChart, handlers, openReviewEditor, previewJourneyWeights, updateVerifyExecution } from '../workspace/controller'
 import { initializeDisabled } from '../components/initializeDisabled'
 
 import { TrafficImport } from '../components/TrafficImport'
@@ -744,6 +745,11 @@ return <>
       </section>
     </div>
     <p id="verifyRerunNotice" className="note info" hidden>Saved workload loaded. Enter a new release label, then select Start load test.</p>
+    <section className="verify-execution" aria-labelledby="verifyExecutionTitle">
+      <h3 id="verifyExecutionTitle">Workload to run</h3>
+      <p className="hint" id="verifyExecutionStatus" role="status" />
+      <dl id="verifyExecutionSummary" className="verify-execution-summary" hidden />
+    </section>
     <div className="verify-launch">
       <div>
         <h3>Start the planned workload</h3>
@@ -753,7 +759,7 @@ return <>
         <label htmlFor="releaseLabel">Release or commit <span className="muted">(optional)</span></label>
         <input id="releaseLabel" maxLength={100} placeholder="e.g. release-2.4" />
       </div>
-      <button className="btn" id="runBtn" onClick={handlers.h66} ref={initializeDisabled}>Start load test</button>
+      <button className="btn" id="runBtn" aria-describedby="verifyExecutionTitle verifyExecutionStatus" onClick={handlers.h66} ref={initializeDisabled}>Start load test</button>
     </div>
     <div className="verify-secondary btnrow">
       <button className="btn ghost sm" onClick={handlers.h60}>Back to plan</button>
@@ -768,7 +774,7 @@ return <>
       <button className="btn ghost sm" id="dlBtn" onClick={handlers.h63} ref={initializeDisabled}>Download</button>
     </div>
     <pre id="scriptOut">The generated script appears here.</pre>
-    <textarea id="scriptEdit" aria-label="Edit generated script" style={{display: 'none'}} />
+    <textarea id="scriptEdit" aria-label="Edit generated script" onInput={updateVerifyExecution} style={{display: 'none'}} />
     <div className="note info" id="editNote" style={{display: 'none'}}>Edits create a new script version when you verify, validate, or run.</div>
   </details>
   <details className="card script-version-history" id="scriptVersionHistory">
@@ -1009,6 +1015,7 @@ return <>
       <p id="liveRunScope" className="muted">Start a run from Verify to see live measurements.</p>
     </div>
     <div className="btnrow">
+      <RunLink kind="live" />
       <span className="pill ghost" id="runPill">Idle</span>
       <button className="btn danger sm" id="stopBtn" onClick={handlers.h73} ref={initializeDisabled}>Stop run</button>
     </div>
@@ -1163,9 +1170,13 @@ return <>
       <div className="rpt-hero-sub" id="verdictSub" />
     </div>
   </div>
-  <button className="btn ghost" type="button" onClick={handlers.h74}>
-    <Icon name="download" /> Download HTML
-  </button>
+  <div className="report-header-actions">
+    <button className="btn ghost" type="button" onClick={handlers.h74}>
+      <Icon name="download" /> Download HTML
+    </button>
+    <button className="btn ghost" type="button" onClick={downloadReportJson}>Download JSON</button>
+    <RunLink kind="report" />
+  </div>
 </div>
 <div id="reportContext" className="report-identity" />
 <div className="report-overview">

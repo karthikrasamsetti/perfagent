@@ -1,18 +1,17 @@
 import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router'
+import { demoProjectPath, demoReportPath, demoTestPath } from '../demo/fixtures'
 
 const preferenceKey = 'perfagent:guided-tour:v2'
-const project = '/projects/commerce-demo'
-const test = project + '/tests/checkout-plan'
 const stops = [
-  { title: 'Home', path: '/workspace', target: '.home-lead .btnrow', detail: 'Create a test or open your projects from here. You can also import an existing k6 script from Home.' },
+  { title: 'Home', path: '/workspace', target: '.home-lead .btnrow', detail: 'Start with the example checkout test, open the sample project, or jump to its release report.' },
   { title: 'Projects', path: '/projects', target: '#view-projects .projects-intro', detail: 'Open a project to find its tests, saved runs, and dashboard.' },
-  { title: 'Describe', path: test + '?step=1', target: '#target', detail: 'Enter the target URL here, then add requests and choose how to schedule traffic. You can set a user count or throughput goal.' },
-  { title: 'Review plan', path: test + '?step=2', target: '#reviewRequestsTitle', detail: 'Review the drafted requests, add response checks, attach data, or capture a value for a later request. Preview sample requests before you approve.' },
-  { title: 'Verify', path: test + '?step=3', target: '#verifyTrafficHeading', detail: 'Inspect the k6 script and verify the requests and checks. Use Release or commit to label a candidate for comparison.' },
-  { title: 'Run', path: test + '?step=4', target: '#panel4 .live-run-header h2', detail: 'This is where live measurements appear after you start a run from Verify. Watch throughput, errors, and latency here.' },
-  { title: 'Report', path: project + '/runs/demo-candidate', target: '#releaseReadinessTitle', detail: 'Compare the candidate with its baseline and check the release verdict. Scroll farther down for k6 thresholds, timelines, and endpoint results.' },
-  { title: 'Dashboard', path: project + '/dashboard', target: '.dashboard-heading h2', detail: 'Filter historical runs by test or environment. Inspect trends and open individual reports for evidence.' },
+  { title: 'Describe', path: demoTestPath + '?step=1', target: '#target', detail: 'Enter the target URL here, then add requests and choose how to schedule traffic. You can set a user count or throughput goal.' },
+  { title: 'Review plan', path: demoTestPath + '?step=2', target: '#reviewRequestsTitle', detail: 'Review the drafted requests, add response checks, attach data, or capture a value for a later request. Preview sample requests before you approve.' },
+  { title: 'Verify', path: demoTestPath + '?step=3', target: '#verifyTrafficHeading', detail: 'Inspect the k6 script and verify the requests and checks. Use Release or commit to label a candidate for comparison.' },
+  { title: 'Run', path: demoTestPath + '?step=4', target: '#panel4 .live-run-header h2', detail: 'This is where live measurements appear after you start a run from Verify. Watch throughput, errors, and latency here.' },
+  { title: 'Report', path: demoReportPath, target: '#releaseReadinessTitle', detail: 'Compare the candidate with its baseline and check the release verdict. Scroll farther down for k6 thresholds, timelines, and endpoint results.' },
+  { title: 'Dashboard', path: demoProjectPath + '/dashboard', target: '.dashboard-heading h2', detail: 'Filter historical runs by test or environment. Inspect trends and open individual reports for evidence.' },
 ]
 
 export function tourStep(search: string) {
@@ -97,8 +96,9 @@ export function GuidedTourOverlay({ loading, error }: { loading: boolean; error:
     target.tabIndex = -1
     target.setAttribute('aria-describedby', ['tour-title', 'tour-detail', description].filter(Boolean).join(' '))
     target.classList.add('guided-tour-highlight')
+    let active = true
     function positionCard() {
-      if (!target || !overlay) return
+      if (!active || !target || !overlay) return
       const anchor = target.getBoundingClientRect()
       const edge = 12
       const gap = 14
@@ -143,6 +143,10 @@ export function GuidedTourOverlay({ loading, error }: { loading: boolean; error:
     const content = overlay.querySelector('.guided-tour-content')
     if (content) observer.observe(content)
     observer.observe(target)
+    if (target.parentElement) observer.observe(target.parentElement)
+    const workspace = document.getElementById('workspace-content')
+    if (workspace) observer.observe(workspace)
+    void document.fonts.ready.then(positionCard)
     window.addEventListener('resize', revealTarget)
     window.addEventListener('scroll', positionCard, true)
 
@@ -155,6 +159,7 @@ export function GuidedTourOverlay({ loading, error }: { loading: boolean; error:
 
     target.addEventListener('keydown', moveToTourControls)
     return () => {
+      active = false
       cancelAnimationFrame(frame)
       observer.disconnect()
       window.removeEventListener('resize', revealTarget)

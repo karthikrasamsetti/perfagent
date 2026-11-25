@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import threading
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 import time
 import uuid
@@ -97,10 +98,11 @@ from perfagent.planner.review_sources import draft_review_sources, update_review
 from perfagent.preflight import preflight
 from perfagent.providers import build_provider
 from perfagent.request_data import preview_requests
+from perfagent.api.run_checkpoints import checkpoint_run, discard_launch, expired_project_runs, record_launch, saved_checkpoint
 from perfagent.api.run_inputs import freeze_script, planned_phases, script_workload_version
 from perfagent.api.test_identity import saved_identity
 from perfagent.api.projects import begin_name_write, check_test_name, require_project, router as projects_router
-from perfagent.db.models import ScriptSnapshotRow, ScriptVerificationRow
+from perfagent.db.models import RunCheckpointRow, ScriptSnapshotRow, ScriptVerificationRow
 from perfagent.runner import get_run, k6_available, start_run, stop_run
 from perfagent.runner.k6_runner import RunCapacityExceeded
 from perfagent.runner.admission import admission_checks
@@ -779,7 +781,17 @@ def generate(plan_id: str, body: GenerateBody) -> dict:
 @app.get("/api/plans", **doc("GET", "/api/plans"))
 def list_plans(project_id: str | None = None) -> dict:
     with get_session() as s:
-        query = s.query(PlanRow)
+        latest_id = (
+            select(RunResultRow.id)
+            .where(RunResultRow.plan_id == PlanRow.id, RunResultRow.report_json != "")
+            .order_by(RunResultRow.created_at.desc(), RunResultRow.id.desc())
+            .limit(1)
+            .correlate(PlanRow)
+            .scalar_subquery()
+        )
+        query = s.query(PlanRow, RunResultRow.id, RunResultRow.verdict).outerjoin(
+            RunResultRow, RunResultRow.id == latest_id
+        )
         if project_id:
             query = query.filter(PlanRow.project_id == project_id)
         rows = query.order_by(PlanRow.created_at.desc()).all()
@@ -793,8 +805,9 @@ def list_plans(project_id: str | None = None) -> dict:
                     "goal": r.goal,
                     "created_at": r.created_at.isoformat(),
                     "script_count": len(r.scripts),
+                    "latest_report": {"run_id": run_id, "verdict": verdict} if run_id else None,
                 }
-                for r in rows
+                for r, run_id, verdict in rows
             ]
         }
 
@@ -1203,14 +1216,20 @@ def run_script(script_id: str, body: RunOptions | None = None) -> dict:
                      "verification": _latest_verification(s, row.id)}
         if row.tool == "k6" and metadata.get("generated") and not metadata.get("script_edited"):
             execution["planned_phases"] = planned_phases(model)
+        run_id = uuid.uuid4().hex
+        record_launch(run_id, row.id, model.target_base_url, execution)
         try:
-            run = start_run(run_id=uuid.uuid4().hex, script_id=row.id, tool=row.tool,
+            run = start_run(run_id=run_id, script_id=row.id, tool=row.tool,
                             target=model.target_base_url, content=row.content,
                             load_model_json=saved.load_model_json,
                             data_filename=saved.data_filename, data_content=saved.data_content,
-                            metadata=execution)
+                            metadata=execution, on_complete=_save_completed_run, on_checkpoint=checkpoint_run)
         except RunCapacityExceeded as exc:
+            discard_launch(run_id)
             raise HTTPException(429, str(exc)) from exc
+        except Exception:
+            discard_launch(run_id)
+            raise
     audit.record("run.started", entity="run", entity_id=run.run_id, target=run.target,
                  summary="Load run started (" + execution.get("mode", "full") + ")")
     return {"run_id": run.run_id, "status": run.status, "message": run.message}
@@ -1221,7 +1240,10 @@ def run_status(run_id: str) -> dict:
     """Live status + aggregated metrics snapshot for a run."""
     run = get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="run not found")
+        checkpoint = saved_checkpoint(run_id)
+        if checkpoint is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        run = checkpoint.run
     return {
         "run_id": run.run_id,
         "script_id": run.script_id,
@@ -1246,6 +1268,32 @@ def run_status(run_id: str) -> dict:
         "snapshot": run.snapshot,
         "logs": list(getattr(run, "logs", []) or [])[-200:],   # recent k6 output lines
     }
+
+
+@app.post("/api/projects/{project_id}/runs/recover", **doc("POST", "/api/projects/{project_id}/runs/recover"))
+def recover_interrupted_runs(project_id: str) -> dict:
+    """Finalize expired local checkpoints without launching or stopping traffic."""
+    require_local_execution()
+    with get_session() as session:
+        require_project(session, project_id)
+    batch_size = 25
+    candidates = expired_project_runs(project_id, batch_size + 1)
+    recovered = 0
+    failed = 0
+    for run_id in candidates[:batch_size]:
+        try:
+            with _report_lock:
+                if get_run(run_id) is not None:
+                    continue
+                _finish_report(run_id)
+            recovered += 1
+        except HTTPException as error:
+            if error.status_code not in {400, 404}:
+                failed += 1
+        except Exception as error:
+            failed += 1
+            _log.warning("run.recovery_failed", run_id=run_id, error_type=type(error).__name__)
+    return {"recovered": recovered, "failed": failed, "more": len(candidates) > batch_size}
 
 
 @app.post("/api/runs/{run_id}/stop", **doc("POST", "/api/runs/{run_id}/stop"))
@@ -1322,14 +1370,31 @@ def run_report(run_id: str) -> dict:
     return {**payload, "evidence": report_evidence(payload), "release_readiness": readiness}
 
 
+def _save_completed_run(run_id: str) -> None:
+    """Persist the report even when no browser is polling the run."""
+    try:
+        with _report_lock:
+            _finish_report(run_id)
+    except Exception as error:
+        # The report endpoint still retries finalization when opened.
+        get_logger(__name__).warning("run.report_save_failed", run_id=run_id,
+                                     error_type=type(error).__name__)
+
+
 def _finish_report(run_id: str) -> dict:
     with get_session() as s:
         existing = _saved_report(s, run_id)
         if existing is not None and existing.report_json:
             return json.loads(existing.report_json)
     run = get_run(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="run not found")
+    recovered = run is None
+    if recovered:
+        checkpoint = saved_checkpoint(run_id)
+        if checkpoint is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if not checkpoint.owner_expired:
+            raise HTTPException(status_code=400, detail="run has not finished yet")
+        run = checkpoint.run
     if run.status not in ("finished", "stopped", "error"):
         raise HTTPException(status_code=400, detail="run has not finished yet")
 
@@ -1350,7 +1415,7 @@ def _finish_report(run_id: str) -> dict:
     if run.status != "finished":
         verdict["overall_passed"] = None
     provider = None
-    if not run.metadata.get("script_edited") and not (model and model.scenarios[0].name == "uploaded"):
+    if not recovered and not run.metadata.get("script_edited") and not (model and model.scenarios[0].name == "uploaded"):
         try:
             provider = build_provider()
         except ValueError:
@@ -1375,7 +1440,7 @@ def _finish_report(run_id: str) -> dict:
     diag = diagnose(run.snapshot, peak_users=peak)
     execution = {**run.metadata, "run_start_ts": run.run_start_ts, "run_end_ts": run.run_end_ts}
     diagnostics = diag.to_dict()
-    telemetry = correlate(run.target, run.run_start_ts, run.run_end_ts)
+    telemetry = None if recovered else correlate(run.target, run.run_start_ts, run.run_end_ts)
     if telemetry:
         diagnostics["server_metrics"] = telemetry
         for metric in telemetry["metrics"]:
@@ -1453,6 +1518,7 @@ def _finish_report(run_id: str) -> dict:
                 p99_ms=cur_metrics["p99_ms"], avg_ms=cur_metrics["avg_ms"],
                 goal=goal, report_json=json.dumps(report_payload),
             ))
+            s.execute(delete(RunCheckpointRow).where(RunCheckpointRow.run_id == run_id))
             try:
                 s.commit()
             except IntegrityError:

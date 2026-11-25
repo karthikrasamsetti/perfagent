@@ -1,3 +1,5 @@
+import { demoBaselineId as baselineId, demoCandidateId as candidateId, demoPlanId, demoProjectId, demoRelease } from './fixtures'
+
 type Step = { name?: string; method: string; path: string; assertions?: unknown[]; body?: unknown }
 type Model = {
   test_name: string; script_filename?: string; target_base_url: string; environment: string
@@ -7,7 +9,7 @@ type Model = {
 }
 const target = 'https://checkout.demo.test'
 const project = {
-  project_id: 'commerce-demo', name: 'Commerce Demo', framework_name: 'commerce',
+  project_id: demoProjectId, name: 'Commerce Demo', framework_name: 'commerce',
   description: 'Example workloads and releases for a storefront checkout.',
   target_url: target, environment: 'staging', branch: 'main', ci: [],
 }
@@ -24,9 +26,7 @@ const initial: Model = {
   load_profile: { stages: [{ duration_seconds: 30, target_users: 5 }], arrival_rate: 15, target_request_rate: 15, pre_allocated_vus: 5 },
   thresholds: [{ metric: 'p95_ms', op: '<=', value: 300 }, { metric: 'error_rate', op: '<', value: .01 }],
 }
-const baselineId = 'demo-baseline'
-const candidateId = 'demo-candidate'
-const policy = { max_p95_ms: 300, max_error_percent: 1, max_p95_regression_percent: 10 }
+const policy = { max_p95_ms: 300, max_error_percent: 1, max_p95_regression_percent: demoRelease.maxIncreasePercent }
 
 function measurements(p95: number, rps: number, requests: number) {
   return { requests, error_rate: 0, rps, active_vus: 5, dropped_iterations: 0,
@@ -70,25 +70,25 @@ function makeReport(id: string, planId: string, scriptId: string, model: Model, 
 type Report = ReturnType<typeof makeReport>
 
 export function createDemoBackend(origin = location.origin, now = Date.now) {
-  const plans = new Map([['checkout-plan', structuredClone(initial)]])
-  const scripts = new Map([[script.script_id, 'checkout-plan']])
+  const plans = new Map([[demoPlanId, structuredClone(initial)]])
+  const scripts = new Map([[script.script_id, demoPlanId]])
   const reports = new Map<string, Report>([
-    [baselineId, makeReport(baselineId, 'checkout-plan', script.script_id, initial, 'v2.3', 184)],
-    [candidateId, makeReport(candidateId, 'checkout-plan', script.script_id, initial, 'v2.4', 222)],
+    [baselineId, makeReport(baselineId, demoPlanId, script.script_id, initial, 'v2.3', demoRelease.baselineP95)],
+    [candidateId, makeReport(candidateId, demoPlanId, script.script_id, initial, 'v2.4', demoRelease.candidateP95)],
   ])
   const live = new Map<string, { started: number; label: string; scriptId: string; stopped: boolean }>()
   const verification = new Set<string>()
   let revision = 0
 
   function readiness(report: Report) {
-    const before = 184, current = report.snapshot.latency.p95_ms
+    const before = demoRelease.baselineP95, current = report.snapshot.latency.p95_ms
     const self = report.run_id === baselineId
-    const comparable = report.plan_id === 'checkout-plan' && !self && report.status === 'finished'
-    if (report.plan_id !== 'checkout-plan') {
+    const comparable = report.plan_id === demoPlanId && !self && report.status === 'finished'
+    if (report.plan_id !== demoPlanId) {
       return { status: 'needs_evidence', reason: 'The example baseline belongs to Checkout API.', environment: 'staging' }
     }
     const delta = ((current - before) / before) * 100
-    const status = comparable ? (delta > 10 ? 'blocked' : 'ready') : 'needs_evidence'
+    const status = comparable ? (delta > demoRelease.maxIncreasePercent ? 'blocked' : 'ready') : 'needs_evidence'
     const reason = self ? 'This run is the approved baseline.' : status === 'blocked'
       ? 'p95 change from baseline breached its release budget.'
       : status === 'ready' ? 'All configured release budgets were met.' : 'A complete candidate run is required.'
@@ -99,9 +99,12 @@ export function createDemoBackend(origin = location.origin, now = Date.now) {
       explanation: 'The k6 measurements and release decision on this page are simulated. ' + reason,
       summary: `Checkout p95 was ${current} ms. The approved baseline was ${before} ms.`,
       rules: [{ name: 'p95 latency', op: '≤', limit: 300, unit: 'ms', actual: current, passed: true },
-        { name: 'p95 change from baseline', op: '≤', limit: 10, unit: '%', actual: comparable ? delta : null,
-          passed: comparable ? delta <= 10 : null }],
-      ...(comparable ? { comparison: {
+        { name: 'p95 change from baseline', op: '≤', limit: demoRelease.maxIncreasePercent, unit: '%', actual: comparable ? delta : null,
+          passed: comparable ? delta <= demoRelease.maxIncreasePercent : null }],
+      ...(comparable ? {
+        p95_comparison: { baseline_ms: before, candidate_ms: current },
+        ...(current > before ? { largest_endpoint_increase: { name: 'Submit checkout', baseline_ms: before, candidate_ms: current } } : {}),
+        comparison: {
         baseline: samples(before), candidate: report.samples, phases: report.execution.planned_phases,
         baseline_metrics: { p95_ms: before, rps: 15, error_percent: 0 },
         candidate_metrics: { p95_ms: current, rps: 15, error_percent: 0 },
@@ -155,9 +158,11 @@ export function createDemoBackend(origin = location.origin, now = Date.now) {
     if (path.endsWith('/dashboard') && method === 'GET') return json({ project, summary: {
       tests: plans.size, runs: reports.size, requests: reports.size * 450, pass_rate: 100,
     } })
-    if (path === '/api/plans') return json({ plans: [...plans].map(([plan_id, model]) => ({
-      plan_id, project_id: project.project_id, test_name: model.test_name, target, script_count: 1,
-    })) })
+    if (path === '/api/plans') return json({ plans: [...plans].map(([plan_id, model]) => {
+      const latest = history().find(run => run.plan_id === plan_id)
+      return { plan_id, project_id: project.project_id, test_name: model.test_name, target, script_count: 1,
+        latest_report: latest ? { run_id: latest.run_id, verdict: latest.verdict } : null }
+    }) })
     const planMatch = path.match(/^\/api\/plans\/([^/]+)$/)
     if (planMatch && plans.has(planMatch[1])) {
       const planId = planMatch[1]
@@ -198,7 +203,8 @@ export function createDemoBackend(origin = location.origin, now = Date.now) {
       if (action === 'download') return new Response(sampleScript, { headers: { 'Content-Type': 'text/javascript' } })
       if (action === 'validate') return json({ ok: true, message: 'Simulated syntax validation passed.' })
       if (action === 'readiness') return json({ checks: [{ name: 'Demo', ok: true, detail: 'Simulation ready' }],
-        execution: { duration_seconds: 30, peak_users: 5 },
+        target, execution: { generated: true, executor: 'constant-arrival-rate',
+          duration_seconds: 30, peak_users: 5, arrival_rate: 15, target_request_rate: 15, environment: 'staging' },
         verification: verification.has(id) ? { all_ok: true, journeys_checked: 1, verified_at: now() / 1000 } : null,
       })
       if (action === 'run' && method === 'POST') {

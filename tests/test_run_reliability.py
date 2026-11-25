@@ -471,6 +471,8 @@ def test_dashboard_regression_requires_comparable_measurements(
     (None, "v1", "needs_evidence"),
 ])
 def test_release_policy_agrees_across_report_dashboard_and_download(setup, p95, workload, status):
+    from perfagent.ci.release_gate import gate_report
+
     client, engine, _, _, _ = setup
     target = "http://fixture.test"
     baseline_label = "<script>alert(1)</script>"
@@ -481,7 +483,7 @@ def test_release_policy_agrees_across_report_dashboard_and_download(setup, p95, 
         ]:
             payload = {
                 "run_id": run_id, "plan_id": "plan", "target": target, "tool": "k6",
-                "status": "finished", "execution": {"environment": "staging",
+                "status": "finished", "execution": {"environment": "staging", "mode": "full",
                     "workload_version": version, "release_label": release, "target_request_rate": 15},
                 "snapshot": {"requests": 30, "rps": 15, "error_rate": 0,
                              "latency": {"samples": 30 if latency is not None else 0, "p95_ms": latency},
@@ -507,6 +509,9 @@ def test_release_policy_agrees_across_report_dashboard_and_download(setup, p95, 
     report = client.get(candidate + "/saved-report").json()
     decision = report["release_readiness"]
     assert decision["status"] == status and report["verdict"]["overall_passed"] is True
+    assert gate_report(report, environment="staging", release="candidate") == {
+        "ready": 0, "blocked": 1, "needs_evidence": 2,
+    }[status]
     assert client.get(candidate + "/report").json()["release_readiness"] == decision
     overview = client.get("/api/reporting/runs", params={
         "include_overview": "true", "role": "engineer",
@@ -523,6 +528,13 @@ def test_release_policy_agrees_across_report_dashboard_and_download(setup, p95, 
     assert baseline_label not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
     if p95 and workload == "v1":
         assert decision["comparison"]["endpoints"][0]["name"] == "Checkout"
+        assert overview["release_readiness"]["p95_comparison"] == {"baseline_ms": 224, "candidate_ms": p95}
+        if p95 > 224:
+            endpoint = {"name": "Checkout", "baseline_ms": 224, "candidate_ms": p95}
+            assert decision["largest_endpoint_increase"] == endpoint
+            assert overview["release_readiness"]["largest_endpoint_increase"] == endpoint
+    else:
+        assert "largest_endpoint_increase" not in overview["release_readiness"]
     if status == "blocked":
         explanation = "The run passed its k6 thresholds. The release is blocked."
         assert explanation in decision["explanation"]
@@ -544,7 +556,7 @@ def test_local_k6_release_walkthrough(setup):
     if not find_k6():
         pytest.skip("The release walkthrough requires an installed k6 binary.")
 
-    client, _, _, _, model = setup
+    client, engine, _, _, model = setup
     calls = []
     webpage_hit = Event()
 
@@ -635,6 +647,17 @@ def test_local_k6_release_walkthrough(setup):
         else:
             pytest.fail(f"Run did not reach {expected_status}: {response.text}")
         active.remove(run_id)
+        while monotonic() < deadline:
+            with Session(engine) as session:
+                stored = session.get(RunResultRow, run_id)
+                if stored and stored.report_json:
+                    break
+            sleep(.05)
+        else:
+            pytest.fail("The runner did not save its report before a report was requested.")
+        listed = client.get("/api/plans").json()["plans"]
+        test = next(item for item in listed if item["plan_id"] == "plan")
+        assert test["latest_report"] == {"run_id": run_id, "verdict": stored.verdict}
         response = client.get(f"/api/runs/{run_id}/report")
         assert response.status_code == 200, response.text
         report = response.json()
@@ -707,3 +730,53 @@ def test_local_k6_release_walkthrough(setup):
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+def test_expired_checkpoint_recovers_partial_report_without_restarting_load(setup, monkeypatch):
+    import time
+
+    from perfagent.api.run_checkpoints import OWNER_LEASE_SECONDS, checkpoint_run, record_launch
+    from perfagent.db.models import RunCheckpointRow
+
+    client, engine, api, script_id, _ = setup
+    project = client.post("/api/projects", json={"name": "Recovery project"})
+    assert project.status_code == 200, project.text
+    project_id = project.json()["project_id"]
+    with Session(engine) as session:
+        session.get(PlanRow, "plan").project_id = project_id
+        session.commit()
+    recovery = f"/api/projects/{project_id}/runs/recover"
+    run_id = "expired-checkpoint"
+    run = RunState(run_id=run_id, script_id=script_id, tool="k6", target="http://fixture.test", status="running")
+    run.metadata = {"release_label": "interrupted", "environment": "staging"}
+    run.snapshot = {"requests": 12, "rps": 3, "error_rate": 0, "latency": {"samples": 12, "p95_ms": 24}}
+    run.samples = [{"t": 4, "p95": 24, "rps": 3}]
+    run.logs = ["last recorded line"]
+    record_launch(run_id, script_id, run.target, run.metadata)
+    checkpoint_run(run)
+    monkeypatch.setattr(api, "get_run", lambda _run_id: None)
+
+    def no_restart(**_kwargs):
+        pytest.fail("Recovering a report must never restart load.")
+
+    monkeypatch.setattr(api, "start_run", no_restart)
+    path = f"/api/runs/{run_id}"
+    assert client.get(path).json()["status"] == "preparing"
+    assert client.get(path + "/report").status_code == 400
+    assert client.post(recovery).json()["recovered"] == 0
+    with Session(engine) as session:
+        session.get(RunCheckpointRow, run_id).updated_at = time.time() - OWNER_LEASE_SECONDS - 1
+        session.commit()
+    assert client.get(path).json()["status"] == "stopped"
+    other = client.post("/api/projects", json={"name": "Unrelated project"}).json()["project_id"]
+    assert client.post(f"/api/projects/{other}/runs/recover").json()["recovered"] == 0
+    assert client.post(recovery).json() == {"recovered": 1, "failed": 0, "more": False}
+    assert client.post(recovery).json()["recovered"] == 0
+    result = client.get(path + "/report").json()
+    assert result["status"] == "stopped"
+    assert "interrupted" in result["message"]
+    assert result["verdict"]["overall_passed"] is None
+    assert result["snapshot"] == run.snapshot and result["samples"] == run.samples
+    assert result["logs"] == run.logs
+    assert client.get(path + "/saved-report").status_code == 200
+    with Session(engine) as session:
+        assert session.get(RunCheckpointRow, run_id) is None

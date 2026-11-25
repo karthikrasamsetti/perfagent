@@ -22,6 +22,23 @@ Use [Aceternity UI](https://ui.aceternity.com/) and [Magic UI](https://magicui.d
 - Live Run offers a sample data table alongside its chart. Dashboard and Report expose labeled regions for their chart tables.
 - Hosted sign-in still requires the organization's gateway and identity provider configuration to verify invitations, session expiry, and sign-out.
 
+## Next sequence
+
+1. **Landing page art direction.** Follow the [landing and access design plan](landing-design.md) for an original request-journey illustration and two release traces. Pair it with the real product preview, keep **Try the demo** prominent, and adapt the artwork for mobile and reduced motion.
+2. **Release checkpoint and hosted CI.** Commit the current changes and verify the first GitHub Actions run after authorized publication.
+3. **Scheduled runs and regression delivery.** Configure an approved runner, target scope, workload limits, schedule, and notification destination.
+4. **Hosted sign-in and managed k6.** Verify these after the organization gateway, Linux runner, and PostgreSQL staging environment are available.
+
+## Independent implementation priorities
+
+| Order | Feature | Done when |
+| --- | --- | --- |
+| 1 | Workspace design system | Project navigation, Describe, Review, and Verify share spacing, typography, interaction states, and keyboard behavior. Mobile and reduced-motion checks pass. |
+| 2 | Dashboard and report design | The readiness panel now leads with the verdict, comparable overall p95, and the largest endpoint increase. Chart legends, units, and table alternatives work consistently. |
+| 3 | Demo and documentation | Visitors can complete a sample flow from workload to release decision. Screenshots and the guided tour match the application. The landing page now includes an interactive p95 budget example. Demo Home links directly to sample Verify and Report screens. |
+| 4 | Release automation for standalone use | The GitHub Actions workflow now covers frontend, backend, Chrome, and the real-k6 fixture walkthrough. Verify its first hosted run. Keep alerts and schedules scoped to configured environments. |
+| 5 | Approval-based workflow | The Test Library resumes saved plans and scripts and links to each test’s latest report. Live Run links reconnect to an existing run or its saved report. Continue with explicit approval across the workflow. Preserve explicit approval before live execution. |
+
 ## Release and execution work
 
 | SNO | Priority | Feature | Remarks |

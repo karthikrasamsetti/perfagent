@@ -64,7 +64,7 @@ def test_local_workspace_keeps_existing_local_access(protected_client):
 
 
 def test_real_app_applies_managed_access_before_routes(monkeypatch):
-    from perfagent.api.app import app
+    from perfagent.api.app import _SPA_DIR, app
 
     settings = Settings(
         perfagent_access_mode="managed",
@@ -73,7 +73,7 @@ def test_real_app_applies_managed_access_before_routes(monkeypatch):
     )
     monkeypatch.setattr(access, "get_settings", lambda: settings)
     with TestClient(app) as client:
-        for path in ["/", "/demo", "/demo?tour=0", "/sign-in"]:
+        for path in ["/", "/demo", "/demo?tour=0", "/sign-in", "/sign-up"]:
             response = client.get(path)
             assert response.status_code == 200, path
             assert 'id="root"' in response.text
@@ -81,6 +81,8 @@ def test_real_app_applies_managed_access_before_routes(monkeypatch):
                       if access_path.startswith("/assets/") and access_path.endswith(".js")), None)
         assert asset is not None
         assert client.head(asset).status_code == 200
+        artwork = next((_SPA_DIR / "assets").glob("release-prism-*.jpg"))
+        assert client.head("/assets/" + artwork.name).headers["content-type"] == "image/jpeg"
         for path in ["/workspace", "/projects", "/projects/example/runs/private", "/legacy", "/metrics", "/docs"]:
             assert client.get(path).status_code == 401, path
         assert client.post("/sign-in").status_code == 401

@@ -75,6 +75,12 @@ def release_readiness(
             result["summary"] = (
                 f"p95 latency was {current:.6g} ms. The approved baseline was {before:.6g} ms."
             )
+            result["p95_comparison"] = {"baseline_ms": before, "candidate_ms": current}
+        changes = endpoint_changes(report, reference)
+        if changes and changes[0]["candidate_ms"] > changes[0]["baseline_ms"]:
+            result["largest_endpoint_increase"] = changes[0]
+        if comparison_details:
+            result["comparison"] = comparison_evidence(report, reference, changes=changes)
     verdict = (report.get("verdict") or {}).get("overall_passed")
     threshold_summary = {
         True: "The run passed its k6 thresholds.",
@@ -88,20 +94,10 @@ def release_readiness(
     else:
         outcome = "The release decision needs more evidence. " + result["reason"]
     result["explanation"] = f"{threshold_summary} {outcome}"
-    if comparable and comparison_details:
-        result["comparison"] = comparison_evidence(report, reference)
     return result
 
 
-def comparison_evidence(report: dict, reference: dict) -> dict:
-    def series(payload):
-        samples = payload.get("samples") or []
-        stride = max(1, (len(samples) + 239) // 240)
-        return [
-            {key: point.get(key) for key in ("t", "rps", "p95", "err", "dropped_iterations")}
-            for point in samples[::stride]
-        ]
-
+def endpoint_changes(report: dict, reference: dict) -> list[dict]:
     def endpoints(payload):
         return {
             item["name"]: item
@@ -116,6 +112,18 @@ def comparison_evidence(report: dict, reference: dict) -> dict:
         if name in before
     ]
     changes.sort(key=lambda item: item["candidate_ms"] - item["baseline_ms"], reverse=True)
+    return changes
+
+
+def comparison_evidence(report: dict, reference: dict, *, changes: list[dict]) -> dict:
+    def series(payload):
+        samples = payload.get("samples") or []
+        stride = max(1, (len(samples) + 239) // 240)
+        return [
+            {key: point.get(key) for key in ("t", "rps", "p95", "err", "dropped_iterations")}
+            for point in samples[::stride]
+        ]
+
     return {
         "baseline": series(reference),
         "candidate": series(report),

@@ -142,6 +142,8 @@ def start_run(
     metadata: dict | None = None,
     *,
     managed: ManagedWorkerOptions | None = None,
+    on_complete: Callable[[str], None] | None = None,
+    on_checkpoint: Callable[[RunState], None] | None = None,
 ) -> RunState:
     """Launch k6 for the given script content. Returns the RunState immediately;
     a background thread keeps parsing output and updating the snapshot."""
@@ -185,7 +187,7 @@ def start_run(
         _RUNS[run_id] = run
 
     thread = threading.Thread(
-        target=_run_with_limits, args=(run, content, settings.perfagent_max_run_seconds), daemon=True
+        target=_run_with_limits, args=(run, content, settings.perfagent_max_run_seconds, on_complete, on_checkpoint), daemon=True
     )
     try:
         thread.start()
@@ -197,7 +199,18 @@ def start_run(
     return run
 
 
-def _run_with_limits(run: RunState, content: str, max_seconds: int) -> None:
+def _run_with_limits(
+    run: RunState, content: str, max_seconds: int,
+    on_complete: Callable[[str], None] | None,
+    on_checkpoint: Callable[[RunState], None] | None,
+) -> None:
+    done = threading.Event()
+    if on_checkpoint is not None:
+        def checkpoint():
+            while not done.wait(5):
+                on_checkpoint(run)
+
+        threading.Thread(target=checkpoint, name="perfagent-run-checkpoint", daemon=True).start()
     try:
         if run._managed is not None:
             _run_managed_worker(run, content, run._managed)
@@ -208,6 +221,7 @@ def _run_with_limits(run: RunState, content: str, max_seconds: int) -> None:
         run.ended_at = time.time()
         run.status = "error"
     finally:
+        done.set()
         try:
             if run._proc and run._proc.poll() is None:
                 run._proc.kill()
@@ -217,6 +231,8 @@ def _run_with_limits(run: RunState, content: str, max_seconds: int) -> None:
                 shutil.rmtree(run._tmpdir, ignore_errors=True)
             with _RUNS_LOCK:
                 _ACTIVE_RUNS.remove(run.run_id)
+            if on_complete is not None:
+                on_complete(run.run_id)
 
 
 def _expire_run(run: RunState, proc: subprocess.Popen) -> None:

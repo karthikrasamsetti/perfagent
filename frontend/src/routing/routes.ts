@@ -5,6 +5,8 @@ export type WorkspaceRoute = {
   projectId?: string
   testId?: string
   runId?: string
+  liveRunId?: string
+  explicitStep?: boolean
   rerun?: boolean
   step: number
   setup: boolean
@@ -29,7 +31,14 @@ export function resolveRoute(location: string): WorkspaceRoute {
   }
   if (projectRoutes[tail]) return { ...base, projectId, kind: projectRoutes[tail] }
   const test = tail.match(/^tests\/([a-zA-Z0-9_-]+)$/)
-  if (test) return { ...base, projectId, testId: test[1], kind: 'test' }
+  if (test) {
+    const run = url.searchParams.get('run') || ''
+    return {
+      ...base, projectId, testId: test[1], kind: 'test',
+      explicitStep: url.searchParams.has('step'),
+      liveRunId: base.step === 4 && /^[a-zA-Z0-9_-]+$/.test(run) ? run : undefined,
+    }
+  }
   const run = tail.match(/^runs\/([a-zA-Z0-9_-]+)$/)
   if (run) return { ...base, projectId, runId: run[1], kind: 'report', rerun: url.searchParams.get('rerun') === '1' }
   return { ...base, kind: 'not-found' }

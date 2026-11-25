@@ -179,7 +179,7 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         returns="`endpoints` (method, path, example body), `source`, `base_url`, `warnings`."),
     ("GET", "/api/plans"): _e(
         "Planning", "List saved plans",
-        "Every saved plan, newest first, with its target, goal and how many scripts it has.",
+        "Saved plans, newest first, with target, goal, script count, and the latest stored report when available.",
         returns="`plans`."),
     ("GET", "/api/plans/{plan_id}"): _e(
         "Planning", "Open a saved plan",
@@ -282,6 +282,10 @@ ENDPOINTS: dict[tuple[str, str], EndpointDoc] = {
         "throughput, percentiles), all computed in code from k6's raw output, plus the "
         "recent log lines.",
         returns="`run_id`, `status`, `message`, `elapsed_s`, `planned_load`, `snapshot`, `logs`."),
+    ("POST", "/api/projects/{project_id}/runs/recover"): _e(
+        "Runs", "Recover interrupted project runs",
+        "Save partial reports from expired local checkpoints. Recovery never starts or stops load.",
+        access="write", returns="`recovered`, `failed`, `more`."),
     ("POST", "/api/runs/{run_id}/stop"): _e(
         "Runs", "Stop a run",
         "Stops a run in progress. The metrics measured up to that point are kept.",

@@ -13,7 +13,7 @@ npm --prefix frontend ci
 npm --prefix frontend run demo
 ```
 
-Open <http://127.0.0.1:4174>. Choose **Start tour** or replay it from **Help → Guided tour**. The tour opens each page and points to its controls using a sample checkout project. For a simulated run, open **Commerce Demo → Checkout API**. The demo runs in the browser with sample data.
+Open <http://127.0.0.1:4174>. Choose **Start tour** or replay it from **Help → Guided tour**. The tour opens each page and points to its controls using a sample checkout project. Choose **Try the checkout test** to verify and run a sample, or **Open sample report** to go straight to the release comparison. The demo runs in the browser with sample data.
 
 ## Run locally
 
@@ -50,4 +50,6 @@ React, TypeScript, and Vite on the frontend. Python, FastAPI, Pydantic, SQLAlche
 | [Architecture and AI roles](docs/architecture.md) | Components, guarded AI, execution boundaries, and managed worker status |
 | [Operations](docs/operations.md) | Database, API, observability, and safety |
 | [Git and Jenkins](docs/integrations.md) | Saving, importing, and running tests through integrations |
+| [Feature tracker](docs/feature-tracker.md) | Feature status, verification, and guides |
+| [Repository map](docs/repository-map.md) | Source layout, deployment, and historical patches |
 | [Roadmap](docs/roadmap.md) | Remaining implementation and release verification |

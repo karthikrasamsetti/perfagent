@@ -1068,7 +1068,7 @@ export interface paths {
         };
         /**
          * List saved plans
-         * @description Every saved plan, newest first, with its target, goal and how many scripts it has.
+         * @description Saved plans, newest first, with target, goal, script count, and the latest stored report when available.
          *
          *     **Access level:** `read` — only reads stored data.
          */
@@ -1295,6 +1295,28 @@ export interface paths {
         get: operations["run_status_api_runs__run_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/runs/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recover interrupted project runs
+         * @description Save partial reports from expired local checkpoints. Recovery never starts or stops load.
+         *
+         *     **Access level:** `write` — creates or changes stored data.
+         */
+        post: operations["recover_interrupted_runs_api_projects__project_id__runs_recover_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4305,6 +4327,39 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description `run_id`, `status`, `message`, `elapsed_s`, `planned_load`, `snapshot`, `logs`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recover_interrupted_runs_api_projects__project_id__runs_recover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `recovered`, `failed`, `more`. */
             200: {
                 headers: {
                     [name: string]: unknown;

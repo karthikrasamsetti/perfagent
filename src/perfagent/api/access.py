@@ -14,8 +14,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from perfagent.config import get_settings
 
 
-PUBLIC_PAGES = frozenset({"/", "/demo", "/sign-in"})
-PUBLIC_ASSET = re.compile(r"/assets/[a-zA-Z0-9_.-]+\.(?:js|css|png|woff2?)")
+PUBLIC_PAGES = frozenset({"/", "/demo", "/sign-in", "/sign-up"})
+PUBLIC_ASSET = re.compile(r"/assets/[a-zA-Z0-9_.-]+\.(?:js|css|png|jpg|woff2?)")
 
 MANAGED_EXECUTION_DETAIL = "Execution is unavailable in managed workspaces until an isolated runner is configured."
 
