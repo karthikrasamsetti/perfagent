@@ -195,10 +195,17 @@ def health() -> dict:
 
 # ---------- UI ----------
 
+def _spa_html() -> str:
+    html = (_SPA_DIR / "index.html").read_text(encoding="utf-8")
+    mode = access.get_settings().perfagent_access_mode
+    return html.replace('name="perfagent-access-mode" content="local"',
+                        f'name="perfagent-access-mode" content="{mode}"', 1)
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index() -> str:
     if (_SPA_DIR / "index.html").is_file():
-        return (_SPA_DIR / "index.html").read_text(encoding="utf-8")
+        return _spa_html()
     return (_WEB_DIR / "index.html").read_text(encoding="utf-8")
 
 
@@ -1620,4 +1627,4 @@ def spa_route(spa_path: str) -> str:
         raise HTTPException(404, "Not found")
     if not (_SPA_DIR / "index.html").is_file():
         raise HTTPException(404, "Build the frontend first with npm run build in frontend/.")
-    return (_SPA_DIR / "index.html").read_text(encoding="utf-8")
+    return _spa_html()

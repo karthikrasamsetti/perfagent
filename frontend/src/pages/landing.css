@@ -242,3 +242,100 @@
   .public-access { width: calc(100% - 2rem); grid-template-columns: minmax(0, 1fr); }
   .public-access-art img { aspect-ratio: 2.1; }
 }
+
+.public-story { overflow: clip; }
+.public-product-proof { position: relative; isolation: isolate; }
+.public-proof-atmosphere {
+  position: absolute;
+  z-index: -1;
+  inset: 0 -12vw -1px;
+  overflow: hidden;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 68% 45%, #231746 0%, transparent 70%);
+}
+.public-proof-atmosphere img {
+  position: absolute;
+  width: 70%;
+  height: 100%;
+  inset: 0 0 0 auto;
+  object-fit: cover;
+  object-position: 70% 45%;
+  opacity: .22;
+  mask-image: radial-gradient(ellipse at 62% 48%, #000 4%, transparent 74%);
+}
+
+@media (max-width: 820px) {
+  .public-proof-atmosphere img { width: 100%; opacity: .14; }
+}
+
+.public-story[data-motion] .public-hero-art img {
+  transform: translate3d(0, var(--prism-offset, 0px), 0) scale(var(--prism-zoom, 1));
+}
+.public-story[data-motion] .public-product-proof .public-report:not(:focus-within) {
+  transform: translate3d(0, var(--preview-offset, 0px), 0) scale(var(--preview-scale, 1));
+}
+.public-story[data-motion] .public-proof-atmosphere img {
+  transform: translate3d(0, var(--atmosphere-offset, 0px), 0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .public-story[data-motion] :is(.public-hero-art img, .public-product-proof .public-report, .public-proof-atmosphere img) {
+    transform: none;
+  }
+}
+
+.public-nav a[aria-current="page"] { color: var(--public-accent); }
+.public-steps article {
+  position: relative;
+  transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+}
+.public-steps article a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: .8rem;
+}
+.public-steps article:focus-within {
+  border-color: #a797fa;
+  background: #242440;
+}
+.public-steps article:active { background: #2b284c; }
+.public-access-help {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--public-line);
+  padding-top: .85rem;
+}
+.public-access-help summary { color: #e6dfff; font-weight: 650; cursor: pointer; }
+.public-access-help summary:focus-visible { outline: 2px solid #d0c6ff; outline-offset: 4px; }
+.public-access-help p { margin: .6rem 0 0; }
+.public-access-help a { display: inline-block; margin-top: .55rem; text-decoration: underline; }
+.public-access-art img { transition: transform 260ms ease; }
+.public-access-art-action {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  inset: auto 1rem 1rem;
+  padding: .8rem 1rem;
+  border: 1px solid #69579e;
+  border-radius: .65rem;
+  background: #1c1535e8;
+  color: #f1eeff;
+  font-weight: 650;
+  transition: background 180ms ease, border-color 180ms ease;
+}
+.public-access-art:is(:focus-visible, :active) .public-access-art-action {
+  border-color: #cbbbff;
+  background: #312453;
+}
+
+@media (hover: hover) {
+  .public-steps article:hover { transform: translateY(-4px); border-color: #a797fa; background: #242440; }
+  .public-access-art:hover img { transform: scale(1.045); }
+  .public-access-art:hover .public-access-art-action { border-color: #cbbbff; background: #312453; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .public-steps article, .public-access-art img, .public-access-art-action { transition: none; }
+  .public-steps article:hover, .public-access-art:hover img { transform: none; }
+}

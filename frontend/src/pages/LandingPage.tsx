@@ -1,27 +1,77 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router'
+import { BrandMark } from '../components/BrandMark'
 import { Icon } from '../components/Icon'
 import prism from '../assets/release-prism.jpg'
 import report from '../../../docs/screenshots/release-comparison.png'
 import dashboard from '../../../docs/screenshots/release-dashboard.png'
 import './landing.css'
 
-export function LandingPage({ page = 'landing' }: { page?: 'landing' | 'sign-in' | 'sign-up' }) {
+export function LandingPage({ page, loginHandoff }: {
+  page: 'landing' | 'sign-in' | 'sign-up'
+  loginHandoff: boolean
+}) {
+  const { hash, key } = useLocation()
   const access = page !== 'landing'
   const signup = page === 'sign-up'
+  const story = useRef<HTMLElement>(null)
+  const hero = useRef<HTMLElement>(null)
+  const proof = useRef<HTMLElement>(null)
 
   useEffect(() => {
-    function focusSection() {
-      const hash = window.location.hash
-      if (hash !== '#workflow' && hash !== '#product') return
-      const section = document.getElementById(hash.slice(1))
-      section?.focus({ preventScroll: true })
-      section?.scrollIntoView({ block: 'start', behavior: 'instant' })
+    const element = story.current
+    const heroSection = hero.current
+    const proofSection = proof.current
+    if (!element || !heroSection || !proofSection) return
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let frame = 0
+
+    function positionArtwork() {
+      frame = 0
+      if (!element || !heroSection || !proofSection || reduceMotion.matches) return
+      const clamp = (value: number) => Math.max(0, Math.min(1, value))
+      const heroBox = heroSection.getBoundingClientRect()
+      const proofBox = proofSection.getBoundingClientRect()
+      const compact = window.innerWidth <= 820
+      const drift = clamp(-heroBox.top / heroBox.height)
+      const entry = 1 - clamp((window.innerHeight - proofBox.top) / (window.innerHeight * .58))
+      element.style.setProperty('--prism-offset', (drift * (compact ? 27 : 70)).toFixed(2) + 'px')
+      element.style.setProperty('--prism-zoom', (1 + drift * .21).toFixed(3))
+      element.style.setProperty('--preview-offset', (entry * (compact ? 26 : 64)).toFixed(2) + 'px')
+      element.style.setProperty('--preview-scale', (1 - entry * .08).toFixed(3))
+      element.style.setProperty('--atmosphere-offset', (entry * -42).toFixed(2) + 'px')
     }
 
-    focusSection()
-    window.addEventListener('hashchange', focusSection)
-    return () => window.removeEventListener('hashchange', focusSection)
+    function update() {
+      if (!frame) frame = requestAnimationFrame(positionArtwork)
+    }
+
+    function updatePreference() {
+      if (!element) return
+      element.toggleAttribute('data-motion', !reduceMotion.matches)
+      update()
+    }
+
+    window.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update)
+    reduceMotion.addEventListener('change', updatePreference)
+    updatePreference()
+    return () => {
+      window.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+      reduceMotion.removeEventListener('change', updatePreference)
+      cancelAnimationFrame(frame)
+      element.removeAttribute('data-motion')
+    }
   }, [page])
+
+  useEffect(() => {
+    const id = hash === '#workflow' ? 'workflow' : 'product'
+    const target = document.getElementById(id)
+    if (hash || key !== 'default') target?.focus({ preventScroll: true })
+    if (hash) target?.scrollIntoView({ block: 'start', behavior: 'instant' })
+    else window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [hash, key])
   const [showDashboard, setShowDashboard] = useState(false)
   const [budget, setBudget] = useState(10)
   const baseline = 100
@@ -30,13 +80,13 @@ export function LandingPage({ page = 'landing' }: { page?: 'landing' | 'sign-in'
   const withinBudget = change <= budget
   return (
     <div className="public-site">
-      <a className="skip-link" href="#product">Skip to content</a>
+      <Link className="skip-link" to="#product">Skip to content</Link>
       <header className="public-nav public-width">
-        <a href="/" className="public-brand"><span className="sb-logo" aria-hidden="true"><i /><i /><i /></span>PerfAgent</a>
+        <Link to="/" className="public-brand"><BrandMark />PerfAgent</Link>
         <nav aria-label="Main navigation">
-          <a className="public-nav-workflow" href={access ? '/#workflow' : '#workflow'}>How it works</a>
-          <a href="/sign-in">Sign in</a>
-          <a className="public-nav-signup" href="/sign-up">Get access <span aria-hidden="true">↗</span></a>
+          <Link className="public-nav-workflow" to="/#workflow">How it works</Link>
+          <Link to="/sign-in" aria-current={page === 'sign-in' ? 'page' : undefined}>Sign in</Link>
+          <Link className="public-nav-signup" to="/sign-up" aria-current={signup ? 'page' : undefined}>Get access <span aria-hidden="true">↗</span></Link>
         </nav>
       </header>
       {access ? <main id="product" tabIndex={-1} className="public-access public-width">
@@ -47,29 +97,37 @@ export function LandingPage({ page = 'landing' }: { page?: 'landing' | 'sign-in'
             ? 'Ask your organization’s PerfAgent administrator for a workspace invitation. Once invited, sign in with your organization account.'
             : 'Use the organization account from your invitation and complete multi-factor sign-in when prompted.'}</p>
           <div className="public-actions">
-            <a className="public-primary" href={signup ? '/sign-in' : '/workspace'}>{signup ? 'Sign in with your invitation' : 'Continue to workspace'} <span aria-hidden="true">↗</span></a>
+            <Link className="public-primary" to={signup ? '/sign-in' : '/workspace'} reloadDocument={!signup && loginHandoff}>{signup ? 'Sign in with your invitation' : 'Continue to workspace'} <span aria-hidden="true">↗</span></Link>
             <a className="public-secondary" href="/demo">Try the demo</a>
           </div>
-          {!signup && <p className="public-access-note"><a href="/sign-up">Need a workspace invitation?</a></p>}
+          <details className="public-access-help">
+            <summary>{signup ? 'How do I get invited?' : 'Having trouble signing in?'}</summary>
+            <p>{signup
+              ? 'Ask your administrator to invite the same organization account you’ll use to sign in.'
+              : 'Use the account listed in your invitation. If the invitation expired or you used a different account, ask your administrator to resend it.'}</p>
+            {!signup && <Link to="/sign-up">View invitation steps <span aria-hidden="true">↗</span></Link>}
+          </details>
         </section>
-        <div className="public-access-art" aria-hidden="true">
+        <a className="public-access-art" href="/demo?view=report">
           <img src={prism} alt="" width="1536" height="1024" />
-        </div>
-      </main> : <main id="product" tabIndex={-1}>
-        <section className="public-hero public-width" aria-labelledby="public-title">
+          <span className="public-access-art-action">Explore a sample release <span aria-hidden="true">↗</span></span>
+        </a>
+      </main> : <main id="product" tabIndex={-1} className="public-story" ref={story}>
+        <section className="public-hero public-width" ref={hero} aria-labelledby="public-title">
           <div className="public-intro">
             <h1 id="public-title">Catch regressions <em>before release.</em></h1>
             <p>Turn an endpoint or API spec into a k6 test. Verify what it sends, watch it run, and see what changed between releases.</p>
             <div className="public-actions">
               <a className="public-primary" href="/demo">Try the demo <span aria-hidden="true">↗</span></a>
-              <a className="public-secondary" href="#workflow">Explore the workflow <span aria-hidden="true">↓</span></a>
+              <Link className="public-secondary" to="#workflow">Explore the workflow <span aria-hidden="true">↓</span></Link>
             </div>
           </div>
           <div className="public-hero-art" aria-hidden="true">
             <img src={prism} alt="" width="1536" height="1024" fetchPriority="high" />
           </div>
         </section>
-        <section className="public-product-proof public-width" aria-labelledby="public-proof-title">
+        <section className="public-product-proof public-width" ref={proof} aria-labelledby="public-proof-title">
+          <div className="public-proof-atmosphere" aria-hidden="true"><img src={prism} alt="" loading="lazy" /></div>
           <div>
             <h2 id="public-proof-title">A passing test can still block a release.</h2>
             <p>A candidate can meet its k6 thresholds while running slower than the approved baseline. Compare both results before deciding whether to ship.</p>
@@ -123,7 +181,7 @@ export function LandingPage({ page = 'landing' }: { page?: 'landing' | 'sign-in'
         </section>
       </main>}
       <footer className="public-footer public-width">
-        <a href="/" className="public-brand"><span className="sb-logo" aria-hidden="true"><i /><i /><i /></span>PerfAgent</a>
+        <Link to="/" className="public-brand"><BrandMark />PerfAgent</Link>
         <a href="/demo">Try with sample data <span aria-hidden="true">↗</span></a>
       </footer>
     </div>

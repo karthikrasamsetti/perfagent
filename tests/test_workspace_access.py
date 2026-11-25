@@ -77,12 +77,15 @@ def test_real_app_applies_managed_access_before_routes(monkeypatch):
             response = client.get(path)
             assert response.status_code == 200, path
             assert 'id="root"' in response.text
+            assert 'name="perfagent-access-mode" content="managed"' in response.text
         asset = next((access_path for access_path in client.get("/").text.split('"')
                       if access_path.startswith("/assets/") and access_path.endswith(".js")), None)
         assert asset is not None
         assert client.head(asset).status_code == 200
         artwork = next((_SPA_DIR / "assets").glob("release-prism-*.jpg"))
         assert client.head("/assets/" + artwork.name).headers["content-type"] == "image/jpeg"
+        icon = next((_SPA_DIR / "assets").glob("perfagent-mark-*.svg"))
+        assert client.head("/assets/" + icon.name).headers["content-type"] == "image/svg+xml"
         for path in ["/workspace", "/projects", "/projects/example/runs/private", "/legacy", "/metrics", "/docs"]:
             assert client.get(path).status_code == 401, path
         assert client.post("/sign-in").status_code == 401

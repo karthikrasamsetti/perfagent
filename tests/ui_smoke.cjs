@@ -33,7 +33,7 @@ async function main(){
   if(pathname.startsWith('/assets/')){
    const asset=path.resolve(webRoot,'.'+pathname);
    if(!asset.startsWith(webRoot+path.sep)||!fs.existsSync(asset)){res.statusCode=404;res.end();return;}
-   res.setHeader('Content-Type',asset.endsWith('.css')?'text/css':asset.endsWith('.woff2')?'font/woff2':asset.endsWith('.png')?'image/png':asset.endsWith('.jpg')?'image/jpeg':'application/javascript');res.end(fs.readFileSync(asset));return;
+   res.setHeader('Content-Type',asset.endsWith('.css')?'text/css':asset.endsWith('.woff2')?'font/woff2':asset.endsWith('.png')?'image/png':asset.endsWith('.jpg')?'image/jpeg':asset.endsWith('.svg')?'image/svg+xml':'application/javascript');res.end(fs.readFileSync(asset));return;
   }
   if(pathname==='/fixture-dashboard'){res.setHeader('Content-Type','text/html');res.end('<title>Service dashboard</title><h1>Service dashboard</h1>');return;}
   if(!pathname.startsWith('/api/')){res.setHeader('Content-Type','text/html');res.end(pathname==='/legacy'?fs.readFileSync('src/perfagent/web/index.html'):html);return;}
@@ -151,10 +151,37 @@ async function main(){
    await check('Landing lets users switch the product preview with a button', "document.querySelector('.public-preview-switch button:last-child').getAttribute('aria-pressed')==='true' && document.querySelector('#public-preview').alt.includes('dashboard')");
    await evaluate("document.querySelector('.public-preview-switch button:first-child').click()");
    await check('Original landing artwork loads beside a visible demo action', "document.querySelector('.public-hero-art img').naturalWidth===1536 && document.querySelector('.public-hero .public-primary').getBoundingClientRect().width>0");
+   await check('Landing logo and favicon use the same prism mark', `(async()=>{
+     const logo=document.querySelector('.public-nav .perfagent-mark');
+     const favicon=document.querySelector('link[rel=icon][type*=svg]');
+     const fallback=document.querySelector('link[rel=icon][sizes]');
+     return logo.naturalWidth>0 && logo.src===favicon.href &&
+       (await fetch(favicon.href)).headers.get('content-type')==='image/svg+xml' &&
+       (await fetch(fallback.href)).headers.get('content-type')==='image/png';
+   })()`);
    await capture('landing');
+   const prismStart=await evaluate("getComputedStyle(document.querySelector('.public-hero-art img')).transform");
+   await evaluate("window.scrollTo({top:360,behavior:'instant'})");await pause(120);
+   await check('Desktop scroll changes the hero artwork depth', `getComputedStyle(document.querySelector('.public-hero-art img')).transform !== ${JSON.stringify(prismStart)}`);
+   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+   await pause(90);
+   await check('Reduced motion keeps artwork and product preview static and visible', "getComputedStyle(document.querySelector('.public-hero-art img')).transform==='none' && getComputedStyle(document.querySelector('.public-report')).transform==='none' && getComputedStyle(document.querySelector('.public-report')).opacity==='1'");
+   await send('Emulation.setEmulatedMedia',{features:[]});
+   await evaluate("window.scrollTo({top:0,behavior:'instant'})");
+
    await evaluate("document.querySelector('.public-nav-workflow').click()");
    await pause(120);
    await check('How it works scrolls to and focuses the workflow', "location.hash==='#workflow' && document.activeElement.id==='workflow' && Math.abs(document.getElementById('workflow').getBoundingClientRect().top)<40");
+   const cardCenter=await evaluate(`(()=>{
+     const rect=document.querySelector('.public-steps article').getBoundingClientRect();
+     return {x:rect.left+rect.width/2,y:rect.top+rect.height/2};
+   })()`);
+   await send('Input.dispatchMouseEvent',{...cardCenter,type:'mouseMoved'});
+   await pause(230);
+   await check('Workflow cards lift on hover and the whole card is clickable', `getComputedStyle(document.querySelector('.public-steps article')).transform!=='none' && document.elementFromPoint(${cardCenter.x},${cardCenter.y}).closest('a').getAttribute('href')==='/demo?view=review'`);
+   await evaluate("document.querySelector('.public-steps article a').focus()");
+   await check('Workflow cards highlight the keyboard-focused link', "document.querySelector('.public-steps article').matches(':focus-within')");
+
    for(const [view,panel] of [['review','panel2'],['verify','panel3'],['report','panel5']]){
      await evaluate(`document.querySelector('.public-steps a[href="/demo?view=${view}"]').click()`);
      await pause(550);
@@ -174,14 +201,22 @@ async function main(){
    await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
    await pause(160);
    await check('Landing fits mobile and shows the demo action', "document.documentElement.scrollWidth<=390 && document.querySelector('.public-primary').getBoundingClientRect().width>0");
+   const mobilePrismStart=await evaluate("getComputedStyle(document.querySelector('.public-hero-art img')).transform");
+   await evaluate("window.scrollTo({top:320,behavior:'instant'})");await pause(100);
+   await check('Mobile scroll moves the artwork with a smaller offset', `getComputedStyle(document.querySelector('.public-hero-art img')).transform !== ${JSON.stringify(mobilePrismStart)} && parseFloat(document.querySelector('.public-story').style.getPropertyValue('--prism-offset')) < 28`);
+   await evaluate("window.scrollTo({top:0,behavior:'instant'})");
    await capture('landing-mobile');
    await evaluate("document.querySelector('.public-hero .public-secondary').click()");
    await pause(120);
    await check('Mobile workflow action scrolls to the section', "location.hash==='#workflow' && document.activeElement.id==='workflow'");
    await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
-   await evaluate("document.querySelector('.public-nav a[href=\"/sign-in\"]').click()");
+   await evaluate("window.perfagentPageMarker='same-document';document.querySelector('.public-nav a[href=\"/sign-in\"]').click()");
    await pause(400);
    await check('Sign-in entry explains invite access and continues to the workspace', "location.pathname==='/sign-in' && document.querySelector('#access-title').textContent.includes('Sign in') && document.querySelector('.public-primary').getAttribute('href')==='/workspace'");
+   await check('Landing to sign-in stays in the same document', "window.perfagentPageMarker==='same-document'");
+   await evaluate("document.querySelector('.public-access-help summary').click()");
+   await check('Sign-in help expands with a working invitation link', "document.querySelector('.public-access-help').open && document.querySelector('.public-access-help a').getAttribute('href')==='/sign-up'");
+   await evaluate("document.querySelector('.public-access-help summary').click()");
    await capture('sign-in');
    await evaluate("document.querySelector('.public-nav-workflow').click()");
    await pause(500);
@@ -190,11 +225,19 @@ async function main(){
    await pause(500);
    await check('Get access opens the invite page with clear next actions', "location.pathname==='/sign-up' && document.getElementById('access-title').textContent==='Get access to PerfAgent' && document.querySelector('.public-access .public-primary').getAttribute('href')==='/sign-in'");
    await check('Get access loads the artwork while keeping its invite action visible', "document.querySelector('.public-access-art img').naturalWidth===1536 && document.querySelector('.public-access .public-primary').getBoundingClientRect().width>0");
+   await check('Get access stays in the SPA and exposes the sample comparison link', "window.perfagentPageMarker==='same-document' && document.querySelector('.public-access-art').getAttribute('href')==='/demo?view=report'");
    await capture('sign-up');
    await evaluate("document.querySelector('.public-access .public-primary').click()");
    await pause(500);
    await check('Invite page continues to sign-in', "location.pathname==='/sign-in' && document.querySelector('.public-access .public-primary').getAttribute('href')==='/workspace'");
-   await evaluate("document.querySelector('.public-access .public-secondary').click()");
+   await evaluate("document.querySelector('.public-access .public-primary').click()");
+   await pause(550);
+   await check('Continue to local workspace uses SPA navigation', "location.pathname==='/workspace' && window.perfagentPageMarker==='same-document' && document.querySelector('#view-home.show')!==null");
+   await evaluate("history.back()");
+   await pause(500);
+   await check('Browser Back returns to sign-in without reloading', "location.pathname==='/sign-in' && window.perfagentPageMarker==='same-document'");
+   await evaluate("localStorage.removeItem('perfagent:guided-tour:v2');document.querySelector('.public-access .public-secondary').click()");
+
    await pause(650);
    await check('Landing demo opens the isolated sample workspace', "location.pathname==='/demo' && document.querySelector('.demo-banner') && !!document.querySelector('#view-home.show')");
    await evaluate("document.querySelector('.guided-tour-actions button:first-child').click()");
@@ -341,6 +384,7 @@ async function main(){
    await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
    await check('Escape closes account disclosure and restores focus', "!document.querySelector('.workspace-account').open && document.activeElement===document.querySelector('.workspace-account summary')");
    await check('Workspace Home distinguishes its sample comparison and keeps the main actions visible', "document.querySelector('.home-comparison header span').textContent==='Sample' && document.querySelector('.home-comparison footer strong').textContent==='Budget breached' && document.querySelector('.home-lead .btnrow button').textContent.includes('Create a test')");
+   await check('Workspace sidebar loads the same mark as the favicon', "document.querySelector('.sb-top .perfagent-mark').src===document.querySelector('link[rel=icon][type*=svg]').href");
    await capture('home');
    await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
    await check('Home fits a narrow viewport','document.documentElement.scrollWidth<=390');

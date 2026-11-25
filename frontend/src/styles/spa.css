@@ -59,10 +59,6 @@ body { font-family: 'Geist Variable', system-ui, -apple-system, sans-serif; font
 .sidebar.collapsed { width: 68px; }
 .sb-top { padding: 21px 16px; border-color: #2a354a; }
 .sb-title { color: #fff; font-size: 20px; }
-.sb-logo { width: 35px; height: 35px; border-radius: 10px; background: #566cfc; gap: 3px; align-items: end; padding-bottom: 9px; }
-.sb-logo i { width: 4px; height: 10px; background: #fff; border-radius: 2px; }
-.sb-logo i:nth-child(2) { height: 17px; }
-.sb-logo i:nth-child(3) { height: 13px; }
 .sb-toggle, .sb-mobile-close { background: transparent; color: var(--sidebar-text); border: 0; border-radius: 8px; min-width: 36px; min-height: 38px; font-size: 22px; cursor: pointer; }
 .sb-toggle:hover, .sb-mobile-close:hover { background: #34314e; color: #fff; }
 .sidebar.collapsed .sb-toggle { transform: rotate(180deg); }
@@ -75,6 +71,7 @@ body { font-family: 'Geist Variable', system-ui, -apple-system, sans-serif; font
 .sb-item:hover { background: #202e4d; color: #fff; }
 .sb-item.active { background: #232f55; color: #fff; border-color: #394c80; box-shadow: none; }
 .sb-ic, .sb-item.active .sb-ic { background: transparent; color: #a9bbfa; width: 23px; font-size: 17px; }
+.perfagent-mark { display: block; flex: none; width: 35px; height: 35px; }
 .sidebar button:focus-visible { outline-color: #d8cfff; outline-offset: 1px; }
 
 .maintop { padding: 16px var(--workspace-padding); border-top: 0; background: #fff; min-height: 86px; gap: 16px; }

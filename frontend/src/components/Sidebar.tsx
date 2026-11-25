@@ -1,3 +1,4 @@
+import { BrandMark } from './BrandMark'
 import { Icon } from './Icon'
 import { handlers, showView } from '../workspace/controller'
 
@@ -39,7 +40,7 @@ export function Sidebar() {
       if (!event.shiftKey && event.target === last) { event.preventDefault(); first?.focus() }
     }}>
       <div className="sb-top">
-        <div className="sb-logo" aria-hidden="true"><i /><i /><i /></div>
+        <BrandMark />
         <span className="sb-title">PerfAgent</span>
         <button className="sb-toggle" onClick={handlers.h96} title="Collapse sidebar"
           aria-label="Collapse sidebar" aria-expanded="true" aria-controls="sidebar"><Icon name="collapse" /></button>
