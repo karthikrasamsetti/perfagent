@@ -51,7 +51,7 @@ function goStep(n){
     if(announcement.textContent!==message)announcement.textContent=message;
   }
   if(shouldMoveFocus)activeStep?.focus({preventScroll:true});
-  window.scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+  if(document.documentElement.dataset.tour!=='true')window.scrollTo({top:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
 
 publishStep(n);
 }
@@ -3494,7 +3494,7 @@ export function showView(v){
   if(v==='activity'){ loadAudit(); loadTraces(); }
   if(v==='monitoring') monRender();
   closeMobNav();
-  window.scrollTo({top:0,behavior:'smooth'});
+  if(document.documentElement.dataset.tour!=='true')window.scrollTo({top:0,behavior:'smooth'});
 
 publishView(v);
 }
@@ -4558,6 +4558,14 @@ export async function applyRoute(path){
         break;
       }
       case 'test':{
+        if(document.documentElement.dataset.tour==='true' && route.step===1){
+          document.getElementById('newTestName').value='Checkout API';
+          document.getElementById('newTestPurpose').value='Measure checkout under load';
+          startNamedTest();
+          document.getElementById('endpoints').replaceChildren();
+          addEndpoint('POST','/checkout','{}');
+          break;
+        }
         const plan=await requestJson('/api/plans/'+encodeURIComponent(route.testId));
         if(plan.project_id!==route.projectId)throw Error('This test belongs to another project.');
         await openPlan(route.testId);

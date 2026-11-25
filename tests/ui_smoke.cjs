@@ -141,22 +141,81 @@ async function main(){
  await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await send('Page.navigate',{url:'http://127.0.0.1:'+port+'/'});await pause(900);
  if(spaMode){
    await check('First-visit tour opens with an accessible title', "document.querySelector('.guided-tour').open && document.querySelector('#tour-title').textContent === 'Take a tour of PerfAgent'");
-   await evaluate("document.querySelector('.guided-tour-actions button:last-child').click()");
-   await check('Tour starts on Home and focuses the step title', "document.activeElement.id === 'tour-title' && document.activeElement.textContent.includes('Step 1 of 8')");
-   await evaluate("document.querySelector('.guided-tour-actions button:last-child').click()");
-   await check('Tour advances to Projects', "document.querySelector('#tour-title').textContent.includes('Projects')");
-   await evaluate("document.querySelector('.guided-tour-actions button:nth-child(2)').click()");
-   await check('Previous returns to Home', "document.querySelector('#tour-title').textContent.includes('Home')");
    await evaluate("document.querySelector('.guided-tour-actions button:first-child').click()");
    await pause(100);
-   await check('Skipping persists and returns focus to Help', "!document.querySelector('.guided-tour').open && document.activeElement.getAttribute('aria-haspopup') === 'dialog' && localStorage.getItem('perfagent:guided-tour:v1') === 'seen'");
-   await evaluate("document.querySelector('.maintop-actions button[aria-haspopup=dialog]').click()");
+   await check('Skipping persists and returns focus to Help', "!document.querySelector('.guided-tour').open && document.activeElement.id === 'guided-tour-help' && localStorage.getItem('perfagent:guided-tour:v2') === 'seen'");
+   await evaluate("document.getElementById('guided-tour-help').click()");
    await check('Help reopens the guided tour', "document.querySelector('.guided-tour').open");
-   for(let step=0;step<8;step++)await evaluate("document.querySelector('.guided-tour-actions button:last-child').click()");
-   await check('Tour ends on Dashboard with Done available', "document.querySelector('#tour-title').textContent.includes('Dashboard') && document.querySelector('.guided-tour-actions button:last-child').textContent === 'Done'");
    await evaluate("document.querySelector('.guided-tour-actions button:last-child').click()");
-   await pause(100);
-   await check('Done closes the tour and returns focus to Help', "!document.querySelector('.guided-tour').open && document.activeElement.getAttribute('aria-haspopup') === 'dialog'");
+   await pause(900);
+   await check('Tour opens sample Home and focuses the highlighted controls', "document.activeElement === document.querySelector('.home-lead .btnrow.guided-tour-highlight') && document.documentElement.dataset.tour === 'true'");
+   await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+   await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+   await check('Tab from the highlight goes to Skip tour', "document.activeElement.textContent === 'Skip tour'");
+   const tourStops=['Home','Projects','Describe','Review plan','Verify','Run','Report','Dashboard'];
+   const nextTourStop=()=>clickTourButton('last-child');
+   async function clickTourButton(position){
+     const point=await evaluate(`(() => {
+       const button=document.querySelector('.guided-tour-actions button:${position}');
+       const rect=button.getBoundingClientRect();
+       return {x:rect.left+rect.width/2,y:rect.top+rect.height/2};
+     })()`);
+     await send('Input.dispatchMouseEvent',{...point,type:'mousePressed',button:'left',clickCount:1});
+     await send('Input.dispatchMouseEvent',{...point,type:'mouseReleased',button:'left',clickCount:1});
+     await pause(340);
+   }
+   async function checkTourPlacement(title,size,{focus=true}={}){
+     await check(`${size} tour anchors beside ${title}`, `(() => {
+       const target=document.querySelector('.guided-tour-highlight');
+       const overlay=document.querySelector('.guided-tour-overlay');
+       if (!target || !overlay || !document.querySelector('#tour-title').textContent.includes(${JSON.stringify(title)})) return false;
+       const anchor=target.getBoundingClientRect(), card=overlay.getBoundingClientRect();
+       const gap=Math.max(card.top-anchor.bottom,anchor.top-card.bottom,card.left-anchor.right,anchor.left-card.right);
+       const width=document.documentElement.clientWidth, height=innerHeight;
+       const buttons=[...overlay.querySelectorAll('button:enabled')];
+       return gap>=5 && gap<=32 && anchor.bottom>0 && anchor.top<height &&
+         card.left>=0 && card.right<=width+1 && card.top>=0 && card.bottom<=height+1 &&
+         buttons.every(button=>{
+           const rect=button.getBoundingClientRect();
+           return rect.bottom<=card.bottom && document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2)===button;
+         }) && ${focus ? 'document.activeElement===target' : 'true'};
+     })()`);
+   }
+   await checkTourPlacement('Home','Desktop',{focus:false});
+   await capture('guided-tour-home');
+   await nextTourStop();
+   await check('Tour opens actual Projects with a sample project', "location.pathname === '/projects' && document.querySelector('.project-card')?.textContent.includes('Commerce Demo')");
+   await checkTourPlacement('Projects','Desktop');
+   for(const title of tourStops.slice(2)){
+     await nextTourStop();
+     await checkTourPlacement(title,'Desktop');
+     if(title==='Review plan')await capture('guided-tour-review');
+   }
+   const dashboardTop=await evaluate("document.querySelector('.guided-tour-overlay').getBoundingClientRect().top");
+   await evaluate("window.scrollBy({top:45,behavior:'instant'})");
+   await pause(120);
+   await check('Tour card follows the highlight when the page scrolls', `Math.abs(document.querySelector('.guided-tour-overlay').getBoundingClientRect().top-${dashboardTop})>=40`);
+   await checkTourPlacement('Dashboard','Scrolled desktop');
+   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+   await pause(340);
+   await checkTourPlacement('Dashboard','Mobile');
+   await capture('guided-tour-dashboard-mobile');
+   for(const title of tourStops.slice(0,-1).reverse()){
+     await clickTourButton('nth-child(2)');
+     await checkTourPlacement(title,'Mobile Previous');
+   }
+   await send('Emulation.setDeviceMetricsOverride',{width:320,height:568,deviceScaleFactor:1,mobile:true});
+   await pause(340);
+   await checkTourPlacement('Home','Compact mobile');
+   for(const title of tourStops.slice(1)){
+     await nextTourStop();
+     await checkTourPlacement(title,'Compact mobile Next');
+   }
+   await check('Tour made no API network requests', "performance.getEntriesByType('resource').every(entry => !new URL(entry.name).pathname.startsWith('/api/'))");
+   await nextTourStop();
+   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+   await pause(550);
+   await check('Done restores the original workspace and focuses Help', "!document.querySelector('.guided-tour-overlay') && document.activeElement.id === 'guided-tour-help' && !document.documentElement.dataset.tour");
    await check('Starts at Home with the main navigation selected', "document.getElementById('view-home').classList.contains('show')&&document.querySelector('[data-view=home]').getAttribute('aria-current')==='page'");
    await capture('home');
    await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});

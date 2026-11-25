@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
+import { GuidedTourOverlay } from './components/GuidedTour'
 import { WorkspaceLayout } from './components/WorkspaceLayout'
 import { applyRoute, dispose, initialize } from './workspace/controller'
 
@@ -8,6 +9,7 @@ const StableWorkspace = memo(WorkspaceLayout)
 export function App() {
   const location = useLocation(), navigate = useNavigate()
   const [loading, setLoading] = useState(true), [error, setError] = useState('')
+  const [restoredPath, setRestoredPath] = useState('')
   const requested = useRef(''), skip = useRef(''), running = useRef(false)
   const active = useRef(true), startup = useRef<Promise<void> | null>(null)
   const navigateRef = useRef(navigate)
@@ -40,6 +42,7 @@ export function App() {
           const next = requested.current; requested.current = ''
           try { await applyRoute(next) }
           catch (cause) { if (!requested.current) throw cause }
+          finally { if (active.current) setRestoredPath(next) }
         }
       } catch (cause) {
         if (active.current) setError(cause instanceof Error ? cause.message : 'This page could not be opened.')
@@ -50,6 +53,14 @@ export function App() {
     }
     void restore()
   }, [location.pathname, location.search])
+
+  const touring = document.documentElement.dataset.tour === 'true'
+  useEffect(() => {
+    if (!loading && !touring && window.location.hash === '#guided-tour-help') {
+      document.getElementById('guided-tour-help')?.focus()
+      window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+    }
+  }, [loading, touring])
 
   return <>
     {loading && <div className="spa-loading" role="status">
@@ -63,6 +74,14 @@ export function App() {
     {error && <main className="spa-error card" role="alert"><h1>Page unavailable</h1><p>{error}</p>
       <div className="btnrow"><button className="btn" onClick={() => { setError(''); navigate('/projects') }}>Go to projects</button>
         <a className="btn ghost" href="/legacy">Open the previous workspace</a></div></main>}
-    <div hidden={Boolean(error)} inert={loading}><StableWorkspace /></div>
+    <div hidden={Boolean(error)} inert={loading} className={touring ? 'guided-tour-workspace' : undefined}
+      onClickCapture={event => {
+        if (!touring) return
+        event.preventDefault()
+        event.stopPropagation()
+      }}>
+      <StableWorkspace />
+    </div>
+    {touring && <GuidedTourOverlay loading={loading || restoredPath !== location.pathname + location.search} error={Boolean(error)} />}
   </>
 }

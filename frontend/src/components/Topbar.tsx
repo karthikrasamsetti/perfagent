@@ -12,7 +12,7 @@ export function Topbar() {
         <p className="sub" id="viewSub">Organize performance tests by application.</p>
       </div>
       <div className="maintop-actions">
-        <GuidedTour />
+        {document.documentElement.dataset.tour !== 'true' && <GuidedTour />}
         <select id="projectPicker" aria-label="Switch project" onChange={handlers.h107}>
           <option value="">Select project</option>
         </select>

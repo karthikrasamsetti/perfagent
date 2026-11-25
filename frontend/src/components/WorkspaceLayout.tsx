@@ -37,7 +37,7 @@ return <>
 <Sidebar />
 <div className={"main"}>
 <Topbar />
-{import.meta.env.MODE === 'demo' && <aside className="demo-banner" aria-label="Demo mode">
+{document.documentElement.dataset.demo === 'true' && <aside className="demo-banner" aria-label="Demo mode">
   <strong>Demo workspace</strong><span>Sample data. Runs and verification are simulated.</span>
 </aside>}
 <main id="workspace-content" tabIndex={-1}>

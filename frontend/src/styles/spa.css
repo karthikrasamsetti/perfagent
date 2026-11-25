@@ -687,12 +687,34 @@ tbody tr:hover { background: #f8f6ff; }
   margin: .5rem 0 1rem;
 }
 
-.guided-tour-example {
-  display: block;
-  width: 100%;
-  max-height: 45dvh;
-  object-fit: contain;
-  object-position: left center;
+.guided-tour-overlay {
+  position: fixed;
+  z-index: 4100;
+  top: var(--tour-top, auto);
+  left: var(--tour-left, auto);
+  width: min(26rem, calc(100vw - 2rem));
+  max-height: var(--tour-space, calc(100dvh - 2rem));
+  overflow: auto;
+  box-shadow: 0 12px 36px rgb(15 23 42 / 20%);
+}
+
+.guided-tour-overlay:not([data-anchored]) {
+  right: 1rem;
+  bottom: 1rem;
+}
+
+.guided-tour-overlay .guided-tour-content {
+  padding: 1rem;
+}
+
+.guided-tour-highlight {
+  outline: 3px solid #7652e4 !important;
+  outline-offset: 4px;
+  scroll-margin-block-start: 5rem;
+}
+
+html[data-tour] #workspace-content {
+  padding-bottom: min(23rem, 65dvh);
 }
 
 .guided-tour-actions {
@@ -711,4 +733,8 @@ tbody tr:hover { background: #f8f6ff; }
   .tour-help-label {
     display: none;
   }
+}
+
+.guided-tour-workspace {
+  pointer-events: none;
 }
